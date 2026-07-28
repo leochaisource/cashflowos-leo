@@ -27,10 +27,13 @@ export function proxy(req: NextRequest) {
 //   • /api/cron-daily         — the daily cron (has its own fail-closed Bearer guard)
 //   • /manifest.webmanifest   — the REAL PWA manifest (app/manifest.ts serves HERE);
 //     /manifest.json          — belt-and-braces extra so install never silently breaks
-//   • /icons/*, /favicon.ico, /_next/* — static assets the install/render needs
+//   • /icons/*, /favicon.ico, /icon.png, /_next/* — static assets the install/render
+//     needs. /icon.png is where Next's App Router serves app/icon.png (the browser
+//     tab favicon) — without it the gate 307s the tab icon to /login and the login
+//     screen renders with a blank icon.
 // A single missed exclusion here = a locked webhook on class day, so this list is tested.
 export const config = {
   matcher: [
-    '/((?!login|api/login|api/telegram|api/cron-daily|manifest\\.webmanifest|manifest\\.json|icons|_next|favicon\\.ico).*)',
+    '/((?!login|api/login|api/telegram|api/cron-daily|manifest\\.webmanifest|manifest\\.json|icons|icon\\.png|_next|favicon\\.ico).*)',
   ],
 }
