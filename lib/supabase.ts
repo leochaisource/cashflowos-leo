@@ -30,11 +30,29 @@ if (!cleanUrl || !cleanKey) {
   console.warn('[CFO] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set yet — add them to .env (the O & E steps).')
 }
 
+// Request timeouts. A short cap makes a wrong/unreachable SUPABASE_URL fail fast
+// instead of hanging ~7s per page (found in the live participant run). But that
+// cap must NOT apply to Storage: uploading a receipt photo is a multi-second
+// transfer, and a 4s abort AFTER Supabase already stored the bytes left the file
+// in the bucket with `storage_path = null` on the row — the Vault then showed
+// "Link unavailable" forever. Reads stay fast; file transfers get room to finish.
+const REST_TIMEOUT_MS = 4000
+const STORAGE_TIMEOUT_MS = 30000
+
+const requestUrl = (input: RequestInfo | URL): string =>
+  typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+
 export const supabase = createClient(url, key, {
   auth: { persistSession: false },
-  // Cap every request at 4s so a wrong/unreachable SUPABASE_URL fails fast
-  // instead of hanging ~7s per page (found in the live participant run).
-  global: { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, { ...init, signal: AbortSignal.timeout(4000) }) },
+  global: {
+    fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+      const isStorage = /\/storage\/v\d+\//.test(requestUrl(input))
+      return fetch(input, {
+        ...init,
+        signal: AbortSignal.timeout(isStorage ? STORAGE_TIMEOUT_MS : REST_TIMEOUT_MS),
+      })
+    },
+  },
 })
 
 // "Configured" = REAL, non-placeholder values present (after cleaning). So a
