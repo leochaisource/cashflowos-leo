@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
+import { flattenAds, normaliseAd, competitorSection, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 
 // The 8am ads brief. Three reads, one write:
 //   ① Meta Marketing API — yesterday vs the trailing 7-day average, per campaign.
@@ -82,29 +83,13 @@ async function metaCampaigns(datePreset: string): Promise<Camp[]> {
 }
 
 // ---------------------------------------------------------------- Adyntel
-type CompetitorAd = {
-  id: string
-  page: string
-  active: boolean
-  daysRunning: number
-  copy: string
-  cta: string
-}
-
-// Adyntel returns `results` as an ARRAY OF ARRAYS (one inner array per collated
-// ad group), so it has to be flattened before anything else works.
-function flattenAds(json: unknown): Record<string, unknown>[] {
-  const results = (json as { results?: unknown[] })?.results
-  if (!Array.isArray(results)) return []
-  const out: Record<string, unknown>[] = []
-  for (const entry of results) {
-    if (Array.isArray(entry)) out.push(...(entry as Record<string, unknown>[]))
-    else if (entry && typeof entry === 'object') out.push(entry as Record<string, unknown>)
-  }
-  return out
-}
-
-async function adyntelSearch(keyword: string): Promise<CompetitorAd[]> {
+// Parsing lives in lib/adyntel.ts and is verified against a captured raw
+// response (data/adyntel-raw-latest.json). It recursively flattens results,
+// accepts both snake_case and camelCase, and keeps the whole ad — copy,
+// headline, CTA, landing URL, every image and video URL, and the untouched
+// payload. The previous version kept 6 truncated fields and binned the rest,
+// which is why this brief could only ever report counts.
+async function adyntelSearch(keyword: string): Promise<NormalisedAd[]> {
   const api_key = process.env.ADYNTEL_API_KEY?.trim()
   const email = process.env.ADYNTEL_EMAIL?.trim()
   if (!api_key || !email) return []
@@ -117,44 +102,67 @@ async function adyntelSearch(keyword: string): Promise<CompetitorAd[]> {
   if (!res.ok) throw new Error(`Adyntel ${res.status} on "${keyword}"`)
   const json = await res.json()
   return flattenAds(json)
-    .map((a) => {
-      const snap = (a.snapshot ?? {}) as Record<string, unknown>
-      const body = (snap.body ?? {}) as Record<string, unknown>
-      return {
-        id: String(a.ad_archive_id ?? a.ad_id ?? ''),
-        page: String(a.page_name ?? snap.page_name ?? 'Unknown page'),
-        active: a.is_active === true,
-        // total_active_time is seconds; a long-running ad is a working ad.
-        daysRunning: Math.round((Number(a.total_active_time) || 0) / 86400),
-        copy: String(body.text ?? snap.title ?? '').slice(0, 220),
-        cta: String(snap.cta_text ?? ''),
-      }
-    })
-    .filter((a) => a.id && a.copy)
+    .map((a) => normaliseAd(a))
+    .filter((a) => a.ad_archive_id)
 }
 
-// ------------------------------------------------- seen-ads memory (bot_memory)
-// Stored on the owner's bot_memory row under counters.ad_intel_seen so the report
-// can say "3 NEW ads" instead of re-listing the same creatives every morning.
-const SEEN_KEY = 'ad_intel_seen'
-const SEEN_CAP = 400
+// ------------------------------------------------- competitor_ads (Supabase)
+// One row per individual ad, upserted on (competitor, ad_archive_id) so the
+// same creative is updated rather than duplicated, and first_seen_at survives.
 
-async function loadSeen(chatId: number): Promise<Set<string>> {
-  if (!supabaseConfigured) return new Set()
-  const { data } = await supabase.from('bot_memory').select('counters').eq('chat_id', chatId).maybeSingle()
-  const list = (data?.counters as Record<string, unknown>)?.[SEEN_KEY]
-  return new Set(Array.isArray(list) ? (list as string[]) : [])
+
+async function loadPrior(): Promise<PriorAd[]> {
+  if (!supabaseConfigured) return []
+  const { data, error } = await supabase
+    .from('competitor_ads')
+    .select('ad_archive_id, competitor, is_active, title, body_text')
+  if (error) {
+    console.error('[CFO] competitor_ads read failed:', error.message)
+    return []
+  }
+  return (data ?? []) as PriorAd[]
 }
 
-async function saveSeen(chatId: number, ids: Set<string>) {
-  if (!supabaseConfigured) return
-  const { data } = await supabase.from('bot_memory').select('counters').eq('chat_id', chatId).maybeSingle()
-  const counters = { ...((data?.counters as Record<string, unknown>) ?? {}) }
-  counters[SEEN_KEY] = Array.from(ids).slice(-SEEN_CAP)
-  const { error } = await supabase
-    .from('bot_memory')
-    .upsert({ chat_id: chatId, counters }, { onConflict: 'chat_id' })
-  if (error) console.error('[CFO] could not save ad-intel memory:', error.message)
+async function saveAds(ads: NormalisedAd[], keyword: string): Promise<number> {
+  if (!supabaseConfigured || !ads.length) return 0
+  const iso = (u: number | null) => (u === null ? null : new Date(u * 1000).toISOString())
+  const rows = ads.map((a) => ({
+    competitor: a.page_name,
+    page_id: a.page_id,
+    ad_archive_id: a.ad_archive_id,
+    last_seen_at: new Date().toISOString(),
+    keywords: [keyword],
+    meta_start_date: iso(a.start_date),
+    meta_end_date: iso(a.end_date),
+    is_active: a.is_active,
+    run_days: a.run_days,
+    run_days_basis: a.run_days_basis,
+    body_text: a.body_text || null,
+    body_html: a.body_html,
+    title: a.title,
+    caption: a.caption,
+    link_description: a.link_description,
+    cta_text: a.cta_text,
+    cta_type: a.cta_type,
+    link_url: a.link_url,
+    display_format: a.display_format,
+    publisher_platform: a.publisher_platform,
+    collation_count: a.collation_count,
+    image_urls: a.images.map((i) => i.original_image_url ?? i.resized_image_url).filter(Boolean),
+    video_urls: a.videos.map((v) => v.video_hd_url ?? v.video_sd_url).filter(Boolean),
+    thumbnail_urls: a.videos.map((v) => v.video_preview_image_url).filter(Boolean),
+    raw_payload: a.raw_payload,
+    updated_at: new Date().toISOString(),
+  }))
+  const { data, error } = await supabase
+    .from('competitor_ads')
+    .upsert(rows, { onConflict: 'competitor,ad_archive_id' })
+    .select('id')
+  if (error) {
+    console.error('[CFO] competitor_ads upsert failed:', error.message)
+    return 0
+  }
+  return data?.length ?? 0
 }
 
 // ---------------------------------------------------------------- the route
@@ -220,25 +228,23 @@ export async function GET(req: Request) {
     if (window === 'yesterday') notes.push('No Meta spend in the last 30 days — every campaign is paused.')
   }
 
-  // ② The market.
-  const chatId = Number(process.env.OWNER_CHAT_ID?.trim() || 0)
-  const seen = await loadSeen(chatId)
-  let competitors: CompetitorAd[] = []
+  // ② The market — individual ads, not a headcount.
+  const prior = await loadPrior()
+  let competitors: NormalisedAd[] = []
+  let stored = 0
   try {
-    const batches = await Promise.all(WATCH_KEYWORDS.map((k) => adyntelSearch(k)))
-    const byId = new Map<string, CompetitorAd>()
-    for (const ad of batches.flat()) if (!byId.has(ad.id)) byId.set(ad.id, ad)
+    const batches = await Promise.all(WATCH_KEYWORDS.map((k) => adyntelSearch(k).then((ads) => [k, ads] as const)))
+    const byId = new Map<string, NormalisedAd>()
+    for (const [keyword, ads] of batches) {
+      for (const ad of ads) if (!byId.has(ad.ad_archive_id)) byId.set(ad.ad_archive_id, ad)
+      stored += await saveAds(ads, keyword)
+    }
     competitors = Array.from(byId.values())
   } catch (e) {
     notes.push(`Adyntel unavailable: ${(e as Error).message}`)
   }
 
-  const fresh = competitors.filter((a) => !seen.has(a.id))
-  // What's *working* for others: still running, and running a long time.
-  const proven = competitors
-    .filter((a) => a.active && a.daysRunning >= 14)
-    .sort((a, b) => b.daysRunning - a.daysRunning)
-    .slice(0, 8)
+  const market = competitorSection(competitors, prior, WATCH_COUNTRY)
 
   // ③ Turn it into advice.
   const facts = [
@@ -249,9 +255,7 @@ export async function GET(req: Request) {
         (c.cplDelta ? ` (${c.cplDelta > 0 ? '+' : ''}${c.cplDelta}% vs 7-day avg ${money(c.avgCpl)})` : ''),
     ),
     '',
-    `COMPETITOR ADS IN ${WATCH_COUNTRY} (${competitors.length} seen, ${fresh.length} new since yesterday):`,
-    ...fresh.slice(0, 10).map((a) => `- NEW · ${a.page} · CTA "${a.cta}" · ${a.copy}`),
-    ...proven.map((a) => `- PROVEN (${a.daysRunning}d running) · ${a.page} · ${a.copy}`),
+    market.text,
   ].join('\n')
 
   let report = ''
@@ -263,11 +267,17 @@ export async function GET(req: Request) {
         model: 'claude-opus-5',
         max_tokens: 1200,
         system:
-          'You write a 7am ads briefing for a busy Malaysian coaching business owner. ' +
+          'You write an 8am ads briefing for a busy Malaysian coaching business owner. ' +
           'Be concrete and short. No preamble, no markdown headers, no bullet symbols other than "-". ' +
-          'Structure: one line on what changed in the numbers; two or three lines on what competitors are doing ' +
-          'that is worth copying; then exactly 3 numbered actions, each one sentence and specific enough to do today. ' +
-          'If a competitor ad has run 30+ days, say so - longevity means it converts. ' +
+          'Structure: one line on what changed in the numbers; then three to five lines on specific competitor ads - ' +
+          'name the advertiser, quote the actual hook or headline, and say the format and how long it has run; ' +
+          'then exactly 3 numbered actions, each one sentence and specific enough to do today. ' +
+          'Prefer naming a real ad over generalising about "competitors". ' +
+          'CRITICAL - how to talk about run length: a long-running ad, repeated variations of one concept, and ' +
+          'continued activity are PUBLIC signals only. You have no conversion data for any competitor. ' +
+          'Never write that an ad converts, works, is profitable, or is proven. ' +
+          'Say instead: "may be strategically important based on observable public signals, but private conversion ' +
+          'performance is unavailable." ' +
           'Never invent numbers that are not in the data. If data is missing, say which part is missing.',
         messages: [{ role: 'user', content: facts }],
       })
@@ -295,12 +305,7 @@ export async function GET(req: Request) {
 
   for (const chat of to) await sendMessage(chat, text)
 
-  // Remember what we showed, so tomorrow's "new" is genuinely new.
-  if (competitors.length) {
-    for (const a of competitors) seen.add(a.id)
-    await saveSeen(chatId, seen)
-  }
-
+  // Memory now lives in competitor_ads (written above), not in a list of ids.
   return Response.json({
     ok: true,
     sent: to.length,
@@ -308,8 +313,8 @@ export async function GET(req: Request) {
     window,
     spend: spentYesterday,
     leads: leadsYesterday,
-    competitor_ads: competitors.length,
-    new_competitor_ads: fresh.length,
+    competitor_ads_stored: stored,
+    ...market.stats,
     notes,
   })
 }

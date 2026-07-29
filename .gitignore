@@ -17,3 +17,6 @@ next-env.d.ts
 *.tsbuildinfo
 .DS_Store
 .vercel
+
+# large third-party media + captured API responses (not source)
+/data/competitor-creatives
