@@ -1,15 +1,25 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { PROJECTS } from '@/lib/ad-clients'
 
 // 👉 The desktop sidebar tabs, grouped under micro-cap section labels.
 //    Adding a tab? Add ONE line to the right group here, add the SAME tab to
 //    BottomNav.tsx (bottom bar or the More sheet, so it shows on phones too),
 //    and create app/<name>/page.tsx.
 //    See docs/add-a-tab-prompt.md for the copy-paste prompt that does all three.
+//
+//    The PROJECTS group builds itself from lib/ad-clients.ts — add a client
+//    there and it appears here, in the ads brief, and on the home grid at once.
+//    (lib/ad-clients.ts holds no secrets, only env var NAMES, so a client
+//    component can safely import it.)
 export const NAV_GROUPS: { label: string; tabs: { href: string; label: string }[] }[] = [
+  { label: 'Projects', tabs: [
+    { href: '/', label: 'All projects' },
+    ...PROJECTS.map(p => ({ href: `/projects/${p.id}`, label: p.client ?? p.name })),
+  ] },
   { label: 'Overview', tabs: [
-    { href: '/', label: 'Dashboard' },
+    { href: '/agency', label: 'Agency' },
   ] },
   { label: 'Money', tabs: [
     { href: '/cash-in', label: 'Cash In' },
@@ -20,7 +30,6 @@ export const NAV_GROUPS: { label: string; tabs: { href: string; label: string }[
     { href: '/customers', label: 'Customers' },
   ] },
   { label: 'Work', tabs: [
-    { href: '/projects', label: 'Projects' },
     { href: '/content', label: 'Content' },
     { href: '/tasks', label: 'Tasks' },
   ] },

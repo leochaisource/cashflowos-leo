@@ -97,6 +97,27 @@ Every question, every action, every zone, with example answers — that's the fa
 
 ---
 
+## 📊 The project dashboard
+
+Home is **one card per client project** — spend, leads, CPL, ROAS and a 14-day spend bar
+chart each. Click one for its full scorecard: active ads, average CPL, the 3 cheapest-CPL
+winners, the worst CPL and lowest link-CTR losers, daily spend, then the funnel (opt-ins,
+show-up rate, appointments, sign-ups, conversion) and the money (course price, CPA, ROAS,
+cash collected). The whole-business funnel + money row moved to **Agency**.
+
+- **Setup**: paste `supabase/project-dashboard.sql` into the Supabase SQL Editor, Run once.
+- **Projects live in `lib/ad-clients.ts`** — the same registry the 8am brief loops over, so
+  the brief and the dashboard can never disagree. Adding one = an edit there + 2 env vars.
+- **Where the numbers come from**: ad tiles are Meta, snapshotted into `ad_daily` by the
+  8am cron (and the ↻ Refresh button). Funnel and cash tiles are typed into the form at the
+  bottom of a project page until GHL / the master leads sheet are wired in.
+- **A blank tile is not a zero.** Anything with no source shows `—` and names what it's
+  waiting for. A typed `0` shows `0`. Nothing invents a number.
+- `GET /api/sync-ads?client=<id>&days=14` (Bearer `CRON_SECRET`) pulls Meta on demand —
+  no Adyntel credits, no model call, no Telegram.
+
+---
+
 ## 📥 Feed it YOUR business
 
 Day 1 you play with demo data. Then you drop in your own 10–20 rows.

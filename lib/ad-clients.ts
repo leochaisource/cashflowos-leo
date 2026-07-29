@@ -1,4 +1,10 @@
-// The client registry for the 8am ads brief.
+// The client registry for the 8am ads brief AND the project dashboard.
+//
+// ONE list, two consumers: the morning brief (app/api/cron-ads) and the
+// dashboard (app/page.tsx, app/projects/[id]). They read the same objects on
+// purpose — a project that exists in the brief but not on the dashboard, or a
+// lead definition that disagrees between them, is a bug you'd only find by
+// noticing two numbers that should match and don't.
 //
 // Non-secret config lives here, in git, where it can be reviewed and changed
 // without touching code. Tokens do NOT: each client names the env var holding
@@ -8,9 +14,23 @@
 // a project at 2 cron jobs and both are used, so ONE cron loops over this list
 // rather than each client getting its own schedule.
 
+/**
+ * Where a number that ISN'T from Meta comes from. A plain label, shown under
+ * the tile so you always know what you're looking at ("Master leads sheet ·
+ * Attended"). Leave a field out and the dashboard says "not connected yet" and
+ * shows a blank — which is the honest answer, unlike a zero.
+ */
+export type MetricSources = {
+  leads?: string
+  attended?: string
+  appointments?: string
+  signups?: string
+  cash?: string
+}
+
 export type AdClient = {
-  id: string // stable key — also the `client` column in competitor_ads
-  name: string // shown in the Telegram header
+  id: string // stable key — also the `client` column in competitor_ads + ad_daily
+  name: string // shown in the Telegram header and as the project title
   adAccountEnv: string // env var holding the numeric Meta ad account id
   tokenEnv: string // env var holding that account's access token
   keywords: string[] // what "the competition" means for this client
@@ -61,7 +81,26 @@ export type AdClient = {
    * client moves on — it is describing a moment in time, not a fixed fact.
    */
   briefContext?: string
+
+  // ---------------------------------------------------- dashboard-only fields
+  // All optional: the brief never reads them, so a client added for the brief
+  // alone still renders (with blanks where these would have gone).
+  /** Who the work is for, if that differs from the project name. */
+  client?: string
+  /** Where the project is in its life. Drives the status pill on the card. */
+  stage?: 'pre-launch' | 'active' | 'paused' | 'done'
+  /** What the thing being sold costs. Turns sign-ups into revenue when no cash figure has been entered. */
+  coursePrice?: number
+  /** The date ads go (or went) live — shown while a project is pre-launch. */
+  launchDate?: string
+  /** What you consider an acceptable cost per lead. The CPL tile is judged green/amber/red against it. */
+  targetCPL?: number
+  /** Where the non-Meta numbers come from. Omit a field = not connected yet. */
+  sources?: MetricSources
 }
+
+/** Same objects, named for the dashboard's vocabulary. A client IS a project here. */
+export type Project = AdClient
 
 /** Instant-form funnels. */
 const NATIVE_LEAD = ['lead', 'onsite_conversion.lead_grouped']
@@ -86,6 +125,16 @@ export const AD_CLIENTS: AdClient[] = [
     currency: 'RM',
     leadActionTypes: NATIVE_LEAD,
     chatIdEnv: 'OWNER_CHAT_ID',
+    client: 'Dianna',
+    stage: 'active',
+    // 👉 Fill these in when you have them — every one of them unlocks a tile.
+    // coursePrice: 0,
+    // targetCPL: 0,
+    sources: {
+      // 👉 Name a source here once it's wired; until then the tile stays blank.
+      // leads: 'GHL landing page',
+      // attended: 'Master leads sheet · Attended',
+    },
     relevanceTerms: [
       ['nlp', 'coaching', 'coach', 'hypnosis', 'hypnotherapy', 'mindset', 'transformational', 'timeline therapy', 'subconscious'],
       ['practitioner', 'certification', 'certified', 'training', 'course', 'workshop', 'masterclass', 'webinar', 'programme', 'program', 'bootcamp', 'class', 'seminar', 'intake', 'enrol', 'enroll'],
@@ -114,6 +163,15 @@ export const AD_CLIENTS: AdClient[] = [
     currency: 'RM',
     leadActionTypes: PIXEL_LEAD,
     chatIdEnv: 'OWNER_CHAT_ID',
+    client: 'Kingsley',
+    stage: 'pre-launch',
+    launchDate: '2026-08-02',
+    // coursePrice: 0,
+    // targetCPL: 0,
+    sources: {
+      // leads: 'GHL landing page',
+      // attended: 'Master leads sheet · Attended',
+    },
     relevanceTerms: [
       // subject: is it about AI at all?
       ['ai', 'a.i', 'artificial intelligence', 'chatgpt', 'gpt', 'claude', 'gemini', 'llm', 'genai', 'prompt', 'prompting', 'automation', 'automate', 'agent', 'agents', 'agentic', 'copilot', 'n8n', 'zapier', 'no-code', 'nocode'],
@@ -130,6 +188,13 @@ export const AD_CLIENTS: AdClient[] = [
       'including HRD Corp claimable training.',
   },
 ]
+
+/** The dashboard's name for the same list. */
+export const PROJECTS: Project[] = AD_CLIENTS
+
+/** One project by id, or undefined — the [id] page 404s on undefined. */
+export const getProject = (id: string): Project | undefined =>
+  PROJECTS.find((p) => p.id === id)
 
 /**
  * Which keywords run today. Rotates by day-of-year so the whole list is covered

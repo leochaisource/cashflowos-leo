@@ -296,3 +296,88 @@ code {
 
 /* ---- Two-row dashboard: money row lives in .grid; funnel above it ---- */
 .rowlabel { font-size: 13px; color: var(--ink-soft); font-weight: 600; margin: 0 0 10px; }
+
+/* ============================================================
+   PROJECT DASHBOARD — the project grid, the scorecard tiles, the ad tables.
+   Same palette, same radii, same card treatment as everything above; nothing
+   new invented, so a project page reads as the same app.
+   ============================================================ */
+
+/* ---- home: one card per project ---- */
+.pgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-bottom: 26px; }
+.pcard { display: block; text-decoration: none; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-20); padding: 18px; transition: border-color .12s ease, box-shadow .12s ease; }
+.pcard:hover { border-color: var(--clay); box-shadow: 0 6px 22px rgba(33,28,22,.07); }
+.pc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.pc-name { font-size: 16px; font-weight: 700; margin: 0; color: var(--ink); }
+.pc-client { font-size: 12.5px; color: var(--dim); margin: 3px 0 0; }
+.pc-nums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+.pc-nums .l { font-size: 11px; color: var(--ink-faint); margin: 0 0 3px; white-space: nowrap; }
+.pc-nums .v { font-size: 17px; font-weight: 700; margin: 0; color: var(--ink); }
+.pc-nums .t-good .v { color: #2E5A40; }
+.pc-nums .t-warn .v { color: #6E521A; }
+.pc-nums .t-bad  .v { color: #8A3E2D; }
+.pc-foot { font-size: 11.5px; color: var(--dim); margin: 8px 0 0; }
+.pc-prelaunch { background: var(--paper-2); border-radius: var(--r-13); padding: 14px; margin-bottom: 14px; }
+.pl-line { margin: 0; font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.pl-sub { margin: 5px 0 0; font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; }
+.pc-funnel { display: flex; flex-wrap: wrap; gap: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-soft); }
+.pc-funnel b { color: var(--ink); font-weight: 700; }
+
+/* ---- scorecard header ---- */
+.crumb { font-size: 12.5px; color: var(--dim); margin: 0 0 6px; }
+.crumb a { color: var(--clay-deep); text-decoration: none; font-weight: 600; }
+.phead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.refresh { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* ---- a single metric tile. `.blank` is the "no source yet" state: it must
+       read as unmeasured, never as a measured zero. ---- */
+.metric { background: var(--card); border: 1px solid var(--line); border-radius: var(--r-13); padding: 16px; }
+.metric .l { color: var(--ink-soft); font-size: 13px; margin: 0 0 6px; }
+.metric .v { font-size: 26px; font-weight: 700; margin: 0; color: var(--ink); letter-spacing: -0.01em; }
+.metric .s { font-size: 11.5px; color: var(--dim); margin: 6px 0 0; line-height: 1.4; }
+.metric .src { font-size: 11px; color: var(--ink-faint); margin: 6px 0 0; line-height: 1.4; font-style: italic; }
+.metric.blank { background: repeating-linear-gradient(135deg, var(--paper-2), var(--paper-2) 9px, rgba(255,253,249,.65) 9px, rgba(255,253,249,.65) 18px); border-style: dashed; border-color: var(--line-2); }
+.metric.blank .v { color: var(--ink-faint); font-weight: 600; }
+.metric.t-good .v { color: #2E5A40; }
+.metric.t-warn .v { color: #6E521A; }
+.metric.t-bad  .v { color: #8A3E2D; }
+.metric.big .v { font-size: 32px; }
+
+/* ---- a titled block (spend chart, entry form) ---- */
+.band { background: var(--card); border: 1px solid var(--line); border-radius: var(--r-13); padding: 18px; margin-bottom: 24px; }
+.band-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.band-head h2 { font-size: 14px; color: var(--ink-soft); font-weight: 600; margin: 0; }
+.band-head span { font-size: 12px; color: var(--dim); }
+.spark { display: block; width: 100%; height: auto; }
+.spark-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-faint); margin-top: 6px; }
+
+/* ---- winners / losers ---- */
+.adtbl .adname { display: block; font-weight: 600; }
+.adtbl .adcamp { display: block; font-size: 11.5px; color: var(--dim); margin-top: 2px; }
+.adtbl th.hl, .adtbl td.hl { background: var(--clay-tint); }
+.adtbl .noleads { color: #8A3E2D; font-weight: 600; }
+.cols + .cols { margin-top: 0; }
+.cols { margin-bottom: 24px; }
+
+/* ---- the manual entry row ---- */
+.entry-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 12px; }
+.entry-f { display: flex; flex-direction: column; gap: 5px; }
+.entry-f .l { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+.entry-f .l em { font-style: normal; font-weight: 400; color: var(--ink-faint); }
+.entry-in { width: 100%; box-sizing: border-box; background: var(--paper); border: 1px solid var(--line-2); border-radius: var(--r-8); padding: 9px 10px; font-size: 14px; color: var(--ink); font-family: inherit; }
+.entry-in:focus { outline: none; border-color: var(--clay); box-shadow: 0 0 0 3px var(--clay-tint); }
+.entry-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.entry-note { font-size: 12px; color: var(--dim); }
+.entry-ok { font-size: 12.5px; color: #2E5A40; margin: 10px 0 0; }
+.entry-err { font-size: 12.5px; color: #8A3E2D; margin: 10px 0 0; }
+
+@media (max-width: 768px) {
+  .pgrid { grid-template-columns: 1fr; }
+  .pc-nums { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .phead { flex-direction: column; }
+  .metric .v { font-size: 22px; }
+  /* The ad tables collapse to cards like every other .tbl; the highlight tint
+     would look like a random stripe there, so drop it. */
+  .adtbl th.hl, .adtbl td.hl { background: none; }
+  .adtbl td.hl { font-weight: 700; }
+}

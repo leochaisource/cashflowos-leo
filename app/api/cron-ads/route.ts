@@ -3,11 +3,16 @@ import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 import { AD_CLIENTS, keywordsForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, type AdClient } from '@/lib/ad-clients'
+import { campaignInsights, type Camp } from '@/lib/meta'
+import { syncProjectAds } from '@/lib/ad-sync'
 
 // The 8am ads brief, once per client. For each client in lib/ad-clients.ts:
 //   ① Meta Marketing API — yesterday vs the trailing 7-day average, per campaign.
 //   ② Adyntel — what competitors are running in that client's niche right now.
 //   ③ Claude — turns both into what changed + 3 things to do about it.
+//   ④ ad_daily — the same Meta pull, stored per ad per day, so the dashboard is
+//      already fresh when you open it. The brief used to fetch this, use it once
+//      and throw it away.
 // Then one Telegram message per client.
 //
 // ONE cron drives ALL clients: Vercel Hobby caps a project at 2 cron jobs and
@@ -23,8 +28,6 @@ import { AD_CLIENTS, keywordsForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PRO
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-const GRAPH = 'https://graph.facebook.com/v23.0'
-
 const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const fmt = (cur: string, n: number) => cur + n.toLocaleString('en-MY', { maximumFractionDigits: 2 })
 
@@ -38,52 +41,6 @@ function recipients(client: AdClient): string[] {
     ? team
     : ([process.env[client.chatIdEnv]?.trim()].filter(Boolean) as string[])
   return Array.from(new Set(list))
-}
-
-// ---------------------------------------------------------------- Meta
-type Camp = { name: string; spend: number; impressions: number; leads: number; cpl: number }
-
-/**
- * Meta reports conversions in an `actions` array, and which action_type carries
- * the lead depends on how the funnel is built — a native instant form reports
- * `lead`, a landing-page form firing the Pixel reports
- * `offsite_conversion.fb_pixel_lead`. Each client declares its own list; we take
- * the max rather than the sum because Meta often reports the same conversion
- * under several overlapping types and adding them double-counts.
- */
-function leadsOf(actions: { action_type: string; value: string }[] | undefined, types: string[]): number {
-  if (!Array.isArray(actions)) return 0
-  const hits = actions.filter((a) => types.includes(a.action_type)).map((a) => Number(a.value) || 0)
-  return hits.length ? Math.max(...hits) : 0
-}
-
-async function metaCampaigns(client: AdClient, datePreset: string): Promise<Camp[]> {
-  const token = process.env[client.tokenEnv]?.trim()
-  const acct = process.env[client.adAccountEnv]?.trim()
-  if (!token || !acct) return []
-  const url =
-    `${GRAPH}/act_${acct}/insights?level=campaign&date_preset=${datePreset}` +
-    `&fields=campaign_name,spend,impressions,actions&limit=200`
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(30000),
-  })
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`Meta ${res.status}: ${body.slice(0, 200)}`)
-  }
-  const json = (await res.json()) as { data?: Record<string, unknown>[] }
-  return (json.data ?? []).map((d) => {
-    const spend = Number(d.spend) || 0
-    const leads = leadsOf(d.actions as { action_type: string; value: string }[], client.leadActionTypes)
-    return {
-      name: String(d.campaign_name ?? 'Unnamed'),
-      spend,
-      impressions: Number(d.impressions) || 0,
-      leads,
-      cpl: leads > 0 ? spend / leads : 0,
-    }
-  })
 }
 
 // ---------------------------------------------------------------- Adyntel
@@ -182,12 +139,22 @@ async function runClient(client: AdClient) {
   let month: Camp[] = []
   try {
     ;[yesterday, week, month] = await Promise.all([
-      metaCampaigns(client, 'yesterday'),
-      metaCampaigns(client, 'last_7d'),
-      metaCampaigns(client, 'last_30d'),
+      campaignInsights(client, 'yesterday'),
+      campaignInsights(client, 'last_7d'),
+      campaignInsights(client, 'last_30d'),
     ])
   } catch (e) {
     notes.push(`Meta unavailable: ${(e as Error).message}`)
+  }
+
+  // ①b Fill the dashboard from the same Meta account, per ad per day. Re-pulls
+  // the trailing week because Meta keeps restating attributed conversions for
+  // days already past. Failure here must never cost you the briefing.
+  let synced: Awaited<ReturnType<typeof syncProjectAds>> | null = null
+  try {
+    synced = await syncProjectAds(client, 7)
+  } catch (e) {
+    notes.push(`Dashboard sync failed: ${(e as Error).message}`)
   }
 
   const weekByName = new Map(week.map((c) => [c.name, c]))
@@ -345,6 +312,8 @@ async function runClient(client: AdClient) {
     keywords_today: todaysKeywords,
     adyntel_credits: credits,
     competitor_ads_stored: stored,
+    ad_daily_rows: synced?.rows ?? 0,
+    active_ads: synced?.active_ads ?? null,
     ...market.stats,
     notes,
   }
