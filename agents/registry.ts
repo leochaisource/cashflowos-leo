@@ -39,6 +39,13 @@ export const AGENTS: AgentMeta[] = [
     emoji: '🤖',
     autonomyNote: 'Read-only Q&A over your numbers on Telegram. Answers only — never acts on money.',
   },
+  {
+    key: 'marketing-triage',
+    label: 'Ad Performance Triage',
+    emoji: '📊',
+    autonomyNote:
+      '🟡 Daily: grades every ad against your own average, recommends what to kill and what to scale. No hands in your ad account.',
+  },
   // ---- Gallery placeholders (fill from agents/gallery/*.md; all DRAFT-only) ----
   {
     key: 'overdue-invoice',
@@ -267,6 +274,9 @@ export const EXECUTORS: Record<string, Executor> = {
   'log-cash-in': (p) => writeRecord('log-cash-in', p),
   'mark-paid': (p) => writeRecord('mark-paid', p),
   'lead-status': (p) => writeRecord('lead-status', p),
+  // The Head of Marketing's triage — DRAFT-only. It produces a RECOMMENDATION you
+  // read; there is no code path from here to your ad account.
+  'marketing-triage': (p) => draftOnly('marketing-triage', p),
   // The gallery agents — all DRAFT-only (a human sends).
   'overdue-invoice': (p) => draftOnly('overdue-invoice', p),
   'cold-lead': (p) => draftOnly('cold-lead', p),
@@ -291,6 +301,8 @@ export const EXECUTORS: Record<string, Executor> = {
 // ============================================================
 import type { Rec } from '@/lib/records'
 import { rm } from '@/lib/records'
+import { adStats, baseline, findings } from './marketing/definition'
+import { headline as marketingHeadline, suggest as marketingSuggest } from './marketing/prompt'
 
 // `auto: true` = this one is 🟢 graduated (autopilot: run it, then just tell me).
 // Omitted/false = 🟡 ask first (the safe default every agent starts on).
@@ -338,4 +350,45 @@ const overdueInvoiceCheck: ScheduledCheck = {
       }),
 }
 
-export const SCHEDULED: ScheduledCheck[] = [overdueInvoiceCheck]
+// Marketing · Ad Performance Triage (the Head of Marketing, LIVE): grades every ad
+// row against YOUR OWN account average and proposes a short kill/scale list. Always
+// 🟡 — a kill or scale call moves ad budget, so it never autopilots. DRAFT only:
+// approving records your decision, it does NOT touch your ad account.
+//
+// ⚠️ NOTE THE IDEMPOTENCY KEY — it deliberately differs from the chaser above.
+// An invoice gets MORE overdue every day, so `:${today}` correctly re-asks daily.
+// Ad rows are static history; the same pattern would re-propose the identical
+// recommendations every single morning forever. So this one keys on the METRICS:
+// once per ad per issue, re-raised only when that ad accrues another 100 clicks —
+// i.e. only when there is genuinely new evidence.
+const marketingTriageCheck: ScheduledCheck = {
+  key: 'marketing-triage',
+  label: 'Ad Performance Triage',
+  check: (rows) => {
+    const stats = adStats(rows)
+    const base = baseline(stats)
+    if (!base) return [] // no ads with enough clicks to judge — say nothing.
+
+    return findings(stats, base).map((f) => ({
+      idempotencyKey: `marketing-triage:${f.issue}:${f.stat.id}:${Math.floor(f.stat.clicks / 100)}`,
+      payload: {
+        row_id: f.stat.id,
+        issue: f.issue,
+        channel: 'review',
+        text: marketingSuggest(f, base),
+        metrics: {
+          clicks: f.stat.clicks,
+          leads: f.stat.leads,
+          ctr: Number((f.stat.ctr * 100).toFixed(2)),
+          cvr: Number((f.stat.cvr * 100).toFixed(2)),
+          baseline_ctr: Number((base.ctr * 100).toFixed(2)),
+          baseline_cvr: Number((base.cvr * 100).toFixed(2)),
+          wasted_clicks: f.wastedClicks,
+        },
+      },
+      text: marketingHeadline(f, base),
+    }))
+  },
+}
+
+export const SCHEDULED: ScheduledCheck[] = [overdueInvoiceCheck, marketingTriageCheck]

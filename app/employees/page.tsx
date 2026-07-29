@@ -1,4 +1,5 @@
-import { AGENTS } from '@/agents/registry'
+import { AGENTS, type AgentMeta } from '@/agents/registry'
+import { HEADS, DIRECT_REPORT_KEYS } from '@/agents/heads'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
@@ -39,32 +40,73 @@ function outcomeClass(outcome: string | null): string {
 
 export default async function Employees() {
   const lastRuns = await getLastRuns()
+  const byKey = new Map(AGENTS.map(a => [a.key, a]))
+
+  // One robot card. Unchanged from before — only the grouping around it is new.
+  const card = (a: AgentMeta) => {
+    const run = lastRuns[a.key]
+    return (
+      <div className="agent-card" key={a.key}>
+        <p className="ac-name">
+          <span aria-hidden="true">{a.emoji}</span> {a.label}
+          {run ? (
+            <span className={`pill ${outcomeClass(run.outcome)}`}>{run.outcome || 'ran'}</span>
+          ) : (
+            <span className="pill open">not run yet</span>
+          )}
+        </p>
+        <p className="ac-role">{a.autonomyNote}</p>
+        <p className="ac-lastrun">
+          {run
+            ? `Last run: ${new Date(run.when).toLocaleString('en-MY')}`
+            : 'Last run: — (this robot hasn’t done anything yet)'}
+        </p>
+      </div>
+    )
+  }
+
+  // Everything the org chart accounts for, so we can catch anything it doesn't.
+  const placed = new Set([...HEADS.flatMap(h => h.agentKeys), ...DIRECT_REPORT_KEYS])
+  const unassigned = AGENTS.filter(a => !placed.has(a.key))
 
   return (
     <>
       <h1 className="ph">AI Employees 🤖</h1>
-      <p className="cap">Your robot team — each one&apos;s job and how much it&apos;s allowed to do on its own.</p>
-      {AGENTS.map(a => {
-        const run = lastRuns[a.key]
+      <p className="cap">
+        Your robot team, by department — each one&apos;s job and how much it&apos;s allowed to do on
+        its own. The org chart is in <code>docs/ai-csuite-blueprint.md</code>.
+      </p>
+
+      {HEADS.map(h => {
+        const team = h.agentKeys.map(k => byKey.get(k)).filter((a): a is AgentMeta => !!a)
+        if (team.length === 0) return null
         return (
-          <div className="agent-card" key={a.key}>
-            <p className="ac-name">
-              <span aria-hidden="true">{a.emoji}</span> {a.label}
-              {run ? (
-                <span className={`pill ${outcomeClass(run.outcome)}`}>{run.outcome || 'ran'}</span>
-              ) : (
-                <span className="pill open">not run yet</span>
-              )}
+          <div key={h.key} style={{ marginBottom: 26 }}>
+            <p className="rowlabel">
+              {h.emoji} {h.label}
             </p>
-            <p className="ac-role">{a.autonomyNote}</p>
-            <p className="ac-lastrun">
-              {run
-                ? `Last run: ${new Date(run.when).toLocaleString('en-MY')}`
-                : 'Last run: — (this robot hasn’t done anything yet)'}
-            </p>
+            {team.map(card)}
           </div>
         )
       })}
+
+      {/* Read-only, cross-department — answers to you, not to a head. */}
+      {DIRECT_REPORT_KEYS.some(k => byKey.has(k)) && (
+        <div style={{ marginBottom: 26 }}>
+          <p className="rowlabel">🙋 Reports to you directly</p>
+          {DIRECT_REPORT_KEYS.map(k => byKey.get(k))
+            .filter((a): a is AgentMeta => !!a)
+            .map(card)}
+        </div>
+      )}
+
+      {/* A robot nobody claimed — visible on purpose, so it can't go missing. */}
+      {unassigned.length > 0 && (
+        <div>
+          <p className="rowlabel">Not assigned to a head yet</p>
+          {unassigned.map(card)}
+        </div>
+      )}
     </>
   )
 }
