@@ -221,7 +221,19 @@ export type PriorAd = {
   body_text: string | null
 }
 
-const flat = (s: string, n = 150) => s.replace(/\s+/g, ' ').trim().slice(0, n)
+/**
+ * Removes unpaired surrogates. Competitor copy is full of styled Unicode
+ * (𝗪𝗔𝗥𝗡𝗜𝗡𝗚, 🧠) which lives outside the BMP and is stored as a surrogate PAIR.
+ * A plain .slice() can cut between the two halves, and a lone half is not valid
+ * JSON — the Anthropic call then 400s and the whole briefing is lost.
+ */
+export function stripLoneSurrogates(s: string): string {
+  return s
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+    .replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, '$1')
+}
+
+const flat = (s: string, n = 150) => stripLoneSurrogates(s.replace(/\s+/g, ' ').trim().slice(0, n))
 
 const seedOf = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim().slice(0, 45)
 

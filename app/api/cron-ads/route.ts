@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
-import { flattenAds, normaliseAd, competitorSection, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
+import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 
 // The 8am ads brief. Three reads, one write:
 //   ① Meta Marketing API — yesterday vs the trailing 7-day average, per campaign.
@@ -247,7 +247,7 @@ export async function GET(req: Request) {
   const market = competitorSection(competitors, prior, WATCH_COUNTRY)
 
   // ③ Turn it into advice.
-  const facts = [
+  const factsRaw = [
     `WINDOW = ${window.toUpperCase()}: spent ${money(spentYesterday)}, ${leadsYesterday} leads across ${movers.length} campaigns.`,
     ...movers.slice(0, 8).map(
       (c) =>
@@ -257,6 +257,9 @@ export async function GET(req: Request) {
     '',
     market.text,
   ].join('\n')
+  // Belt and braces: one lone surrogate anywhere in this block 400s the model
+  // call and costs the whole briefing, so sanitise the finished string too.
+  const facts = stripLoneSurrogates(factsRaw)
 
   let report = ''
   const key = process.env.ANTHROPIC_API_KEY?.trim()
