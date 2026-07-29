@@ -20,6 +20,7 @@ export const NAV_GROUPS: { label: string; tabs: { href: string; label: string }[
     { href: '/customers', label: 'Customers' },
   ] },
   { label: 'Work', tabs: [
+    { href: '/projects', label: 'Projects' },
     { href: '/content', label: 'Content' },
     { href: '/tasks', label: 'Tasks' },
   ] },

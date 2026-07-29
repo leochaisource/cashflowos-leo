@@ -109,13 +109,23 @@ code {
 /* top-of-funnel / in-progress (blue) */
 .pill.open, .pill.new, .pill.contacted, .pill.waiting, .pill.active, .pill.scheduled { background: rgba(90,140,190,.16); color: #2C5E8A; }
 /* attention / pending → 🟡 honey */
-.pill.pending, .pill.draft, .pill.proposed, .pill.appointment { background: rgba(182,128,42,.18); color: #6E521A; }
+.pill.pending, .pill.draft, .pill.proposed, .pill.appointment, .pill.paused { background: rgba(182,128,42,.18); color: #6E521A; }
 /* done / good → 🟢 sage */
 .pill.won, .pill.done, .pill.paid, .pill.closed, .pill.filed, .pill.posted, .pill.executed, .pill.approved { background: rgba(75,122,90,.16); color: #2E5A40; }
 /* problem / overdue → 🔴 rust */
 .pill.lost, .pill.overdue, .pill.rejected, .pill.failed, .pill.expired { background: rgba(169,83,63,.16); color: #8A3E2D; }
 /* nurture / cold (neutral ink) */
 .pill.nurture { background: var(--paper-2); color: var(--ink-soft); }
+
+/* Filter chips — the "which slice am I looking at" selector (Projects tab).
+   Each chip is a Link to the same page with a ?query, so the tab stays a
+   server component and the choice lives in the URL. `.on` = the active one. */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: var(--r-pill); border: 1px solid var(--line); background: var(--card); color: var(--ink-soft); font-size: 13px; font-weight: 600; text-decoration: none; }
+.chip:hover { background: var(--paper-2); color: var(--ink); }
+.chip .n { font-size: 12px; font-weight: 700; color: var(--ink-faint); }
+.chip.on { background: var(--clay-tint); border-color: var(--clay); color: var(--clay-deep); }
+.chip.on .n { color: var(--clay-deep); }
 
 .cols { display: flex; gap: 12px; }
 .col { flex: 1; min-width: 0; }
@@ -171,6 +181,7 @@ code {
   .tbl td { border: none; display: flex; justify-content: space-between; gap: 12px; padding: 8px 14px; }
   .tbl td::before { content: attr(data-label); color: var(--ink-soft); font-size: 12px; flex-shrink: 0; }
 
+  .chip { padding: 10px 15px; }             /* thumb-size filter chips */
   .cols { flex-direction: column; }         /* stage columns stack */
   .grid { grid-template-columns: repeat(2, 1fr); }
   .funnel-bar { gap: 3px; }

@@ -18,6 +18,7 @@ const PRIMARY = [
 const MORE: MoreTab[] = [
   { href: '/leads', label: 'Leads', ico: '🧲' },
   { href: '/customers', label: 'Customers', ico: '🧑‍🤝‍🧑' },
+  { href: '/projects', label: 'Projects', ico: '🗂️' },
   { href: '/content', label: 'Content', ico: '📣' },
   { href: '/tasks', label: 'Tasks', ico: '✅' },
   { href: '/employees', label: 'AI Employees', ico: '🤖' },
