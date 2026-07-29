@@ -268,7 +268,7 @@ export async function GET(req: Request) {
       const anthropic = new Anthropic({ apiKey: key })
       const res = await anthropic.messages.create({
         model: 'claude-opus-5',
-        max_tokens: 1200,
+        max_tokens: 2000,
         system:
           'You write an 8am ads briefing for a busy Malaysian coaching business owner. ' +
           'Be concrete and short. No preamble, no markdown headers, no bullet symbols other than "-". ' +
@@ -306,7 +306,16 @@ export async function GET(req: Request) {
     .filter(Boolean)
     .join('\n')
 
-  for (const chat of to) await sendMessage(chat, text)
+  // Telegram rejects anything over 4096 characters outright — the whole brief
+  // would vanish with only a server-side log. Split on blank lines so a long
+  // report arrives as two readable messages instead of none.
+  const chunks: string[] = []
+  for (const para of text.split('\n\n')) {
+    const last = chunks[chunks.length - 1]
+    if (last !== undefined && last.length + para.length + 2 < 3900) chunks[chunks.length - 1] = last + '\n\n' + para
+    else chunks.push(para)
+  }
+  for (const chat of to) for (const chunk of chunks) await sendMessage(chat, chunk)
 
   // Memory now lives in competitor_ads (written above), not in a list of ids.
   return Response.json({
