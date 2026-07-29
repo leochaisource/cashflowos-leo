@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
-import { AD_CLIENTS, keywordsForToday, isConfigured, type AdClient } from '@/lib/ad-clients'
+import { AD_CLIENTS, keywordsForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, type AdClient } from '@/lib/ad-clients'
 
 // The 8am ads brief, once per client. For each client in lib/ad-clients.ts:
 //   ① Meta Marketing API — yesterday vs the trailing 7-day average, per campaign.
@@ -170,45 +170,6 @@ async function saveAds(clientId: string, ads: NormalisedAd[], keyword: string): 
   return data?.length ?? 0
 }
 
-// ------------------------------------------------------------- the two briefs
-// Both share one rule that is not negotiable: run length, repeated variations
-// and continued activity are PUBLIC signals. We hold no competitor's conversion
-// data and must never imply otherwise.
-const HONESTY =
-  'CRITICAL - how to talk about run length: a long-running ad, repeated variations of one concept, and ' +
-  'continued activity are PUBLIC signals only. You have no conversion data for any competitor. ' +
-  'Never write that an ad converts, works, is profitable, or is proven. ' +
-  'Say instead: "may be strategically important based on observable public signals, but private conversion ' +
-  'performance is unavailable." ' +
-  'Never invent numbers that are not in the data. If data is missing, say which part is missing.'
-
-const LIVE_PROMPT = (name: string) =>
-  `You write an 8am ads briefing for ${name}, a Malaysian business. ` +
-  'Be concrete and short. No preamble, no markdown headers, no bullet symbols other than "-". ' +
-  'Structure: one line on what changed in the numbers; then three to five lines on specific competitor ads - ' +
-  'name the advertiser, quote the actual hook or headline, and say the format and how long it has run; ' +
-  'then exactly 3 numbered actions, each one sentence and specific enough to do today. ' +
-  'Prefer naming a real ad over generalising about "competitors". ' +
-  HONESTY
-
-// Pre-launch: there is no performance to report, so the entire brief is market
-// intelligence turned into things to BUILD before the first ad goes live.
-const PRE_LAUNCH_PROMPT = (name: string) =>
-  `You write an 8am pre-launch ads briefing for ${name}, a Malaysian business that has not started advertising yet. ` +
-  'Do NOT analyse their own performance - there is none, and saying "RM0 spent, 0 leads" every morning is useless. ' +
-  'Open with ONE short line on what moved in the competitor set since yesterday (new concepts, new variations, ads that stopped). ' +
-  'Then write these three sections, using "-" for bullets, no markdown headers, no preamble:\n' +
-  'WHAT THE MARKET IS DOING: three to five lines, each naming a real advertiser, quoting their actual hook or ' +
-  'headline, and stating format and run length. Group by the angle being used (price, certification, testimonial, ' +
-  'pain-first, authority) rather than listing ads at random.\n' +
-  'ADS TO BUILD: exactly 3 concrete ad concepts this client could produce this week. For each give a headline they ' +
-  'could actually run, the format (image/video/carousel), the angle, and say plainly whether it COPIES a structure ' +
-  'that several competitors are using or COUNTERS a gap none of them are covering. Write the headline as finished ' +
-  'copy, not a description of a headline.\n' +
-  'THEN 3 numbered actions for today, each one sentence, specific, and tied to the launch timeline in the ' +
-  'SITUATION line if one is given. ' +
-  HONESTY
-
 // ------------------------------------------------------------- one client
 async function runClient(client: AdClient) {
   const notes: string[] = []
@@ -294,7 +255,7 @@ async function runClient(client: AdClient) {
     notes.push(`Adyntel unavailable: ${(e as Error).message}`)
   }
 
-  const market = competitorSection(competitors, prior, client.countries.join('+'))
+  const market = competitorSection(competitors, prior, client.countries.join('+'), {}, client.relevanceTerms, client.excludeTerms)
   if (client.keywordsPerRun && client.keywordsPerRun < client.keywords.length)
     notes.push(
       `Watching ${todaysKeywords.length} of ${client.keywords.length} keywords today (rotating): ${todaysKeywords.join(', ')}`,
@@ -335,7 +296,7 @@ async function runClient(client: AdClient) {
       const anthropic = new Anthropic({ apiKey: key })
       const res = await anthropic.messages.create({
         model: 'claude-opus-5',
-        max_tokens: 2000,
+        max_tokens: 3000,
         system: preLaunch ? PRE_LAUNCH_PROMPT(client.name) : LIVE_PROMPT(client.name),
         messages: [{ role: 'user', content: facts }],
       })

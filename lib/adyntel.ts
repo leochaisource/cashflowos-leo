@@ -72,6 +72,21 @@ function pick(o: Obj | undefined, ...keys: string[]): unknown {
 
 const str = (v: unknown): string | null => (v === undefined || v === null || v === '' ? null : String(v))
 
+/**
+ * Dynamic-creative (DCO) ads return UNRESOLVED template tokens where the copy
+ * should be — a headline comes back as the literal "{{product.name}}". Meta
+ * fills those in per impression, so the Ad Library never sees the real text.
+ * Quoting one back as a competitor's hook is worse than saying nothing, so a
+ * value that is nothing but a token counts as absent.
+ */
+const PLACEHOLDER_ONLY = /^\s*(\{\{[^}]*\}\}\s*)+$/
+
+const copy = (v: unknown): string | null => {
+  const s = str(v)
+  if (s === null) return null
+  return PLACEHOLDER_ONLY.test(s) ? null : s
+}
+
 /** Unix seconds from a number, a numeric string, or an ISO date. */
 function unix(v: unknown): number | null {
   if (v === undefined || v === null || v === '') return null
@@ -154,7 +169,7 @@ export function normaliseAd(a: Obj, nowUnix = Math.floor(Date.now() / 1000)): No
   // body arrives as { text } from Adyntel and { markup: { __html } } from Meta.
   const markup = (pick(bodyNode, 'markup') as Obj) ?? {}
   const body_html = str(pick(markup, '__html'))
-  const plain = str(pick(bodyNode, 'text'))
+  const plain = copy(pick(bodyNode, 'text'))
   const body_text = plain ?? (body_html ? htmlToText(body_html) : '')
 
   const start_date = unix(pick(a, 'start_date', 'startDate'))
@@ -181,10 +196,10 @@ export function normaliseAd(a: Obj, nowUnix = Math.floor(Date.now() / 1000)): No
     display_format: str(pick(snap, 'display_format', 'displayFormat')),
     ad_creative_id: str(pick(snap, 'ad_creative_id', 'adCreativeId')),
     creation_time: unix(pick(snap, 'creation_time', 'creationTime')),
-    title: str(pick(snap, 'title')),
-    caption: str(pick(snap, 'caption')),
-    link_description: str(pick(snap, 'link_description', 'linkDescription')),
-    cta_text: str(pick(snap, 'cta_text', 'ctaText')),
+    title: copy(pick(snap, 'title')),
+    caption: copy(pick(snap, 'caption')),
+    link_description: copy(pick(snap, 'link_description', 'linkDescription')),
+    cta_text: copy(pick(snap, 'cta_text', 'ctaText')),
     cta_type: str(pick(snap, 'cta_type', 'ctaType')),
     link_url: str(pick(snap, 'link_url', 'linkUrl')),
     body_text,
@@ -327,11 +342,36 @@ export function describeConcept(c: Concept, localMedia: Record<string, string[]>
  * Deliberately says "no longer appearing for these keywords" rather than
  * "stopped": an ad missing from a keyword search has not been proven dead.
  */
+/**
+ * Relevance as AND-of-ORs: the ad must hit at least one term in EVERY group.
+ *
+ * A single flat list is not enough. Searching "AI workshop" returns a
+ * real-estate app whose copy says "AI tech empowered" and a WhatsApp automation
+ * tool — both genuinely mention AI, neither sells AI training. Requiring a
+ * subject term AND an offer-type term separates "talks about AI" from "sells
+ * teaching about AI", which is the actual competitor set.
+ *
+ * Matching is whole-word: substring matching would let "ai" hit "training",
+ * "email" and "available", passing everything.
+ */
+export function isRelevant(a: NormalisedAd, groups?: string[][], exclude?: string[]): boolean {
+  if (!groups?.length && !exclude?.length) return true
+  const hay = `${a.title ?? ''} ${a.body_text} ${a.caption ?? ''} ${a.link_description ?? ''} ${a.link_url ?? ''}`.toLowerCase()
+  const hits = (t: string) => {
+    const esc = t.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`).test(hay)
+  }
+  if (exclude?.some(hits)) return false
+  return (groups ?? []).every((g) => g.some(hits))
+}
+
 export function competitorSection(
   ads: NormalisedAd[],
   prior: PriorAd[],
   country: string,
   localMedia: Record<string, string[]> = {},
+  relevanceTerms?: string[][],
+  excludeTerms?: string[],
 ): { text: string; stats: CompetitorStats } {
   const priorById = new Map(prior.map((p) => [p.ad_archive_id, p]))
   const priorConcepts = new Set(prior.map(priorConceptKey))
@@ -342,9 +382,14 @@ export function competitorSection(
   // Group FIRST, then classify. Five creatives carrying the same headline are
   // one idea with five executions, not five ideas — reporting them as five
   // "new concepts" is the noisiest possible way to be technically correct.
-  const concepts = groupConcepts(ads)
-  const activeConcepts = groupConcepts(active)
-  const freshConcepts = groupConcepts(fresh)
+  // An ad with neither a headline nor body copy is almost always dynamic
+  // creative, where Meta assembles the text per impression and the Ad Library
+  // never sees it. It still counts in the totals, but there is nothing to quote,
+  // so it must not occupy a slot in the concept lists.
+  const quotable = (a: NormalisedAd) => !!(a.title || a.body_text) && isRelevant(a, relevanceTerms, excludeTerms)
+  const offTopic = ads.filter((a) => (a.title || a.body_text) && !isRelevant(a, relevanceTerms, excludeTerms)).length
+  const activeConcepts = groupConcepts(active.filter(quotable))
+  const freshConcepts = groupConcepts(fresh.filter(quotable))
   const newConcepts = freshConcepts.filter((c) => !priorConcepts.has(c.key))
   const variationConcepts = freshConcepts.filter((c) => priorConcepts.has(c.key))
   const variationCount = variationConcepts.reduce((n, c) => n + c.ads.length, 0)
@@ -378,7 +423,16 @@ export function competitorSection(
     const noMedia = ads.filter((a) => !a.images.length && !a.videos.length).length
     const noSnap = ads.filter((a) => !a.raw_payload || !(a.raw_payload as Record<string, unknown>).snapshot).length
     if (noStart) data_quality.push(`${noStart} ad(s) have no start date — run length unknown, not zero`)
+    const noQuote = ads.filter((a) => !quotable(a)).length
     if (noCopy) data_quality.push(`${noCopy} ad(s) returned no body copy`)
+    if (offTopic)
+      data_quality.push(
+        ` ad(s) matched a keyword but do not mention this client's subject — stored, but kept out of the brief as noise`,
+      )
+    if (noQuote)
+      data_quality.push(
+        `${noQuote} ad(s) are dynamic creative — Meta assembles their text per impression, so no copy is public and they are excluded from the concept lists`,
+      )
     if (noMedia) data_quality.push(`${noMedia} ad(s) returned no image or video URL`)
     if (noSnap) data_quality.push(`${noSnap} ad(s) returned no snapshot object`)
     if (!Object.keys(localMedia).length)
