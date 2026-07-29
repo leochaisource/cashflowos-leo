@@ -81,6 +81,17 @@ export type Scorecard = {
   days: number
   /** false = this account has no spend in the window at all (pre-launch or paused). */
   hasDelivery: boolean
+  /**
+   * The last day this account spent anything, looking back further than the
+   * window. A client who ran a campaign last month and stopped is a completely
+   * different situation from one who has never advertised — and with only the
+   * window to go on, both look identically empty.
+   */
+  lastSpendDate: string | null
+  /** Spend and leads over the whole lookback, for that "you did run, but not lately" line. */
+  spendLookback: number
+  leadsLookback: number
+  lookbackDays: number
   // ── ads (Meta)
   activeAds: number | null
   adsWithSpend: number
@@ -155,12 +166,23 @@ export async function loadFunnelRows(projectIds: string[], since: string): Promi
  */
 export function scorecard(
   project: Project,
-  adRows: AdRow[],
+  /** Rows for the WHOLE lookback (see LOOKBACK_DAYS), not just the window. */
+  allRows: AdRow[],
   funnelRows: FunnelRow[],
   days: number,
+  lookbackDays = LOOKBACK_DAYS,
 ): Scorecard {
   const since = dayISO(days)
   const until = dayISO(0)
+
+  // The window drives every metric. The rest of the lookback answers exactly one
+  // question — "did this account EVER run?" — which is the difference between a
+  // paused client and a pre-launch one.
+  const adRows = allRows.filter((r) => r.date >= since)
+  const spentDays = allRows.filter((r) => (Number(r.spend) || 0) > 0).map((r) => r.date)
+  const lastSpendDate = spentDays.length ? spentDays.sort().slice(-1)[0] : null
+  const spendLookback = allRows.reduce((s, r) => s + (Number(r.spend) || 0), 0)
+  const leadsLookback = allRows.reduce((s, r) => s + (Number(r.leads) || 0), 0)
 
   // ── ads, totalled per ad across the window
   const byAd = new Map<string, AdPerf>()
@@ -276,6 +298,10 @@ export function scorecard(
     until,
     days,
     hasDelivery: spend > 0,
+    lastSpendDate,
+    spendLookback,
+    leadsLookback,
+    lookbackDays,
     activeAds,
     adsWithSpend: ads.filter((a) => a.spend > 0).length,
     spend,
@@ -302,14 +328,24 @@ export function scorecard(
   }
 }
 
+/**
+ * How far back we READ, versus the window we REPORT on. Reading wider costs one
+ * query either way (a month of one account is tens of rows) and buys the
+ * difference between "paused" and "never started".
+ */
+export const LOOKBACK_DAYS = 90
+
 /** Load + compute for a set of projects in two queries total. */
 export async function scorecards(
   projects: Project[],
   days = 14,
 ): Promise<Map<string, Scorecard>> {
-  const since = dayISO(days)
   const ids = projects.map((p) => p.id)
-  const [adRows, funnelRows] = await Promise.all([loadAdRows(ids, since), loadFunnelRows(ids, since)])
+  const [adRows, funnelRows] = await Promise.all([
+    loadAdRows(ids, dayISO(LOOKBACK_DAYS)),
+    // Funnel numbers are only ever shown for the window, so read only the window.
+    loadFunnelRows(ids, dayISO(days)),
+  ])
   const out = new Map<string, Scorecard>()
   for (const p of projects) {
     const a = (adRows as (AdRow & { project: string })[]).filter((r) => r.project === p.id)

@@ -18,7 +18,9 @@ export const dynamic = 'force-dynamic'
 //
 // The old whole-business view still exists, at /agency.
 
-const WINDOW_DAYS = 14
+// 30 days, not 7 or 14: these campaigns run in bursts, and a fortnight between
+// flights would empty every tile on a client who is simply between campaigns.
+const WINDOW_DAYS = 30
 
 async function proposedCount(): Promise<number> {
   if (!supabaseConfigured) return 0

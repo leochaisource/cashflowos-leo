@@ -22,7 +22,8 @@ export const dynamic = 'force-dynamic'
 // derived, and go blank the moment an input they depend on is missing — better a
 // blank than a confident wrong number.
 
-const WINDOW_DAYS = 14
+// Matches the home grid — see the note there on why 30 and not 14.
+const WINDOW_DAYS = 30
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -61,12 +62,23 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
 
       {!s.hasDelivery && (
         <div className="banner info">
-          <b>No ad delivery in this window.</b>{' '}
-          {project.launchDate && until !== null && until > 0
-            ? `Ads go live ${dateLong(project.launchDate)} — ${until} day${until === 1 ? '' : 's'} away. `
-            : ''}
-          Nothing has spent, so every ad number below is blank rather than zero. The 8am brief is
-          running competitor intelligence for this project in the meantime.
+          {s.lastSpendDate ? (
+            <>
+              <b>Paused — nothing has spent in the last {WINDOW_DAYS} days.</b> Last delivery{' '}
+              {dateLong(s.lastSpendDate)}. Over the last {s.lookbackDays} days this account spent{' '}
+              {money(s.spendLookback, cur)} for {num(s.leadsLookback)} leads. The ad numbers below
+              cover the {WINDOW_DAYS}-day window only, so they are blank rather than zero.
+            </>
+          ) : (
+            <>
+              <b>No ad delivery recorded.</b>{' '}
+              {project.launchDate && until !== null && until > 0
+                ? `Ads go live ${dateLong(project.launchDate)} — ${until} day${until === 1 ? '' : 's'} away. `
+                : ''}
+              Nothing has ever spent, so every ad number below is blank rather than zero. The 8am
+              brief is running competitor intelligence for this project in the meantime.
+            </>
+          )}
         </div>
       )}
 

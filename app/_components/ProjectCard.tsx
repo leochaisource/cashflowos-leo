@@ -74,17 +74,31 @@ export default function ProjectCard({
         </>
       ) : (
         <div className="pc-prelaunch">
-          <p className="pl-line">
-            {project.launchDate
-              ? until !== null && until > 0
-                ? `Ads go live ${dateLong(project.launchDate)} — in ${until} day${until === 1 ? '' : 's'}`
-                : `Launch date ${dateLong(project.launchDate)} — no delivery recorded yet`
-              : 'No ad delivery in this window'}
-          </p>
-          <p className="pl-sub">
-            Nothing has spent, so there is nothing to average. The morning brief is running competitor
-            intel for this one.
-          </p>
+          {card.lastSpendDate ? (
+            // Ran before, stopped. Completely different from never having run —
+            // and with only the window to look at, the two look identical.
+            <>
+              <p className="pl-line">Paused — last spent {dateLong(card.lastSpendDate)}</p>
+              <p className="pl-sub">
+                Nothing in the last {card.days} days. Over the last {card.lookbackDays}:{' '}
+                {money(card.spendLookback, cur)} and {num(card.leadsLookback)} leads.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="pl-line">
+                {project.launchDate
+                  ? until !== null && until > 0
+                    ? `Ads go live ${dateLong(project.launchDate)} — in ${until} day${until === 1 ? '' : 's'}`
+                    : `Launch date ${dateLong(project.launchDate)} — no delivery recorded yet`
+                  : 'No ad delivery recorded'}
+              </p>
+              <p className="pl-sub">
+                Nothing has ever spent on this account, so there is nothing to average. The morning
+                brief is running competitor intel for this one.
+              </p>
+            </>
+          )}
         </div>
       )}
 
