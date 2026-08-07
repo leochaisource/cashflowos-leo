@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getProject } from '@/lib/ad-clients'
 import { projectScorecard, ratio as ratioSafe, WINNER_MIN_LEADS, LOSER_MIN_IMPRESSIONS, LOSER_MIN_SPEND } from '@/lib/metrics'
-import { todayISO } from '@/lib/records'
+import { todayISO, getRecords, m } from '@/lib/records'
 import Metric from '@/app/_components/Metric'
 import Spark from '@/app/_components/Spark'
 import AdTable from '@/app/_components/AdTable'
@@ -30,7 +30,18 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const project = getProject(id)
   if (!project) notFound()
 
-  const s = await projectScorecard(project, WINDOW_DAYS)
+  const [s, allRecords] = await Promise.all([projectScorecard(project, WINDOW_DAYS), getRecords()])
+
+  // Receipts filed against THIS client — by photo caption, by a typed expense,
+  // or by hand. Without this the tagging has no payoff: you'd send a receipt to
+  // a project and watch nothing happen.
+  const costs = allRecords
+    .filter((r) => r.category === 'cash_out' && r.meta?.project === project.id)
+    .sort((a, b) => (b.due_date ?? b.created_at).localeCompare(a.due_date ?? a.created_at))
+  const costsTotal = costs.reduce((sum, r) => sum + Number(r.amount || 0), 0)
+  // The real cost of running this client: media + everything else.
+  const totalCost = s.spend + costsTotal
+  const net = s.cashCollected === null ? null : s.cashCollected - totalCost
   const cur = project.currency || 'RM'
   const src = project.sources ?? {}
   const until = daysUntil(project.launchDate)
@@ -269,6 +280,55 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           value={money(s.cashCollected, cur)}
           source={src.cash ?? 'no source connected yet'}
         />
+        <Metric
+          label="Total cost"
+          value={money(totalCost, cur)}
+          sub={`${money(s.spend, cur)} ads + ${money(costsTotal, cur)} expenses`}
+        />
+        <Metric
+          label="Net"
+          value={money(net, cur)}
+          sub={net !== null ? (net >= 0 ? 'in profit' : 'in the red') : undefined}
+          tone={net === null ? undefined : net >= 0 ? 'good' : 'bad'}
+          source="needs cash collected"
+        />
+      </div>
+
+      {/* Receipts filed against this client — the other half of "what it costs". */}
+      <div className="band">
+        <div className="band-head">
+          <h2>Project expenses</h2>
+          <span>{costs.length ? `${costs.length} receipt(s) · ${money(costsTotal, cur)}` : 'nothing filed yet'}</span>
+        </div>
+        {costs.length ? (
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>What</th>
+                <th>Merchant</th>
+                <th>Category</th>
+                <th>Date</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {costs.map((r) => (
+                <tr key={r.id}>
+                  <td data-label="What">{r.title}</td>
+                  <td data-label="Merchant">{m(r, 'merchant')}</td>
+                  <td data-label="Category">{m(r, 'category')}</td>
+                  <td data-label="Date">{r.due_date ?? r.created_at.slice(0, 10)}</td>
+                  <td data-label="Amount">{money(Number(r.amount), cur)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="empty">
+            Send a receipt photo to the bot with this client in the caption — e.g. “{project.client ?? project.name} —
+            venue deposit” — and it files here automatically.
+          </div>
+        )}
       </div>
 
       {/* ─────────────────────────────── ENTRY */}

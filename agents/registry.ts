@@ -145,6 +145,11 @@ async function fileReceipt(agentKey: string, payload: any): Promise<any> {
         auto_filed: !!payload?.auto,
         source: 'vault',
         sha256: payload?.sha256 || undefined,
+        // Which client's P&L this belongs to, when the sender said so (photo
+        // caption, or the project named in a text expense). Undefined stays
+        // undefined — an untagged receipt is honest; a guessed one is not.
+        project: payload?.project || undefined,
+        project_name: payload?.project_name || undefined,
       },
     })
     .select()

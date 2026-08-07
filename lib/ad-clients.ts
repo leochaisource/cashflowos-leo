@@ -310,6 +310,45 @@ export const getProject = (id: string): Project | undefined =>
   PROJECTS.find((p) => p.id === id)
 
 /**
+ * Find the project a human meant, from however they typed it: "lotus", "claude
+ * malaysia", "the clinic one", or a photo caption like "Lotus Clinic — venue
+ * deposit RM1800".
+ *
+ * Returns the single match, or every candidate when it's ambiguous, so the
+ * caller can ASK instead of guessing — filing a receipt against the wrong
+ * client's P&L is worse than one extra question.
+ */
+export function matchProject(text: string | undefined | null): { project?: Project; candidates: Project[] } {
+  const hay = (text ?? '').toLowerCase().trim()
+  if (!hay) return { candidates: PROJECTS }
+
+  const exact = PROJECTS.find((p) => p.id === hay)
+  if (exact) return { project: exact, candidates: [exact] }
+
+  // Score each project on the most specific thing that matched, so "Claude
+  // Malaysia" doesn't tie with a project whose name merely contains "ads".
+  const scored = PROJECTS.map((p) => {
+    const names = [p.id.replace(/-/g, ' '), p.name.toLowerCase(), (p.client ?? '').toLowerCase()].filter(Boolean)
+    let score = 0
+    for (const n of names) {
+      if (!n) continue
+      if (hay.includes(n)) score = Math.max(score, n.length * 2) // whole name appears
+      // Otherwise: how many of the project's own words does the text mention?
+      const words = n.split(/[\s—-]+/).filter((w) => w.length > 3)
+      const hits = words.filter((w) => hay.includes(w)).length
+      if (hits) score = Math.max(score, hits * 3)
+    }
+    return { p, score }
+  }).filter((s) => s.score > 0)
+
+  if (!scored.length) return { candidates: PROJECTS }
+  scored.sort((a, b) => b.score - a.score)
+  // A clear leader wins; a tie goes back to the human.
+  if (scored.length === 1 || scored[0].score > scored[1].score) return { project: scored[0].p, candidates: [scored[0].p] }
+  return { candidates: scored.map((s) => s.p) }
+}
+
+/**
  * Which keywords run today. Rotates by day-of-year so the whole list is covered
  * on a fixed cycle and the same slice never repeats two days running.
  */

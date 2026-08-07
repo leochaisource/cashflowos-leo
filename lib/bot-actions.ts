@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import type { Rec } from './records'
 import { rm } from './records'
 import { runAutopilot, proposeAndNotify } from './actions'
+import { matchProject } from './ad-clients'
 
 // 🔒 Don't edit — this keeps your robot safe.
 // The Jarvis bot's WRITE hands (V2). Where lib/bot-tools.ts only READS, these
@@ -25,13 +26,20 @@ export const BOT_ACTION_TOOLS = [
     description:
       'Record a business expense (cash out) from what the owner typed (no photo). At or under the ' +
       'auto-file threshold it files itself (🟢, undoable); over it, it asks the owner to approve (🟡). ' +
-      'Use for "log RM45 Grab", "I spent 1200 on Facebook ads".',
+      'Use for "log RM45 Grab", "I spent 1200 on Facebook ads", ' +
+      '"add RM800 venue deposit to the Lotus Clinic project".',
     input_schema: {
       type: 'object' as const,
       properties: {
         merchant: { type: 'string', description: 'Who it was paid to (Grab, Adobe, Maybank…).' },
         amount: { type: 'number', description: 'Amount in RM.' },
         category: { type: 'string', description: 'Optional label (Meals, Software, Ads…).' },
+        project: {
+          type: 'string',
+          description:
+            'Optional client/project this expense belongs to, if the owner named one ("Lotus Clinic", ' +
+            '"Claude Malaysia"). Leave empty if they did not — never guess which client pays for something.',
+        },
       },
       required: ['merchant', 'amount'],
     },
@@ -149,9 +157,15 @@ export async function runBotAction(name: string, input: any, ctx: BotActionCtx):
       const amount = Number(input?.amount)
       const merchant = String(input?.merchant || '').trim()
       if (!Number.isFinite(amount) || amount <= 0) return JSON.stringify({ status: 'error', message: 'I need a positive amount to log.' })
+      // Tag it to a client when the owner named one. An unmatched or ambiguous
+      // name files untagged rather than landing on the wrong client's P&L.
+      const tagged = input?.project ? matchProject(String(input.project)) : null
+      const project = tagged && 'project' in tagged ? tagged.project : undefined
       const payload = {
         kind: 'receipt', amount, merchant,
         category: input?.category || undefined,
+        project: project?.id,
+        project_name: project?.name,
         note: 'Logged via Jarvis (typed, no photo)',
         idempotencyKey: randomUUID(),
       }
@@ -160,14 +174,15 @@ export async function runBotAction(name: string, input: any, ctx: BotActionCtx):
         if (!done) return JSON.stringify({ status: 'noop', message: 'That looked already handled — nothing double-filed.' })
         return JSON.stringify({
           status: 'filed', zone: 'green', record_id: done.row.id,
-          filed: `${rm(done.result.amount)} · ${done.result.category || 'expense'}${merchant ? ' · ' + merchant : ''}`,
+          filed: `${rm(done.result.amount)} · ${done.result.category || 'expense'}${merchant ? ' · ' + merchant : ''}${project ? ' → ' + project.name : ''}`,
+          project: project?.name ?? null,
           undo: `/undo-${done.row.id}`,
           tell_user: 'Filed automatically because it is at/under the auto-file limit. Offer the /undo id.',
         })
       }
       const row = await proposeAndNotify({
         agentKey: 'expense', idempotencyKey: payload.idempotencyKey, payload, chatId,
-        text: `🧾 Log expense <b>${rm(amount)}</b>${merchant ? ` · ${merchant}` : ''}? That is over your RM${thresholdRM} auto-file limit.`,
+        text: `🧾 Log expense <b>${rm(amount)}</b>${merchant ? ` · ${merchant}` : ''}${project ? ` → <b>${project.name}</b>` : ''}? That is over your RM${thresholdRM} auto-file limit.`,
       })
       return JSON.stringify(
         row

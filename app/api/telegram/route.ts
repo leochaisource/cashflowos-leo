@@ -15,6 +15,7 @@ import { claim, executeClaimed, summarizeResult, undoAction, runAutopilot, propo
 import { readImage, type VisionResult } from '@/lib/vision'
 import { BOT_TOOLS, runBotTool } from '@/lib/bot-tools'
 import { BOT_ADS_TOOLS, ADS_TOOL_NAMES, runBotAdsTool } from '@/lib/bot-ads-tools'
+import { matchProject } from '@/lib/ad-clients'
 import { BOT_ACTION_TOOLS, ACTION_TOOL_NAMES, runBotAction } from '@/lib/bot-actions'
 import { SCHEDULED } from '@/agents/registry'
 import { jarvisIdentity, jarvisName } from '@/jarvis/config'
@@ -73,7 +74,11 @@ const HELP_CARD =
   `🚨 <b>Triage</b> — "what needs my attention today?"\n` +
   `📈 <b>Ads</b> — "how are the ads doing?" · "what's my CPL?" · "which ad is winning?" · ` +
   `"which ad is wasting money?" · "any new leads today?" · "what's the ROAS on Claude Malaysia?"\n` +
-  `   Say <i>"refresh"</i> or <i>"live numbers"</i> and I'll pull straight from Meta instead of this morning's snapshot.\n\n` +
+  `   Say <i>"refresh"</i> or <i>"live numbers"</i> and I'll pull straight from Meta instead of this morning's snapshot.\n` +
+  `🔎 <b>Just send a name</b> — "Rachel Ong" or "Sunway" and I'll tell you their stage, how warm they ` +
+  `are, when to follow up, which ad brought them, and what they owe you by when.\n` +
+  `🧾 <b>Send a receipt photo</b> — I read it and file it. Caption it with a client ` +
+  `(<i>"Lotus Clinic — venue deposit"</i>) and it lands in that project's expenses.\n\n` +
   `I can also <b>DO</b> things — "log RM45 Grab", "add task chase supplier Friday", ` +
   `"add lead Angela 8000", "mark ABC invoice paid", "move Koochester to appointment".\n` +
   `Small stuff I just do (reply <code>/undo-&lt;id&gt;</code> to reverse). Money stuff I propose ` +
@@ -361,7 +366,15 @@ async function answerWithTools(chatId: number, text: string, apiKey: string): Pr
     `numbers live in a different table. If the owner doesn't say which client, call list_projects first ` +
     `and either answer across all of them or ask which one. Those tools read this morning's snapshot; ` +
     `call refresh_ads only if they ask for live/current numbers, and say you pulled it fresh from Meta.\n` +
-    `GROUNDING: always base money/pipeline/ad answers on a tool result — never guess a number. ` +
+    `A NAME ON ITS OWN — if the owner sends just a person or company name ("Rachel Ong", "Sunway"), or ` +
+    `asks where someone is at, whether to chase them, or what they owe, call lookup_person FIRST. It ` +
+    `returns their stage, how warm they look and why, when to follow up, the ad that brought them, and ` +
+    `every unpaid invoice with its due date and days overdue. Answer with the stage, the interest ` +
+    `level WITH its reason, the follow-up timing, and the money — in that order, in a few short lines.\n` +
+    `RECEIPTS — a photo files itself; the caption picks the client ("Lotus Clinic — venue deposit"). If ` +
+    `the owner asks how to tag a receipt to a project, tell them to caption the photo with the client's ` +
+    `name. For a typed expense, pass the project only if they named one.\n` +
+    `GROUNDING: always base money/pipeline/ad/person answers on a tool result — never guess a number. ` +
     `A null in an ads tool result means NOT RECORDED — say "not tracked yet", never report it as zero.\n` +
     `ACTING — the autonomy dial: for add_task / add_lead / a small log_expense the tool runs it ` +
     `immediately; tell the owner it's done and include the exact /undo-<id> the tool returned. For ` +
@@ -427,7 +440,7 @@ async function answerWithTools(chatId: number, text: string, apiKey: string): Pr
             : // Ads tools query ad_daily / the leads sheet / Meta, so they're async
               // and don't touch `rows` at all — a different table, a different world.
               ADS_TOOL_NAMES.has(t.name)
-              ? await runBotAdsTool(t.name, t.input)
+              ? await runBotAdsTool(t.name, t.input, rows)
               : runBotTool(t.name, t.input, rows)
           return {
             type: 'tool_result' as const,
@@ -543,6 +556,14 @@ async function runVaultPipeline(msg: any): Promise<void> {
     }
   }
 
+  // WHICH PROJECT does this receipt belong to? Telegram sends the caption typed
+  // with the photo, so "Lotus Clinic — venue deposit" files it against that
+  // client. Without a caption it still files, just untagged: an expense on the
+  // wrong client's P&L is worse than one that needs sorting later.
+  const caption = String(msg.caption ?? '').trim()
+  const matched = caption ? matchProject(caption) : { candidates: [] as ReturnType<typeof matchProject>['candidates'] }
+  const project = 'project' in matched ? matched.project : undefined
+
   // The immutable payload every downstream step reads (executor + /undo).
   const isExpense = typeof v.amount === 'number' && v.amount > 0 && v.kind !== 'doc'
   const payload = {
@@ -551,6 +572,9 @@ async function runVaultPipeline(msg: any): Promise<void> {
     merchant: v.merchant,
     date: v.date,
     category: v.category,
+    project: project?.id,
+    project_name: project?.name,
+    note: caption || undefined,
     sha256,
     storage_path: storagePath,
     mime,
@@ -569,7 +593,14 @@ async function runVaultPipeline(msg: any): Promise<void> {
       await sendMessage(
         chatId,
         `✅ Filed ${rm(done.result.amount)} · ${done.result.category || 'expense'}` +
-          `${payload.merchant ? ` · ${payload.merchant}` : ''} — reply <code>/undo-${done.row.id}</code> within 24h to reverse.`,
+          `${payload.merchant ? ` · ${payload.merchant}` : ''}` +
+          `${project ? ` → <b>${project.name}</b>` : ''} — reply <code>/undo-${done.row.id}</code> within 24h to reverse.` +
+          // Say when it went in untagged, and how to fix it, rather than letting
+          // it quietly land in nobody's project.
+          (project
+            ? ''
+            : `\n\n📌 Not tagged to a project. Send the next one with a caption like ` +
+              `"<i>Lotus Clinic — venue deposit</i>" and I'll file it against that client.`),
       )
     } else {
       // Duplicate event or a failed executor (already recorded in Activity).
@@ -580,7 +611,12 @@ async function runVaultPipeline(msg: any): Promise<void> {
 
   // ---- 🟡 ASK-FIRST: propose + Approve/Reject buttons. ----
   const key = isExpense ? 'expense' : 'vault'
-  const text = buildProposalText(v, threshold())
+  const text =
+    buildProposalText(v, threshold(), project?.name) +
+    // Ambiguous caption ("clinic" when two clients are clinics) must ask, never pick.
+    (!project && matched.candidates.length > 1 && caption
+      ? `\n\n📌 I couldn't tell which project from "${htmlEsc(caption)}" — approve and it files untagged, or send it again naming one: ${matched.candidates.map((c) => c.name).join(' · ')}.`
+      : '')
   const row = await proposeAndNotify({
     agentKey: key,
     idempotencyKey: payload.idempotencyKey,
@@ -597,22 +633,28 @@ async function runVaultPipeline(msg: any): Promise<void> {
 // The 🟡 proposal wording. Low confidence gets the "robot unsure" flag so the human
 // double-checks the amount (the evaluation-loop teach); a clear over-threshold
 // expense states the number; a plain document just asks to file.
-function buildProposalText(v: VisionResult, limit: number): string {
+/** Telegram parse_mode=HTML: a caption typed by a human can contain < & >. */
+const htmlEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+function buildProposalText(v: VisionResult, limit: number, projectName?: string): string {
   const unsure = v.confidence === 'low'
   const amt = typeof v.amount === 'number' ? rm(v.amount) : 'an unclear amount'
   const bits = [v.merchant, v.date].filter(Boolean).join(' · ')
+  // Show which client it lands on BEFORE the owner taps Approve — that's the
+  // one detail they can't correct afterwards without an /undo.
+  const tag = projectName ? ` → <b>${projectName}</b>` : ''
   if (unsure) {
     return (
       `⚠️ <b>Robot unsure</b> — I couldn't read this clearly` +
       `${v.missing?.length ? ` (missing: ${v.missing.join(', ')})` : ''}. ` +
-      `My best guess: ${amt}${bits ? ` · ${bits}` : ''}. Double-check, then file it?`
+      `My best guess: ${amt}${bits ? ` · ${bits}` : ''}${tag}. Double-check, then file it?`
     )
   }
   if (typeof v.amount === 'number' && v.amount > 0) {
     return (
-      `🧾 Receipt read: <b>${amt}</b>${bits ? ` · ${bits}` : ''}. ` +
+      `🧾 Receipt read: <b>${amt}</b>${bits ? ` · ${bits}` : ''}${tag}. ` +
       `That's over your RM${limit} auto-file limit — file it to Cash Out?`
     )
   }
-  return `🗂️ Looks like a document${v.merchant ? ` from ${v.merchant}` : ''}. File it to your Vault?`
+  return `🗂️ Looks like a document${v.merchant ? ` from ${v.merchant}` : ''}${tag}. File it to your Vault?`
 }

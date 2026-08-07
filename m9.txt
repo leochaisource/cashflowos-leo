@@ -1,0 +1,30 @@
+feat(bot): answer "who is this person", tag receipts to a client, show project costs
+
+Three things the owner asked the bot for and it could not do.
+
+1. A NAME ON ITS OWN. lookup_person searches the pipeline, the customer list,
+   the invoices AND the live leads sheet at once, and returns the stage, how warm
+   they look WITH the evidence for it, when to follow up, which ad brought them,
+   and every unpaid invoice with its due date and days overdue. Money that is
+   late outranks a written next action, because chasing it IS the next action.
+   Verified against real rows: a paid lead reads "customer / has paid" with the
+   ad that produced them; a client with a 5-day-old invoice reads "today — chase
+   RM 2,200, 5 day(s) overdue"; an unknown name says so instead of guessing.
+
+2. RECEIPTS NOW BELONG TO A CLIENT. The photo caption picks the project
+   ("Lotus Clinic — venue deposit"), matched by lib/ad-clients.matchProject and
+   carried through the payload into meta.project, so the same tag lands whether
+   it arrived by photo, by typed expense, or by hand. An ambiguous caption ASKS
+   rather than picking — a receipt on the wrong client's P&L is worse than one
+   that needs sorting later — and an untagged file says so and shows the caption
+   format. Proven end to end: a test receipt filed through the real executor
+   came back with meta.project set, and was cleaned up.
+
+3. THE TAG NOW HAS A PAYOFF. Project pages show the receipts filed against that
+   client, the true total cost (media plus everything else) and net against cash
+   collected. Before this you could tag a receipt and watch nothing happen.
+
+Also fixes the person heuristic ignoring customer rows, which reported a client
+with RM 3,970 outstanding as "interest: unknown, no activity recorded".
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

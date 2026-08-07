@@ -1,7 +1,9 @@
 import 'server-only'
-import { PROJECTS, getProject, type Project } from './ad-clients'
+import { PROJECTS, getProject, matchProject, type Project } from './ad-clients'
 import { scorecards, projectScorecard, WINNER_MIN_LEADS, LOSER_MIN_IMPRESSIONS } from './metrics'
 import { syncProjectAds } from './ad-sync'
+import { loadSheetLeads, type SheetLead } from './leads-sheet'
+import { todayISO, type Rec } from './records'
 
 // The bot's ADS hands.
 //
@@ -28,14 +30,7 @@ function resolve(q: string | undefined): { project?: Project; candidates?: Proje
   if (!q || !q.trim()) {
     return PROJECTS.length === 1 ? { project: PROJECTS[0] } : { candidates: PROJECTS }
   }
-  const needle = q.trim().toLowerCase()
-  const exact = getProject(needle)
-  if (exact) return { project: exact }
-  const hits = PROJECTS.filter((p) =>
-    [p.id, p.name, p.client ?? ''].some((s) => s.toLowerCase().includes(needle) || needle.includes(s.toLowerCase())),
-  )
-  if (hits.length === 1) return { project: hits[0] }
-  return { candidates: hits.length ? hits : PROJECTS }
+  return matchProject(q)
 }
 
 const ask = (candidates: Project[]) =>
@@ -124,6 +119,23 @@ export const BOT_ADS_TOOLS = [
     },
   },
   {
+    name: 'lookup_person',
+    description:
+      'EVERYTHING known about one person or company, by name: which funnel stage they are in, how ' +
+      'interested they look, when they were last touched and when to follow up, what ad brought them, ' +
+      'what they have paid, and what they still owe with the due date and how late it is. ' +
+      'Use this whenever the owner just types a name ("Rachel Ong", "Sunway"), or asks "where is X", ' +
+      '"should I chase X", "does X owe me", "what stage is X at", "is X interested". ' +
+      'Searches the pipeline, the customer list, the invoices AND the live leads sheet at once.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string', description: 'The person or company name, or part of it. Phone or email also works.' },
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'refresh_ads',
     description:
       'Pull fresh numbers from Meta RIGHT NOW for a project, instead of using this morning snapshot. ' +
@@ -142,10 +154,158 @@ export const BOT_ADS_TOOLS = [
 
 export const ADS_TOOL_NAMES = new Set(BOT_ADS_TOOLS.map((t) => t.name))
 
+// ---------------------------------------------------------------- one person
+const PAID_STATUS = new Set(['paid', 'closed', 'won', 'executed', 'filed'])
+const daysBetween = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 86_400_000)
+
+/**
+ * How warm someone looks, from what the data actually shows. Deliberately
+ * mechanical — it reports the evidence alongside the label so the bot can say
+ * WHY, and nobody mistakes a heuristic for a scoring model.
+ */
+function interestLevel(
+  sheet: SheetLead | undefined,
+  lead: Rec | undefined,
+  customer: Rec | undefined,
+  owes: number,
+): { level: string; because: string } {
+  if (sheet?.paid || (lead && PAID_STATUS.has((lead.status || '').toLowerCase())))
+    return { level: 'customer', because: 'has paid' }
+  // Someone on the customer list has already bought — the question for them is
+  // collection, not interest.
+  if (customer)
+    return owes > 0
+      ? { level: 'customer', because: `on the books with RM ${owes.toLocaleString('en-MY')} outstanding` }
+      : { level: 'customer', because: 'on the customer list, nothing outstanding' }
+  const stage = (lead?.status || '').toLowerCase()
+  if (stage === 'appointment' || sheet?.booked)
+    return { level: 'hot', because: 'has an appointment booked' }
+  if (sheet?.attended) return { level: 'warm', because: 'attended the session' }
+  if (stage === 'contacted' || (lead && lead.meta?.next)) return { level: 'warm', because: 'has been contacted and has a next step' }
+  if (stage === 'nurture') return { level: 'cold', because: 'parked in nurture' }
+  if (sheet) {
+    const age = sheet.date ? daysBetween(todayISO(), sheet.date) : 0
+    return age > 5
+      ? { level: 'going cold', because: `opted in ${age} days ago and nobody has followed up` }
+      : { level: 'new', because: `opted in ${age} day(s) ago, not yet contacted` }
+  }
+  return { level: 'unknown', because: 'no activity recorded' }
+}
+
+async function lookupPerson(q: string, rows: Rec[]): Promise<string> {
+  const needle = q.trim().toLowerCase()
+  if (!needle) return JSON.stringify({ error: 'no name given' })
+
+  const hit = (s: unknown) => String(s ?? '').toLowerCase().includes(needle)
+  const matches = rows.filter(
+    (r) => hit(r.title) || hit(r.meta?.customer) || hit(r.meta?.merchant) || hit(r.notes),
+  )
+
+  // The same person can appear in the leads sheet of any project.
+  let sheetLead: SheetLead | undefined
+  let sheetProject: string | undefined
+  for (const p of PROJECTS.filter((x) => x.leadsSheet)) {
+    const { leads } = await loadSheetLeads(p)
+    const found = leads.find(
+      (l) => hit(l.name) || (needle.length > 5 && (hit(l.phone) || hit(l.email))),
+    )
+    if (found) {
+      sheetLead = found
+      sheetProject = p.name
+      break
+    }
+  }
+
+  if (!matches.length && !sheetLead)
+    return JSON.stringify({ found: false, searched: q, message: 'nobody by that name in the pipeline, the customer list, the invoices or the leads sheet' })
+
+  const today = todayISO()
+  const lead = matches.find((r) => r.category === 'lead')
+  const customer = matches.find((r) => r.category === 'customer')
+  const invoices = matches
+    .filter((r) => r.category === 'cash_in' && !PAID_STATUS.has((r.status || '').toLowerCase()))
+    .map((r) => ({
+      what: r.title,
+      amount: Number(r.amount) || 0,
+      status: r.status,
+      due: r.due_date,
+      days_overdue: r.due_date && r.due_date < today ? daysBetween(today, r.due_date) : 0,
+      days_until_due: r.due_date && r.due_date >= today ? daysBetween(r.due_date, today) : 0,
+    }))
+  const paidInvoices = matches
+    .filter((r) => r.category === 'cash_in' && PAID_STATUS.has((r.status || '').toLowerCase()))
+    .map((r) => ({ what: r.title, amount: Number(r.amount) || 0 }))
+  const openTasks = matches.filter((r) => r.category === 'task' && !PAID_STATUS.has((r.status || '').toLowerCase()))
+
+  const owesNow = invoices.reduce((s, i) => s + i.amount, 0)
+  const { level, because } = interestLevel(sheetLead, lead, customer, owesNow)
+  const lastTouch = (customer?.meta?.last_touch as string) || sheetLead?.date || null
+  const nextAction =
+    (lead?.meta?.next as string) || (customer?.meta?.next as string) || sheetLead?.nextAction || null
+
+  return JSON.stringify({
+    found: true,
+    name: lead?.title || customer?.title || sheetLead?.name || q,
+    interest: level,
+    interest_because: because,
+    // Funnel position, in the words the pipeline actually uses.
+    stage: lead?.status ?? (customer ? 'customer' : sheetLead ? 'opted in (not yet in the pipeline)' : null),
+    deal_value: lead ? Number(lead.meta?.potential ?? lead.amount) || null : null,
+    last_touch: lastTouch,
+    days_since_touch: lastTouch ? daysBetween(today, lastTouch) : null,
+    next_action: nextAction,
+    // Follow-up timing: a concrete recommendation, not "soon".
+    // Money that is late outranks a written next action — chasing it IS the
+    // next action, and the number of days makes the call concrete.
+    follow_up: invoices.some((i) => i.days_overdue > 0)
+      ? `today — chase RM ${invoices
+          .filter((i) => i.days_overdue > 0)
+          .reduce((s, i) => s + i.amount, 0)
+          .toLocaleString('en-MY')}, ${Math.max(...invoices.map((i) => i.days_overdue))} day(s) overdue` +
+        (nextAction ? ` (planned: ${nextAction})` : '')
+      : nextAction
+      ? `already planned: ${nextAction}`
+      : level === 'hot'
+        ? 'today — they have an appointment and no next step written down'
+        : level === 'going cold'
+          ? 'today — they have been waiting several days with no contact'
+          : level === 'customer'
+            ? 'no chase needed for the sale; check delivery/onboarding'
+            : 'within 24 hours while the opt-in is fresh',
+    from_leads_sheet: sheetLead
+      ? {
+          project: sheetProject,
+          opted_in: sheetLead.date,
+          days_waiting: sheetLead.date ? daysBetween(today, sheetLead.date) : null,
+          ad_that_brought_them: sheetLead.ad || null,
+          placement: sheetLead.source || null,
+          session: sheetLead.webinar || null,
+          phone: sheetLead.phone || null,
+          email: sheetLead.email || null,
+          paid: sheetLead.paid,
+          paid_amount: sheetLead.paidAmount,
+          attended: sheetLead.attended,
+          booked_1_1: sheetLead.booked,
+        }
+      : null,
+    money: {
+      owes_now: owesNow,
+      unpaid_invoices: invoices,
+      overdue_count: invoices.filter((i) => i.days_overdue > 0).length,
+      already_paid: paidInvoices,
+      declared_owing_on_customer_row: (customer?.meta?.owes as number) ?? null,
+    },
+    open_tasks: openTasks.map((t) => ({ task: t.title, due: t.due_date })),
+    records_matched: matches.length,
+  })
+}
+
 // ---------------------------------------------------------------- execution
-export async function runBotAdsTool(name: string, input: any): Promise<string> {
+export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []): Promise<string> {
   try {
     const days = Number.isFinite(Number(input?.days)) ? Math.min(Math.max(Number(input.days), 1), 90) : WINDOW
+
+    if (name === 'lookup_person') return await lookupPerson(String(input?.name ?? ''), rows)
 
     if (name === 'list_projects') {
       const cards = await scorecards(PROJECTS, days)
