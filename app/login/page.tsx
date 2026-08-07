@@ -40,7 +40,8 @@ export default function Login() {
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
         <div className="brand" style={{ marginBottom: 8 }}>
-          <span className="logo" aria-hidden="true">🤖</span> CashFlowOS AI Agents
+          <img className="logo" src="/icons/firstin5-logo.svg" alt="" width={26} height={26} />
+          Firstin5 Dashboard
         </div>
         <h1 className="ph" style={{ fontSize: 18 }}>Enter your passcode</h1>
         <p className="cap" style={{ margin: '4px 0 16px' }}>

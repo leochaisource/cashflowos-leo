@@ -2,23 +2,25 @@
 //
 //   node --env-file-if-exists=.env scripts/marketing-dry-run.ts
 //
-// READ-ONLY BY CONSTRUCTION: it selects from `records` and prints. It never
+// READ-ONLY BY CONSTRUCTION: it selects from `ad_daily` and prints. It never
 // imports lib/actions.ts, so there is no propose(), no claim(), no executor, and
 // no Telegram call reachable from this file.
 //
 // It imports the SAME definition.ts + prompt.ts the cron uses, so what you read
 // here is what the head will actually say — not a second implementation that can
 // drift. (Both of those files are deliberately runtime-import-free, which is what
-// lets plain node run them without Next's `@/` alias.)
+// lets plain node run them without Next's `@/` alias or `server-only`.)
 
 import {
-  adStats,
+  aggregate,
   baseline,
   findings,
-  minClicks,
-  cvrFloor,
+  wastedSpend,
+  windowDays,
+  minSpend,
+  minWaste,
+  minLeadsToWin,
   maxProposals,
-  scaleMinClicks,
 } from '../agents/marketing/definition.ts'
 import { headline, suggest } from '../agents/marketing/prompt.ts'
 
@@ -29,68 +31,73 @@ if (!url || !key) {
   process.exit(1)
 }
 
-const pct = (n: number) => `${(n * 100).toFixed(2)}%`
+const rm = (n: number) => 'RM ' + Number(n || 0).toLocaleString('en-MY', { maximumFractionDigits: 2 })
 const int = (n: number) => Number(n || 0).toLocaleString('en-MY')
 const strip = (s: string) => s.replace(/<\/?b>/g, '')
 
-const res = await fetch(`${url}/rest/v1/records?select=*&category=eq.content`, {
-  headers: { apikey: key, Authorization: `Bearer ${key}` },
-})
+const since = new Date()
+since.setDate(since.getDate() - windowDays())
+const sinceISO = since.toISOString().slice(0, 10)
+
+const res = await fetch(
+  `${url}/rest/v1/ad_daily?select=*&date=gte.${sinceISO}&limit=20000`,
+  { headers: { apikey: key, Authorization: `Bearer ${key}` } },
+)
 if (!res.ok) {
   console.error(`Supabase read failed: ${res.status} ${await res.text()}`)
   process.exit(1)
 }
-const rows = (await res.json()).map((r: any) => ({ ...r, meta: r.meta ?? {} }))
+const days = await res.json()
 
 console.log('\n📣  HEAD OF MARKETING — DRY RUN (nothing will be written)\n')
 console.log(
-  `Dials: min ${minClicks()} clicks · flag below ${cvrFloor() * 100}% of average CVR · ` +
-    `cap ${maxProposals()} problems · winner needs ${scaleMinClicks()} clicks\n`,
+  `Dials: last ${windowDays()} days · ignore ads under ${rm(minSpend())} spend · ` +
+    `flag once ${rm(minWaste())} above baseline · winner needs ${minLeadsToWin()} leads · cap ${maxProposals()}\n`,
 )
 
-const stats = adStats(rows)
-const base = baseline(stats)
+const ads = aggregate(days)
+const base = baseline(ads)
 
-console.log(`${rows.length} content rows → ${stats.length} ads with enough clicks to judge.`)
+console.log(`${int(days.length)} ad-days since ${sinceISO} → ${ads.length} ads.`)
 if (!base) {
-  console.log('\nNo qualifying ads. The head would stay silent today.\n')
+  console.log('\nNo spend or no leads in the window. The head would stay silent today.\n')
   process.exit(0)
 }
 
 console.log(
-  `\nYOUR BASELINE (pooled across ${base.ads} ads)\n` +
-    `  ${int(base.leads)} leads · ${int(base.clicks)} clicks · ${int(base.views)} views · ${int(base.reach)} reach\n` +
-    `  ${pct(base.ctr)} CTR   ${pct(base.cvr)} click→lead   (flag below ${pct(base.cvr * cvrFloor())})`,
+  `\nYOUR BASELINE\n  ${rm(base.spend)} spend → ${int(base.leads)} leads across ${base.ads} ads\n` +
+    `  ${rm(base.cpl)} per lead`,
 )
 
-console.log('\nEVERY AD, WORST CONVERTER FIRST')
-console.log('  ' + 'ad'.padEnd(36) + 'clicks'.padStart(8) + 'leads'.padStart(7) + 'CTR'.padStart(9) + 'CVR'.padStart(9))
-for (const s of [...stats].sort((a, b) => a.cvr - b.cvr)) {
+console.log('\nEVERY AD, BIGGEST LEAK FIRST')
+console.log(
+  '  ' + 'ad'.padEnd(38) + 'spend'.padStart(10) + 'leads'.padStart(7) + 'CPL'.padStart(11) + 'vs base'.padStart(11),
+)
+for (const a of [...ads].sort((x, y) => wastedSpend(y, base) - wastedSpend(x, base))) {
+  const w = wastedSpend(a, base)
   console.log(
     '  ' +
-      s.title.slice(0, 34).padEnd(36) +
-      int(s.clicks).padStart(8) +
-      int(s.leads).padStart(7) +
-      pct(s.ctr).padStart(9) +
-      pct(s.cvr).padStart(9),
+      a.name.slice(0, 36).padEnd(38) +
+      a.spend.toFixed(2).padStart(10) +
+      int(a.leads).padStart(7) +
+      (a.cpl === null ? 'no leads' : a.cpl.toFixed(2)).padStart(11) +
+      `${w >= 0 ? '+' : ''}${w.toFixed(0)}`.padStart(11),
   )
 }
 
-const list = findings(stats, base)
-console.log(`\n${'─'.repeat(78)}`)
+const list = findings(ads, base)
+console.log(`\n${'─'.repeat(80)}`)
 console.log(`WOULD PROPOSE: ${list.length} recommendation(s) — 🟡 every one needs your YES\n`)
 
-if (list.length === 0) console.log('  Nothing to say — no ad is below your floor.\n')
+if (list.length === 0) console.log('  Nothing to say — no ad is leaking above the floor.\n')
 
 list.forEach((f, i) => {
-  const id = `marketing-triage:${f.issue}:${f.stat.id}:${Math.floor(f.stat.clicks / 100)}`
+  const id = `marketing-triage:${f.issue}:${f.ad.adId}:${Math.floor(f.ad.spend / 100)}`
   console.log(`${i + 1}. [${f.issue.toUpperCase()}]  ${strip(headline(f, base))}`)
   console.log(`   idempotency: ${id}`)
-  console.log(
-    '   ' + suggest(f, base).split('\n').join('\n   '),
-  )
+  console.log('   ' + suggest(f, base).split('\n').join('\n   '))
   console.log()
 })
 
-console.log('─'.repeat(78))
+console.log('─'.repeat(80))
 console.log('Nothing was written. To make these real, run the daily cron.\n')

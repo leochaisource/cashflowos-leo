@@ -288,7 +288,9 @@ async function runAgentNow(
   const rows = await getRecords()
   let drafts: { idempotencyKey: string; payload: any; text: string; auto?: boolean }[] = []
   try {
-    drafts = agent.check(rows, todayISO())
+    // `await` because a check may READ before it proposes (the Head of Marketing
+    // reads `ad_daily`). A sync check awaits harmlessly.
+    drafts = await agent.check(rows, todayISO())
   } catch (e) {
     console.error(`[CFO] scheduled check "${agent.key}" threw:`, e)
     await sendMessage(chatId, `⚠️ ${agent.label} hit an error — it's logged, nothing was done.`)

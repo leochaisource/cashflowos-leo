@@ -13,9 +13,18 @@
 //    numbers. `marketing` is the worked example — copy its shape.
 
 import type { Rec } from '@/lib/records'
-import { adStats, baseline, findings } from './marketing/definition'
+import { baseline, findings, type AdAgg } from './marketing/definition'
 
 export type HeadKey = 'sales' | 'marketing' | 'finance' | 'ops'
+
+// Everything a head is allowed to look at, gathered ONCE by the page and handed
+// to every head. Keeps brief() synchronous and pure — the heads do lensing, not
+// fetching, so a new head can never add a surprise query to the render path.
+export type HeadContext = {
+  rows: Rec[] // the `records` spine
+  ads: AdAgg[] // `ad_daily`, rolled up per ad (empty when nothing has synced)
+  today: string
+}
 
 // 'live'    — turned on, sweeping, and has fuel to work with.
 // 'off'     — the data is there, but nobody has wired the agent up yet.
@@ -35,7 +44,7 @@ export type Head = {
   watches: string[] // which `records` categories it reads
   agentKeys: string[] // which registry agents report to it
   dial: string // where its 🟢/🟡 line sits, in words
-  brief: (rows: Rec[], today: string) => HeadBrief
+  brief: (ctx: HeadContext) => HeadBrief
 }
 
 const inCat = (rows: Rec[], ...cats: string[]) => rows.filter((r) => cats.includes(r.category || ''))
@@ -50,7 +59,7 @@ export const HEADS: Head[] = [
     watches: ['lead', 'customer'],
     agentKeys: ['cold-lead', 'viewing-followup'],
     dial: '🟡 Drafts every follow-up — a message to a real person is never autopilot.',
-    brief: (rows) => {
+    brief: ({ rows }) => {
       const leads = inCat(rows, 'lead')
       if (leads.length === 0)
         return { state: 'no-fuel', headline: 'No lead rows yet — nothing to work.', count: 0 }
@@ -71,37 +80,35 @@ export const HEADS: Head[] = [
     watches: ['content'],
     agentKeys: ['marketing-triage', 'content-approval'],
     dial: '🟡 Every kill/scale call asks first — it has no hands in your ad account.',
-    brief: (rows) => {
-      const stats = adStats(rows)
-      const base = baseline(stats)
-      if (!base) {
-        const anyContent = inCat(rows, 'content').length
+    brief: ({ ads }) => {
+      const base = baseline(ads)
+      if (!base)
         return {
           state: 'no-fuel',
-          headline: anyContent
-            ? `${anyContent} content rows, but none with enough ad clicks to judge yet.`
-            : 'No content rows yet — nothing to grade.',
+          headline: ads.length
+            ? `${ads.length} ads synced, but no leads recorded yet — no cost per lead to grade against.`
+            : 'No ad spend synced yet — nothing to grade.',
           count: 0,
         }
-      }
-      const list = findings(stats, base)
+
+      const money = (n: number) => 'RM ' + n.toLocaleString('en-MY', { maximumFractionDigits: 0 })
+      const list = findings(ads, base)
+      const leak = list.filter((f) => f.issue !== 'scale').reduce((s, f) => s + f.wastedSpend, 0)
       const problems = list.filter((f) => f.issue !== 'scale').length
-      const scaling = list.filter((f) => f.issue === 'scale').length
+
       if (list.length === 0)
         return {
           state: 'live',
-          headline: `${base.ads} ads graded — none below your ${(base.cvr * 100).toFixed(1)}% average. All clear.`,
+          headline: `${base.ads} ads graded at ${money(base.cpl)}/lead — nothing leaking. All clear.`,
           count: 0,
         }
+
       const bits = [
-        problems ? `${problems} ad${problems > 1 ? 's' : ''} converting below your average` : '',
-        scaling ? `${scaling} to scale` : '',
+        problems ? `${money(leak)} above your ${money(base.cpl)}/lead average across ${problems} ad${problems > 1 ? 's' : ''}` : '',
+        list.some((f) => f.issue === 'scale') ? '1 to scale' : '',
       ].filter(Boolean)
-      return {
-        state: 'live',
-        headline: `${base.ads} ads graded · ${bits.join(' · ')}.`,
-        count: list.length,
-      }
+
+      return { state: 'live', headline: `${base.ads} ads graded · ${bits.join(' · ')}.`, count: list.length }
     },
   },
 
@@ -113,7 +120,7 @@ export const HEADS: Head[] = [
     watches: ['cash_in', 'cash_out'],
     agentKeys: ['overdue-invoice', 'expense', 'vault'],
     dial: '🟢 Files spend at or under your threshold · 🟡 asks above it. Never moves money.',
-    brief: (rows) => {
+    brief: ({ rows }) => {
       const owed = inCat(rows, 'cash_in').filter((r) => !isStatus(r, 'paid', 'done', 'closed', 'reversed'))
       if (inCat(rows, 'cash_in').length === 0)
         return {
@@ -137,7 +144,7 @@ export const HEADS: Head[] = [
     watches: ['task', 'doc'],
     agentKeys: ['leave-claim', 'renewal-nudge'],
     dial: '🟢 Files and labels docs · 🟡 asks before any status change with money impact.',
-    brief: (rows) => {
+    brief: ({ rows }) => {
       const work = inCat(rows, 'task', 'doc')
       if (work.length === 0)
         return { state: 'no-fuel', headline: 'No task or doc rows yet — nothing to watch.', count: 0 }

@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
-import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
+import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 import { AD_CLIENTS, keywordsForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, type AdClient } from '@/lib/ad-clients'
 import { campaignInsights, type Camp } from '@/lib/meta'
 import { syncProjectAds } from '@/lib/ad-sync'
@@ -50,50 +50,141 @@ function recipients(client: AdClient): string[] {
 // headline, CTA, landing URL, every image and video URL, and the untouched
 // payload. The previous version kept 6 truncated fields and binned the rest,
 // which is why this brief could only ever report counts.
-async function adyntelSearch(keyword: string, country: string): Promise<NormalisedAd[]> {
+/** Thrown when the account is out of credits, so one 402 stops the whole run. */
+class OutOfCredits extends Error {}
+
+type SearchResult = { ads: NormalisedAd[]; calls: number; complete: boolean; echo: Record<string, unknown> }
+
+/**
+ * One keyword × country, paginated.
+ *
+ * Adyntel returns ~30 ads and a `continuation_token`; passing the token back
+ * fetches the next slice until `is_result_complete` is true. We used to read
+ * page one and stop — which is why a broad keyword's results churned between
+ * runs and the brief kept reporting ads as "no longer appearing" when they had
+ * simply fallen off an unseen page.
+ *
+ * EVERY PAGE COSTS A CREDIT, so this is capped rather than exhaustive: pages
+ * are the one thing here that can quietly multiply the bill. `maxPages` is the
+ * dial, per client, and the caller is told when it stopped early so the brief
+ * can say it was looking at a slice.
+ */
+async function adyntelSearch(
+  keyword: string,
+  country: string,
+  maxPages = 1,
+  extra: Record<string, unknown> = {},
+): Promise<SearchResult> {
   const api_key = process.env.ADYNTEL_API_KEY?.trim()
   const email = process.env.ADYNTEL_EMAIL?.trim()
-  if (!api_key || !email) return []
-  const res = await fetch('https://api.adyntel.com/facebook_ad_search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ api_key, email, keyword, country_code: country }),
-    signal: AbortSignal.timeout(60000),
-  })
-  if (!res.ok) throw new Error(`Adyntel ${res.status} on "${keyword}" (${country})`)
-  const json = await res.json()
-  return flattenAds(json)
-    .map((a) => normaliseAd(a))
-    .filter((a) => a.ad_archive_id)
+  if (!api_key || !email) return { ads: [], calls: 0, complete: false, echo: {} }
+
+  const byId = new Map<string, NormalisedAd>()
+  let token: string | null = null
+  let calls = 0
+  let complete = false
+  let echo: Record<string, unknown> = {}
+
+  for (let page = 0; page < Math.max(1, maxPages); page++) {
+    const res = await fetch('https://api.adyntel.com/facebook_ad_search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key,
+        email,
+        keyword,
+        country_code: country,
+        ...extra,
+        ...(token ? { continuation_token: token } : {}),
+      }),
+      signal: AbortSignal.timeout(60000),
+    })
+    // 402 = "Insufficient tokens. Please top-up". Every remaining call would
+    // fail the same way and each one is a wasted round trip, so stop the run.
+    if (res.status === 402) throw new OutOfCredits('Adyntel is out of credits — top up at app.adyntel.com')
+    if (!res.ok) throw new Error(`Adyntel ${res.status} on "${keyword}" (${country})`)
+    calls++
+
+    const json = (await res.json()) as {
+      continuation_token?: string | null
+      is_result_complete?: boolean
+      [k: string]: unknown
+    }
+    // The API echoes back the filters it applied. Keeping the echo is how we
+    // find out whether an undocumented parameter was honoured or ignored.
+    if (page === 0)
+      echo = {
+        active_status: json.active_status,
+        media_types: json.media_types,
+        platform: json.platform,
+        search_type: json.search_type,
+        start_min_date: json.start_min_date,
+      }
+
+    for (const raw of flattenAds(json)) {
+      const ad = normaliseAd(raw)
+      if (ad.ad_archive_id && !byId.has(ad.ad_archive_id)) byId.set(ad.ad_archive_id, ad)
+    }
+
+    complete = json.is_result_complete === true
+    token = json.continuation_token ?? null
+    if (complete || !token) break
+  }
+
+  return { ads: Array.from(byId.values()), calls, complete, echo }
 }
 
 // ------------------------------------------------- competitor_ads (Supabase)
 // One row per individual ad PER CLIENT, upserted on
 // (client, competitor, ad_archive_id) so the same creative is updated rather
 // than duplicated, and first_seen_at survives across runs.
-async function loadPrior(clientId: string): Promise<PriorAd[]> {
+type PriorRow = PriorAd & { keywords: string[] | null }
+
+async function loadPrior(clientId: string): Promise<PriorRow[]> {
   if (!supabaseConfigured) return []
   const { data, error } = await supabase
     .from('competitor_ads')
-    .select('ad_archive_id, competitor, is_active, title, body_text')
+    .select('ad_archive_id, competitor, is_active, title, body_text, keywords')
     .eq('client', clientId)
   if (error) {
     console.error('[CFO] competitor_ads read failed:', error.message)
     return []
   }
-  return (data ?? []) as PriorAd[]
+  return (data ?? []) as PriorRow[]
 }
 
-async function saveAds(clientId: string, ads: NormalisedAd[], keyword: string): Promise<number> {
-  if (!supabaseConfigured || !ads.length) return 0
+/**
+ * One upsert for the whole run, with keywords UNIONED.
+ *
+ * This used to run once per keyword with `keywords: [keyword]`, so the last
+ * write won and the column ended up recording exactly one keyword per ad — the
+ * database claimed not a single ad had ever matched two of eleven overlapping
+ * AI terms, which cannot be true. An ad that shows up under three searches is a
+ * more central competitor than one that shows up under a single obscure term,
+ * and that ranking signal was being overwritten every morning.
+ */
+async function saveAds(
+  clientId: string,
+  ads: NormalisedAd[],
+  keywordsByAd: Map<string, Set<string>>,
+  prior: PriorRow[],
+): Promise<{ stored: number; note?: string }> {
+  if (!supabaseConfigured || !ads.length) return { stored: 0 }
+  const priorKeywords = new Map(prior.map((p) => [p.ad_archive_id, p.keywords ?? []]))
   const iso = (u: number | null) => (u === null ? null : new Date(u * 1000).toISOString())
-  const rows = ads.map((a) => ({
+  const rows = ads.map((a) => {
+    const media = mediaUrls(a) // reads cards[] too — carousels used to save with no media at all
+    const keywords = new Set([
+      ...(priorKeywords.get(a.ad_archive_id) ?? []),
+      ...(keywordsByAd.get(a.ad_archive_id) ?? []),
+    ])
+    return {
     client: clientId,
     competitor: a.page_name,
     page_id: a.page_id,
     ad_archive_id: a.ad_archive_id,
     last_seen_at: new Date().toISOString(),
-    keywords: [keyword],
+    keywords: Array.from(keywords),
     meta_start_date: iso(a.start_date),
     meta_end_date: iso(a.end_date),
     is_active: a.is_active,
@@ -110,21 +201,42 @@ async function saveAds(clientId: string, ads: NormalisedAd[], keyword: string): 
     display_format: a.display_format,
     publisher_platform: a.publisher_platform,
     collation_count: a.collation_count,
-    image_urls: a.images.map((i) => i.original_image_url ?? i.resized_image_url).filter(Boolean),
-    video_urls: a.videos.map((v) => v.video_hd_url ?? v.video_sd_url).filter(Boolean),
-    thumbnail_urls: a.videos.map((v) => v.video_preview_image_url).filter(Boolean),
+    image_urls: media.images,
+    video_urls: media.videos,
+    thumbnail_urls: media.thumbs,
+    page_like_count: a.page_like_count,
+    page_categories: a.page_categories,
+    page_profile_uri: a.page_profile_uri,
     raw_payload: a.raw_payload,
     updated_at: new Date().toISOString(),
-  }))
-  const { data, error } = await supabase
-    .from('competitor_ads')
-    .upsert(rows, { onConflict: 'client,competitor,ad_archive_id' })
-    .select('id')
-  if (error) {
+    }
+  })
+  const write = (payload: Record<string, unknown>[]) =>
+    supabase.from('competitor_ads').upsert(payload, { onConflict: 'client,competitor,ad_archive_id' }).select('id')
+
+  const { data, error } = await write(rows)
+  if (!error) return { stored: data?.length ?? 0 }
+
+  // The three advertiser-context columns are added by
+  // supabase/competitor-ads-enrich.sql. If that hasn't been run, PostgREST
+  // rejects the WHOLE batch over one unknown column — and a missing follower
+  // count is not worth losing a day of competitor tracking for. Drop them and
+  // write everything else, then say so out loud.
+  const missingColumn = /page_like_count|page_categories|page_profile_uri|schema cache/i.test(error.message)
+  if (!missingColumn) {
     console.error('[CFO] competitor_ads upsert failed:', error.message)
-    return 0
+    return { stored: 0, note: `Competitor ads not stored: ${error.message}` }
   }
-  return data?.length ?? 0
+  const trimmed = rows.map(({ page_like_count, page_categories, page_profile_uri, ...rest }) => rest)
+  const retry = await write(trimmed)
+  if (retry.error) {
+    console.error('[CFO] competitor_ads upsert failed:', retry.error.message)
+    return { stored: 0, note: `Competitor ads not stored: ${retry.error.message}` }
+  }
+  return {
+    stored: retry.data?.length ?? 0,
+    note: 'Stored without advertiser follower count/category — run supabase/competitor-ads-enrich.sql once to enable them.',
+  }
 }
 
 // ------------------------------------------------------------- one client
@@ -206,20 +318,50 @@ async function runClient(client: AdClient) {
   let competitors: NormalisedAd[] = []
   let stored = 0
   let credits = 0
+  let partial: string[] = []
+  let echo: Record<string, unknown> = {}
   try {
     const jobs = todaysKeywords.flatMap((k) => client.countries.map((c) => [k, c] as const))
+    const maxPages = client.adyntelMaxPages ?? 1
     const batches = await Promise.all(
-      jobs.map(([k, c]) => adyntelSearch(k, c).then((ads) => [k, ads] as const)),
+      jobs.map(([k, c]) =>
+        adyntelSearch(k, c, maxPages, client.adyntelParams ?? {}).then((r) => [k, c, r] as const),
+      ),
     )
-    credits = jobs.length
+
+    // Collect once, keyed by ad, remembering EVERY keyword that surfaced it —
+    // then a single upsert per run instead of one per keyword.
     const byId = new Map<string, NormalisedAd>()
-    for (const [keyword, ads] of batches) {
-      for (const ad of ads) if (!byId.has(ad.ad_archive_id)) byId.set(ad.ad_archive_id, ad)
-      stored += await saveAds(client.id, ads, keyword)
+    const keywordsByAd = new Map<string, Set<string>>()
+    for (const [keyword, country, r] of batches) {
+      credits += r.calls // pages, not searches: each page is a credit
+      if (!r.complete) partial.push(`${keyword} (${country})`)
+      if (!Object.keys(echo).length) echo = r.echo
+      for (const ad of r.ads) {
+        if (!byId.has(ad.ad_archive_id)) byId.set(ad.ad_archive_id, ad)
+        ;(keywordsByAd.get(ad.ad_archive_id) ?? keywordsByAd.set(ad.ad_archive_id, new Set()).get(ad.ad_archive_id)!).add(keyword)
+      }
     }
     competitors = Array.from(byId.values())
+    const saved = await saveAds(client.id, competitors, keywordsByAd, prior)
+    stored = saved.stored
+    if (saved.note) notes.push(saved.note)
+
+    // Say it plainly when the market read was a slice. Otherwise the brief's
+    // "no longer appearing" line silently blames the market for our own cap.
+    if (partial.length)
+      notes.push(
+        `Saw only the first ${maxPages} page(s) for ${partial.length} search(es) — more ads exist for: ${partial.slice(0, 4).join(', ')}${partial.length > 4 ? '…' : ''}. Raise adyntelMaxPages to see deeper (each page costs a credit).`,
+      )
   } catch (e) {
-    notes.push(`Adyntel unavailable: ${(e as Error).message}`)
+    // Out of credits is not "the API is flaky" — it's a bill to pay, and the
+    // brief should say so in words rather than leaving you to wonder why the
+    // market section went quiet for a week.
+    notes.push(
+      e instanceof OutOfCredits
+        ? `⛔ ${e.message} — the competitor section is blank until then.`
+        : `Adyntel unavailable: ${(e as Error).message}`,
+    )
   }
 
   const market = competitorSection(competitors, prior, client.countries.join('+'), {}, client.relevanceTerms, client.excludeTerms)
@@ -311,6 +453,8 @@ async function runClient(client: AdClient) {
     campaigns: movers.length,
     keywords_today: todaysKeywords,
     adyntel_credits: credits,
+    adyntel_partial: partial,
+    adyntel_echo: echo, // proves whether the optional filters were honoured
     competitor_ads_stored: stored,
     ad_daily_rows: synced?.rows ?? 0,
     active_ads: synced?.active_ads ?? null,

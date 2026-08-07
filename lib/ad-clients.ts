@@ -82,6 +82,30 @@ export type AdClient = {
    */
   briefContext?: string
 
+  /**
+   * How many PAGES to pull per keyword × country. Adyntel returns ~30 ads and a
+   * continuation token; each page is a separate credit. 1 (the default) is the
+   * old behaviour — cheap, but a broad keyword's results then churn between
+   * runs as ads move on and off that first page, and the brief mistakes that
+   * for competitors switching ads off.
+   *
+   * Cost is exactly linear: keywords/run × countries × maxPages credits per day.
+   */
+  adyntelMaxPages?: number
+
+  /**
+   * Extra search parameters passed straight through to Adyntel.
+   *
+   * The API ECHOES fields it never documents as inputs — active_status,
+   * media_types, platform, search_type, start_min_date — which strongly
+   * suggests they are accepted, and an exact-phrase search would fix relevance
+   * at the source instead of us filtering 6 of every 10 ads out after paying
+   * for them. UNVERIFIED: the account ran out of credits before it could be
+   * probed. Left empty on purpose so nothing changes until it's tested; the
+   * run's JSON now returns the echo so one live call settles it.
+   */
+  adyntelParams?: Record<string, unknown>
+
   // ---------------------------------------------------- dashboard-only fields
   // All optional: the brief never reads them, so a client added for the brief
   // alone still renders (with blanks where these would have gone).

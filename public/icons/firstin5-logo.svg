@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Firstin5">
+  <!-- Firstin5 mark: bold geometric S, terminals sheared on a parallel diagonal.
+       Drawn as a stroked centreline (butt caps give the flat ends) plus two
+       triangles that extend each cap into the diagonal shear. -->
+  <g fill="#1257F0">
+    <path
+      fill="none"
+      stroke="#1257F0"
+      stroke-width="11"
+      stroke-linecap="butt"
+      stroke-linejoin="round"
+      d="M68 21.5 L46 21.5
+         C31 21.5 21.5 29 21.5 40
+         C21.5 46 41.9 38.7 50 50
+         C58.1 61.3 78.5 54 78.5 60
+         C78.5 71 69 78.5 54 78.5
+         L32 78.5" />
+    <path d="M68 16 H78 L68 27 Z" />
+    <path d="M32 84 H22 L32 73 Z" />
+  </g>
+</svg>

@@ -85,7 +85,10 @@ export async function GET(req: Request) {
   for (const agent of SCHEDULED) {
     let drafts: ProposalDraft[] = []
     try {
-      drafts = agent.check(rows, today)
+      // `await` because a check may READ before it proposes (the Head of Marketing
+      // reads `ad_daily`). A sync check awaits harmlessly. Still create-only —
+      // nothing here executes.
+      drafts = await agent.check(rows, today)
     } catch (e) {
       console.error(`[CFO] scheduled check "${agent.key}" threw:`, e)
       continue

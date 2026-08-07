@@ -301,7 +301,8 @@ export const EXECUTORS: Record<string, Executor> = {
 // ============================================================
 import type { Rec } from '@/lib/records'
 import { rm } from '@/lib/records'
-import { adStats, baseline, findings } from './marketing/definition'
+import { baseline, findings } from './marketing/definition'
+import { loadAdAggregates } from './marketing/load'
 import { headline as marketingHeadline, suggest as marketingSuggest } from './marketing/prompt'
 
 // `auto: true` = this one is 🟢 graduated (autopilot: run it, then just tell me).
@@ -310,7 +311,10 @@ export type ProposalDraft = { idempotencyKey: string; payload: any; text: string
 export type ScheduledCheck = {
   key: string
   label: string
-  check: (rows: Rec[], today: string) => ProposalDraft[]
+  // May be async: a check is allowed to READ (the Head of Marketing reads
+  // `ad_daily`). It still only ever RETURNS proposals to create — it cannot
+  // execute anything, which is the guarantee that matters.
+  check: (rows: Rec[], today: string) => ProposalDraft[] | Promise<ProposalDraft[]>
 }
 
 // Whole days between a due date and today (positive = overdue).
@@ -351,39 +355,41 @@ const overdueInvoiceCheck: ScheduledCheck = {
 }
 
 // Marketing · Ad Performance Triage (the Head of Marketing, LIVE): grades every ad
-// row against YOUR OWN account average and proposes a short kill/scale list. Always
-// 🟡 — a kill or scale call moves ad budget, so it never autopilots. DRAFT only:
-// approving records your decision, it does NOT touch your ad account.
+// in `ad_daily` against YOUR OWN blended cost per lead and proposes a short
+// kill/scale list, ranked by WASTED MONEY. Always 🟡 — a kill or scale call moves
+// ad budget, so it never autopilots. DRAFT only: approving records your decision,
+// it does NOT touch your ad account.
 //
 // ⚠️ NOTE THE IDEMPOTENCY KEY — it deliberately differs from the chaser above.
 // An invoice gets MORE overdue every day, so `:${today}` correctly re-asks daily.
-// Ad rows are static history; the same pattern would re-propose the identical
-// recommendations every single morning forever. So this one keys on the METRICS:
-// once per ad per issue, re-raised only when that ad accrues another 100 clicks —
-// i.e. only when there is genuinely new evidence.
+// An ad's totals barely move day to day; that same pattern would re-propose the
+// identical recommendations every single morning forever. So this one keys on
+// SPEND: once per ad per issue, re-raised only when that ad has burned another
+// RM100 — i.e. only when there is genuinely new money at stake.
 const marketingTriageCheck: ScheduledCheck = {
   key: 'marketing-triage',
   label: 'Ad Performance Triage',
-  check: (rows) => {
-    const stats = adStats(rows)
-    const base = baseline(stats)
-    if (!base) return [] // no ads with enough clicks to judge — say nothing.
+  check: async () => {
+    const ads = await loadAdAggregates()
+    const base = baseline(ads)
+    if (!base) return [] // nothing synced, or no leads yet — say nothing.
 
-    return findings(stats, base).map((f) => ({
-      idempotencyKey: `marketing-triage:${f.issue}:${f.stat.id}:${Math.floor(f.stat.clicks / 100)}`,
+    return findings(ads, base).map((f) => ({
+      idempotencyKey: `marketing-triage:${f.issue}:${f.ad.adId}:${Math.floor(f.ad.spend / 100)}`,
       payload: {
-        row_id: f.stat.id,
+        ad_id: f.ad.adId,
+        ad_name: f.ad.name,
+        project: f.ad.project,
         issue: f.issue,
         channel: 'review',
         text: marketingSuggest(f, base),
         metrics: {
-          clicks: f.stat.clicks,
-          leads: f.stat.leads,
-          ctr: Number((f.stat.ctr * 100).toFixed(2)),
-          cvr: Number((f.stat.cvr * 100).toFixed(2)),
-          baseline_ctr: Number((base.ctr * 100).toFixed(2)),
-          baseline_cvr: Number((base.cvr * 100).toFixed(2)),
-          wasted_clicks: f.wastedClicks,
+          spend: Number(f.ad.spend.toFixed(2)),
+          leads: f.ad.leads,
+          cpl: f.ad.cpl === null ? null : Number(f.ad.cpl.toFixed(2)),
+          baseline_cpl: Number(base.cpl.toFixed(2)),
+          wasted_spend: Number(f.wastedSpend.toFixed(2)),
+          status: f.ad.status,
         },
       },
       text: marketingHeadline(f, base),

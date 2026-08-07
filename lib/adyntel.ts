@@ -41,6 +41,15 @@ export type NormalisedAd = {
   title: string | null
   caption: string | null
   link_description: string | null
+  /**
+   * Advertiser context that arrives on EVERY ad and used to be discarded.
+   * Follower count is the cheapest available proxy for "is this a solo coach
+   * testing one ad, or a course factory with a media budget" — the same hook
+   * means different things coming from each.
+   */
+  page_like_count: number | null
+  page_categories: string[]
+  page_profile_uri: string | null
   cta_text: string | null
   cta_type: string | null
   link_url: string | null
@@ -199,6 +208,13 @@ export function normaliseAd(a: Obj, nowUnix = Math.floor(Date.now() / 1000)): No
     title: copy(pick(snap, 'title')),
     caption: copy(pick(snap, 'caption')),
     link_description: copy(pick(snap, 'link_description', 'linkDescription')),
+    page_like_count: Number.isFinite(Number(pick(snap, 'page_like_count', 'pageLikeCount')))
+      ? Number(pick(snap, 'page_like_count', 'pageLikeCount'))
+      : null,
+    page_categories: Array.isArray(pick(snap, 'page_categories', 'pageCategories'))
+      ? (pick(snap, 'page_categories', 'pageCategories') as unknown[]).map(String)
+      : [],
+    page_profile_uri: str(pick(snap, 'page_profile_uri', 'pageProfileUri')),
     cta_text: copy(pick(snap, 'cta_text', 'ctaText')),
     cta_type: str(pick(snap, 'cta_type', 'ctaType')),
     link_url: str(pick(snap, 'link_url', 'linkUrl')),
@@ -325,8 +341,12 @@ export function describeConcept(c: Concept, localMedia: Record<string, string[]>
       ? `image ${shortUrl(a.images[0].original_image_url)}`
       : 'no media URL'
   const files = c.ads.flatMap((x) => localMedia[x.ad_archive_id] ?? []).map((f) => f.replace(/\\/g, '/'))
+  // Size the advertiser. "18k followers, category Coach" tells you whether a
+  // hook comes from a peer or from someone with a media budget you can't match.
+  const size = a.page_like_count !== null ? `${a.page_like_count.toLocaleString('en-MY')} followers` : 'follower count unknown'
+  const cats = a.page_categories.length ? `, ${a.page_categories.slice(0, 2).join('/')}` : ''
   return (
-    `  · ${c.advertiser} [${formats}] · ${c.ads.length} live creative${c.ads.length > 1 ? 's' : ''} of this one idea · running ${span}\n` +
+    `  · ${c.advertiser} (${size}${cats}) [${formats}] · ${c.ads.length} live creative${c.ads.length > 1 ? 's' : ''} of this one idea · running ${span}\n` +
     `    headline: ${a.title ? flat(a.title, 90) : '(none)'}\n` +
     `    copy: ${flat(a.body_text, 260) || '(none)'}\n` +
     `    CTA: ${a.cta_text ?? '(none)'} → ${a.link_url ?? '(no landing URL)'}\n` +

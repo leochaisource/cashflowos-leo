@@ -6,8 +6,8 @@ import type { MetadataRoute } from 'next'
 // makes the installed app open full-screen, like a native app.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'CashFlowOS AI Agents',
-    short_name: 'CashFlowOS',
+    name: 'Firstin5 Dashboard',
+    short_name: 'Firstin5',
     description: 'Your Money Robot — one AI HQ for the whole business.',
     start_url: '/',
     scope: '/',

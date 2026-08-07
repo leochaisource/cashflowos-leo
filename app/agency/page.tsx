@@ -1,6 +1,7 @@
 import { getRecords, getFunnel, rm, todayISO } from '@/lib/records'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { HEADS } from '@/agents/heads'
+import { loadAdAggregates } from '@/agents/marketing/load'
 import FunnelBar from '@/app/_components/FunnelBar'
 import Stat from '@/app/_components/Stat'
 import HeadCard from '@/app/_components/HeadCard'
@@ -25,7 +26,7 @@ async function proposedCount(): Promise<number> {
 }
 
 export default async function Agency() {
-  const [rows, waiting] = await Promise.all([getRecords(), proposedCount()])
+  const [rows, waiting, ads] = await Promise.all([getRecords(), proposedCount(), loadAdAggregates()])
   const funnel = getFunnel(rows)
 
   // ── The Money row ───────────────────────────────────────────────
@@ -64,7 +65,7 @@ export default async function Agency() {
           confident zero. */}
       <p className="rowlabel">Your C-Suite</p>
       {HEADS.map(h => (
-        <HeadCard key={h.key} head={h} brief={h.brief(rows, todayISO())} />
+        <HeadCard key={h.key} head={h} brief={h.brief({ rows, ads, today: todayISO() })} />
       ))}
     </>
   )

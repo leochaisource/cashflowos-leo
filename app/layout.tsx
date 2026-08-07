@@ -6,10 +6,10 @@ import ConnStatus from './_components/ConnStatus'
 import { getPendingCount } from '@/lib/records'
 
 export const metadata: Metadata = {
-  title: 'CashFlowOS AI Agents 🤖',
+  title: 'Firstin5 Dashboard',
   description: 'Your Money Robot — one AI HQ for the whole business.',
   manifest: '/manifest.webmanifest',
-  appleWebApp: { capable: true, title: 'CashFlowOS', statusBarStyle: 'default' },
+  appleWebApp: { capable: true, title: 'Firstin5', statusBarStyle: 'default' },
 }
 
 // theme-color drives the phone status-bar tint when installed to the home screen.
@@ -27,7 +27,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <div className="app">
           {/* Desktop sidebar — hidden on phones (BottomNav takes over ≤768px). */}
           <aside className="side">
-            <div className="brand"><span className="logo" aria-hidden="true">🤖</span> CashFlowOS AI Agents</div>
+            <div className="brand">
+              {/* Lives under /icons/ because proxy.ts only lets that folder past the passcode gate. */}
+              <img className="logo" src="/icons/firstin5-logo.svg" alt="" width={26} height={26} />
+              Firstin5 Dashboard
+            </div>
             <Nav pendingCount={pending} />
             <p className="hint">One <code>records</code> table behind every tab. Your robots live in <code>agents/</code>.</p>
           </aside>

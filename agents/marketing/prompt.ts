@@ -5,77 +5,103 @@
 // in your ad account. It cannot pause, boost, or edit anything.
 //
 // Two voices:
-//   • headline() — the one line that shows on the Approvals card / Telegram button.
+//   • headline() — the one line on the Approvals card / Telegram button.
 //   • suggest()  — the full recommendation you read before deciding.
 //
-// ⚠️ Runtime-import-free, same rule as definition.ts — the `Finding`/`Baseline`
-// imports are TYPE-only so scripts/marketing-dry-run.ts can run this under plain
-// node. Keep any value import out of this file.
+// ⚠️ Runtime-import-free, same rule as definition.ts — the imports below are
+// TYPE-only so scripts/marketing-dry-run.ts can run this under plain node.
 
-import type { Baseline, Finding } from './definition'
+import type { AdAgg, CplBaseline, Finding } from './definition'
 
-const pct = (n: number) => `${(n * 100).toFixed(2)}%`
+const rm = (n: number) => 'RM ' + Number(n || 0).toLocaleString('en-MY', { maximumFractionDigits: 2 })
 const int = (n: number) => Number(n || 0).toLocaleString('en-MY')
+const pct = (n: number | null) => (n === null ? '—' : `${(n * 100).toFixed(2)}%`)
+
+// An ad that is already paused should never be told to pause. Meta's statuses are
+// noisy (ACTIVE, PAUSED, CAMPAIGN_PAUSED, ADSET_PAUSED, ARCHIVED…), so treat
+// anything that isn't plainly ACTIVE as already off.
+const isRunning = (a: AdAgg) => (a.status || '').toUpperCase() === 'ACTIVE'
+
+const statusLine = (a: AdAgg) =>
+  a.status ? `Status: ${a.status}${isRunning(a) ? ' (still spending)' : ' (already off)'}` : ''
+
+// What to actually do about it — the only line that asks you to move.
+function yourCall(a: AdAgg, stop: boolean): string {
+  if (stop) {
+    return isRunning(a)
+      ? `Your call: pause it in Meta Ads Manager. I don't touch your ad account.`
+      : `Your call: it's already off — the decision is not to relaunch this creative. I don't touch your ad account.`
+  }
+  return isRunning(a)
+    ? `Your call: raise the budget in Meta Ads Manager. I don't touch your ad account.`
+    : `Your call: this one is paused — worth switching back on and funding. I don't touch your ad account.`
+}
 
 // The short line — Approvals card, Telegram message, morning brief.
-export function headline(f: Finding, base: Baseline): string {
-  const s = f.stat
+export function headline(f: Finding, base: CplBaseline): string {
+  const a = f.ad
   if (f.issue === 'dud') {
-    return `📊 <b>${s.title}</b> — ${int(s.clicks)} clicks, <b>zero leads</b>. Turn it off?`
+    return `📊 <b>${a.name}</b> — ${rm(a.spend)} spent, <b>zero leads</b>. ${isRunning(a) ? 'Turn it off?' : 'Keep it off?'}`
   }
-  if (f.issue === 'mismatch') {
+  if (f.issue === 'expensive') {
     return (
-      `📊 <b>${s.title}</b> — ${pct(s.ctr)} CTR (above your ${pct(base.ctr)} average) ` +
-      `but only ${pct(s.cvr)} of clicks become leads. ~${int(f.wastedClicks)} clicks wasted. Review it?`
+      `📊 <b>${a.name}</b> — ${rm(a.cpl as number)} per lead vs your ${rm(base.cpl)} average. ` +
+      `<b>${rm(f.wastedSpend)}</b> more than those ${int(a.leads)} leads should have cost. Review it?`
     )
   }
   return (
-    `📈 <b>${s.title}</b> — your biggest above-average earner: ` +
-    `${int(s.leads)} leads from ${int(s.clicks)} clicks (${pct(s.cvr)} vs your ${pct(base.cvr)}). Put more behind it?`
+    `📈 <b>${a.name}</b> — your biggest cheap winner: ${int(a.leads)} leads at ` +
+    `${rm(a.cpl as number)} vs your ${rm(base.cpl)} average, saving <b>${rm(-f.wastedSpend)}</b>. Put more behind it?`
   )
 }
 
 // 👉 CHANGE THIS — the full recommendation. Plain text; you read it, you decide.
-export function suggest(f: Finding, base: Baseline): string {
-  const s = f.stat
-  const when = s.date ? ` (ran ${s.date})` : ''
-  const facts =
-    `${int(s.reach)} reach · ${int(s.views)} views · ${int(s.clicks)} clicks · ${int(s.leads)} leads\n` +
-    `This ad: ${pct(s.ctr)} CTR · ${pct(s.cvr)} click→lead\n` +
-    `Your average: ${pct(base.ctr)} CTR · ${pct(base.cvr)} click→lead (across ${base.ads} ads)`
+export function suggest(f: Finding, base: CplBaseline): string {
+  const a = f.ad
+  const where = [a.project, a.campaign].filter(Boolean).join(' · ')
+  const facts = [
+    where,
+    statusLine(a),
+    `${rm(a.spend)} spent · ${int(a.leads)} leads · ${int(a.impressions)} impressions · ${int(a.linkClicks)} link clicks · ${pct(a.ctr)} CTR`,
+    `This ad: ${a.cpl === null ? 'no leads at all' : `${rm(a.cpl)} per lead`}`,
+    `Your average: ${rm(base.cpl)} per lead (${rm(base.spend)} → ${int(base.leads)} leads across ${base.ads} ads)`,
+  ]
+    .filter(Boolean)
+    .join('\n')
 
   if (f.issue === 'dud') {
     return (
-      `KILL — "${s.title}"${when}\n\n${facts}\n\n` +
-      `It spent ${int(s.clicks)} clicks and produced nothing at all. Nothing to optimise here — ` +
-      `switch it off and move the budget to something that converts.\n\n` +
-      `Your call: pause it in Meta Ads Manager. I don't touch your ad account.`
+      `KILL — "${a.name}"\n\n${facts}\n\n` +
+      `It spent ${rm(a.spend)} and produced nothing at all. There's no rate to improve here and ` +
+      `nothing to optimise — that money bought no pipeline.\n\n` +
+      `${yourCall(a, true)}`
     )
   }
 
-  if (f.issue === 'mismatch') {
+  if (f.issue === 'expensive') {
+    const shouldHaveCost = a.leads * base.cpl
     return (
-      `REVIEW — "${s.title}"${when}\n\n${facts}\n\n` +
-      `This is attention without intent. The creative is doing its job — ${pct(s.ctr)} CTR beats ` +
-      `your ${pct(base.ctr)} average, so people want to click. But only ${pct(s.cvr)} of them ` +
-      `become leads against your ${pct(base.cvr)} average, so what they land on isn't what they ` +
-      `were promised.\n\n` +
-      `At your normal rate those ${int(s.clicks)} clicks would have been about ` +
-      `${int(Math.round(s.clicks * base.cvr))} leads instead of ${int(s.leads)} — roughly ` +
-      `${int(f.wastedClicks)} clicks' worth of demand lost after the click.\n\n` +
-      `Look at the landing page and the offer match BEFORE you touch the creative — the creative ` +
-      `is the part that's already working.\n\n` +
-      `Your call: fix the page, or pause the ad. I don't touch your ad account.`
+      `REVIEW — "${a.name}"\n\n${facts}\n\n` +
+      `Those ${int(a.leads)} leads should have cost about ${rm(shouldHaveCost)} at your normal rate. ` +
+      `They cost ${rm(a.spend)}. The gap is ${rm(f.wastedSpend)}, and that's the number worth acting on — ` +
+      `not the ratio.\n\n` +
+      `Note this is a MONEY size, not a badness score: an ad only slightly above your average can leak ` +
+      `far more than a terrible one that barely spent, simply because it spent more. This one made the ` +
+      `list because of the size of the gap.\n\n` +
+      `Check the offer-to-page match and the audience before you touch the creative.\n\n` +
+      `${yourCall(a, true)}`
     )
   }
 
+  const saved = -f.wastedSpend
   return (
-    `SCALE — "${s.title}"${when}\n\n${facts}\n\n` +
-    `This is the most productive ad you have that also beats your own average: ` +
-    `${int(s.leads)} leads is the biggest haul among ads converting above ${pct(base.cvr)}, ` +
-    `and it did it across ${int(s.clicks)} clicks — enough traffic that it isn't a fluke.\n\n` +
-    `Worth more budget, and worth copying: whatever the promise-to-page match is on this one, ` +
-    `it's the pattern your weaker ads are missing.\n\n` +
-    `Your call: raise the budget in Meta Ads Manager. I don't touch your ad account.`
+    `SCALE — "${a.name}"\n\n${facts}\n\n` +
+    `This is the most productive ad you have that also beats your own average. ` +
+    `${int(a.leads)} leads is the biggest haul among ads cheaper than ${rm(base.cpl)}, and at ` +
+    `${rm(a.cpl as number)} each it brought those leads in for ${rm(saved)} less than your baseline ` +
+    `would have.\n\n` +
+    `Worth more budget, and worth copying: whatever this one gets right is the pattern the ads on ` +
+    `the list above are missing.\n\n` +
+    `${yourCall(a, false)}`
   )
 }
