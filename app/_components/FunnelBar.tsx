@@ -27,10 +27,27 @@ export default function FunnelBar({ funnel }: { funnel: Funnel }) {
               <div className="flabel">{s.label}</div>
             </div>
             {i < STAGES.length - 1 && (
-              <div className="fconv" aria-label={`${funnel.pct[i]}% convert to ${STAGES[i + 1].label}`}>
-                <span className="p">{funnel.pct[i]}%</span>
-                <span className="arw" aria-hidden="true">▶</span>
-              </div>
+              // Nurture is not downstream of Closed — it's where leads go when
+              // they DON'T close. Printing a conversion into it produced "150%",
+              // which reads as a broken dashboard rather than as the parallel
+              // branch it is. Show the arrow, drop the percentage.
+              STAGES[i + 1].cls === 'nurture' ? (
+                <div className="fconv" aria-label="Leads that did not close move to Nurture">
+                  <span className="p" title="Leads that did not close">
+                    parked
+                  </span>
+                  <span className="arw" aria-hidden="true">▶</span>
+                </div>
+              ) : (
+                <div className="fconv" aria-label={`${funnel.pct[i]}% convert to ${STAGES[i + 1].label}`}>
+                  {/* 143 leads off 317,440 views rounds to "0%", which reads as
+                      "nothing converts" instead of "a small fraction does". */}
+                  <span className="p">
+                    {funnel.pct[i] === 0 && values[i] > 0 && values[i + 1] > 0 ? '<1%' : `${funnel.pct[i]}%`}
+                  </span>
+                  <span className="arw" aria-hidden="true">▶</span>
+                </div>
+              )
             )}
           </Fragment>
         ))}

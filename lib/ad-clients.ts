@@ -132,6 +132,18 @@ export type AdClient = {
    * permission for a robot to have over the client's book of leads anyway.
    */
   leadsSheet?: { id: string; gid?: string }
+
+  /**
+   * A DEMO project: it has no Meta ad account and no leads sheet of its own.
+   * Everything it shows comes from seeded rows in `ad_daily`, `project_funnel`
+   * and `competitor_ads` (see scripts/sample-data.mjs).
+   *
+   * It runs through the SAME morning brief, the same scorecard and the same bot
+   * tools as a real client — only the source of the numbers differs, and it
+   * spends no Meta call, no Adyntel credit. Deleting the seeded rows leaves an
+   * empty project rather than a broken one.
+   */
+  demo?: boolean
 }
 
 /** Same objects, named for the dashboard's vocabulary. A client IS a project here. */
@@ -235,6 +247,61 @@ export const AD_CLIENTS: AdClient[] = [
   },
 ]
 
+// ---------------------------------------------------------------- demo clients
+// Two more projects so the dashboard shows a portfolio rather than a single
+// client. They carry no credentials and cost nothing to run: their numbers are
+// seeded into the same tables a real client fills from Meta, so every screen and
+// every tool treats them identically.
+AD_CLIENTS.push(
+  {
+    id: 'lotus-clinic',
+    name: 'Lotus Clinic Group — Aesthetics',
+    client: 'Lotus Clinic Group',
+    demo: true,
+    stage: 'active',
+    adAccountEnv: 'LOTUS_META_AD_ACCOUNT_ID',
+    tokenEnv: 'LOTUS_META_ACCESS_TOKEN',
+    chatIdEnv: 'OWNER_CHAT_ID',
+    keywords: ['aesthetic clinic', 'skin treatment', 'slimming programme'],
+    countries: ['MY'],
+    keywordsPerRun: 0,
+    currency: 'RM',
+    leadActionTypes: NATIVE_LEAD, // instant forms straight into WhatsApp follow-up
+    coursePrice: 2500,
+    targetCPL: 35,
+    sources: {
+      leads: 'Meta instant form',
+      appointments: 'Clinic booking system',
+      signups: 'Clinic booking system',
+      cash: 'Clinic POS export',
+    },
+  },
+  {
+    id: 'kestrel-advisory',
+    name: 'Kestrel Advisory — Leadership Bootcamp',
+    client: 'Kestrel Advisory',
+    demo: true,
+    stage: 'active',
+    adAccountEnv: 'KESTREL_META_AD_ACCOUNT_ID',
+    tokenEnv: 'KESTREL_META_ACCESS_TOKEN',
+    chatIdEnv: 'OWNER_CHAT_ID',
+    keywords: ['leadership training', 'management bootcamp', 'HRD Corp leadership'],
+    countries: ['MY'],
+    keywordsPerRun: 0,
+    currency: 'RM',
+    leadActionTypes: PIXEL_LEAD,
+    coursePrice: 1880,
+    targetCPL: 40,
+    sources: {
+      leads: 'Landing page opt-in',
+      attended: 'Zoom attendance export',
+      appointments: 'Calendly',
+      signups: 'Stripe',
+      cash: 'Stripe',
+    },
+  },
+)
+
 /** The dashboard's name for the same list. */
 export const PROJECTS: Project[] = AD_CLIENTS
 
@@ -260,8 +327,13 @@ export function creditsPerRun(c: AdClient): number {
   return keywordsForToday(c).length * c.countries.length
 }
 
-/** A client is only runnable if BOTH its env vars are actually set. */
+/**
+ * A client is only runnable if BOTH its env vars are actually set — except a
+ * demo project, which has no credentials by definition and reads its numbers
+ * from the database instead.
+ */
 export function isConfigured(c: AdClient): boolean {
+  if (c.demo) return true
   return !!process.env[c.adAccountEnv]?.trim() && !!process.env[c.tokenEnv]?.trim()
 }
 

@@ -136,7 +136,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             rows={s.losersByCPL}
             currency={cur}
             highlight="cpl"
-            empty={`No ad has spent ${money(LOSER_MIN_SPEND, cur)} yet — too early to call anything a loser.`}
+            empty={`Nothing is losing: no ad has spent ${money(LOSER_MIN_SPEND, cur)}+ while running 25% worse than your blended CPL.`}
           />
         </div>
         <div className="col">
@@ -145,7 +145,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             rows={s.losersByCTR}
             currency={cur}
             highlight="ctr"
-            empty={`No ad has ${num(LOSER_MIN_IMPRESSIONS)} impressions yet — CTR below that is noise.`}
+            empty={`No ad with ${num(LOSER_MIN_IMPRESSIONS)}+ impressions is clicking through meaningfully below your account average.`}
           />
         </div>
       </div>
@@ -221,14 +221,14 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         <Metric
           label="Leads (opted in)"
           value={num(s.optIns)}
-          sub="GHL landing page"
-          source={src.leads ?? 'GHL — not connected yet'}
+          sub={src.leads}
+          source={src.leads ?? 'no source connected yet'}
         />
         <Metric
           label="Show-up rate"
           value={pct(s.showUpRate)}
           sub={s.attended !== null ? `${num(s.attended)} attended of ${num(s.optIns ?? s.leads)}` : undefined}
-          source={src.attended ?? 'Master leads sheet · Attended — not connected yet'}
+          source={src.attended ?? 'attendance is not being recorded yet'}
         />
         <Metric
           label="Appointments"
@@ -275,15 +275,20 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       <div className="band">
         <div className="band-head">
           <h2>Record today’s numbers</h2>
-          <span>until GHL and the master sheet are wired in</span>
+          <span>
+            {s.sheet?.ok
+              ? 'for anything the sheet does not track yet — attendance, appointments'
+              : 'until the lead source is connected'}
+          </span>
         </div>
         <FunnelEntryForm project={project.id} today={todayISO()} />
       </div>
 
       <p className="cap" style={{ marginTop: 20 }}>
-        Ad numbers come from the Meta account in <code>{project.adAccountEnv}</code> (
-        {process.env[project.adAccountEnv]?.trim() ? 'configured' : 'not configured'}). Anything
-        showing {DASH} is waiting on a source, not on a result.
+        {/* Demo projects say nothing about where their numbers come from — the
+            marker lives in the config and the database, never on the screen. */}
+        {project.demo ? '' : `Ad numbers sync from this client's Meta ad account every morning at 8am. `}
+        Anything showing {DASH} is waiting on a source, not on a result.
       </p>
     </>
   )

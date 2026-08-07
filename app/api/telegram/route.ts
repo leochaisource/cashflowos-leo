@@ -14,6 +14,7 @@ import { getRecords, rm, todayISO } from '@/lib/records'
 import { claim, executeClaimed, summarizeResult, undoAction, runAutopilot, proposeAndNotify } from '@/lib/actions'
 import { readImage, type VisionResult } from '@/lib/vision'
 import { BOT_TOOLS, runBotTool } from '@/lib/bot-tools'
+import { BOT_ADS_TOOLS, ADS_TOOL_NAMES, runBotAdsTool } from '@/lib/bot-ads-tools'
 import { BOT_ACTION_TOOLS, ACTION_TOOL_NAMES, runBotAction } from '@/lib/bot-actions'
 import { SCHEDULED } from '@/agents/registry'
 import { jarvisIdentity, jarvisName } from '@/jarvis/config'
@@ -69,7 +70,10 @@ const HELP_CARD =
   `✅ <b>Tasks</b> — "what's due this week?"\n` +
   `📣 <b>Content</b> — "what's scheduled?"\n` +
   `🤝 <b>People</b> — "who do I follow up with?" · "draft a follow-up for Angela"\n` +
-  `🚨 <b>Triage</b> — "what needs my attention today?"\n\n` +
+  `🚨 <b>Triage</b> — "what needs my attention today?"\n` +
+  `📈 <b>Ads</b> — "how are the ads doing?" · "what's my CPL?" · "which ad is winning?" · ` +
+  `"which ad is wasting money?" · "any new leads today?" · "what's the ROAS on Claude Malaysia?"\n` +
+  `   Say <i>"refresh"</i> or <i>"live numbers"</i> and I'll pull straight from Meta instead of this morning's snapshot.\n\n` +
   `I can also <b>DO</b> things — "log RM45 Grab", "add task chase supplier Friday", ` +
   `"add lead Angela 8000", "mark ABC invoice paid", "move Koochester to appointment".\n` +
   `Small stuff I just do (reply <code>/undo-&lt;id&gt;</code> to reverse). Money stuff I propose ` +
@@ -348,10 +352,17 @@ async function answerWithTools(chatId: number, text: string, apiKey: string): Pr
     // purpose, so nothing in the business profile can widen what Jarvis may do.
     jarvisIdentity() +
     `You have READ tools (cash, funnel/pipeline, leads, invoices/owed, tasks, content, follow-ups, ` +
-    `triage) and ACTION tools that DO things. Chain tools when useful (e.g. who_to_followup → ` +
+    `triage), ADS tools, and ACTION tools that DO things. Chain tools when useful (e.g. who_to_followup → ` +
     `draft_followup; or find an invoice → mark_invoice_paid). Keep replies short. Telegram formatting: ` +
     `<b>,<i>,<code> only.\n` +
-    `GROUNDING: always base money/pipeline answers on a tool result — never guess a number.\n` +
+    `ADS — anything about Meta/Facebook ads, spend, CPL, cost per lead, which ad is winning or losing, ` +
+    `ROAS, opt-ins or a client's funnel comes from the ADS tools (list_projects, get_ad_performance, ` +
+    `winning_ads, losing_ads, project_funnel_status, leads_today), NOT from the records tools — the ad ` +
+    `numbers live in a different table. If the owner doesn't say which client, call list_projects first ` +
+    `and either answer across all of them or ask which one. Those tools read this morning's snapshot; ` +
+    `call refresh_ads only if they ask for live/current numbers, and say you pulled it fresh from Meta.\n` +
+    `GROUNDING: always base money/pipeline/ad answers on a tool result — never guess a number. ` +
+    `A null in an ads tool result means NOT RECORDED — say "not tracked yet", never report it as zero.\n` +
     `ACTING — the autonomy dial: for add_task / add_lead / a small log_expense the tool runs it ` +
     `immediately; tell the owner it's done and include the exact /undo-<id> the tool returned. For ` +
     `log_cash_in / mark_invoice_paid / update_lead_status / a big log_expense the tool only PROPOSES ` +
@@ -375,7 +386,7 @@ async function answerWithTools(chatId: number, text: string, apiKey: string): Pr
         model: 'claude-haiku-4-5',
         max_tokens: 1024,
         system,
-        tools: [...BOT_TOOLS, ...BOT_ACTION_TOOLS] as any,
+        tools: [...BOT_TOOLS, ...BOT_ADS_TOOLS, ...BOT_ACTION_TOOLS] as any,
         messages,
       })
 
@@ -413,7 +424,11 @@ async function answerWithTools(chatId: number, text: string, apiKey: string): Pr
         toolUses.map(async t => {
           const out = ACTION_TOOL_NAMES.has(t.name)
             ? await runBotAction(t.name, t.input, { chatId, thresholdRM: threshold(), rows })
-            : runBotTool(t.name, t.input, rows)
+            : // Ads tools query ad_daily / the leads sheet / Meta, so they're async
+              // and don't touch `rows` at all — a different table, a different world.
+              ADS_TOOL_NAMES.has(t.name)
+              ? await runBotAdsTool(t.name, t.input)
+              : runBotTool(t.name, t.input, rows)
           return {
             type: 'tool_result' as const,
             tool_use_id: t.id,

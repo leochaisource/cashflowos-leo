@@ -20,6 +20,14 @@ import { leadsSummary, type LeadsSummary } from './leads-sheet'
 export const WINNER_MIN_LEADS = 3 // an ad needs this many leads to be called a winner
 export const LOSER_MIN_IMPRESSIONS = 1000 // below this, CTR is noise
 export const LOSER_MIN_SPEND = 20 // don't shame an ad that has barely spent
+/**
+ * A losing ad must be losing RELATIVE TO THE ACCOUNT, not merely last in a list.
+ * With three ads running, "bottom 3 by CPL" includes the best ad in the account —
+ * which is how a dashboard ends up showing the same creative as both the winner
+ * and a loser, and how you get talked into pausing something that works.
+ */
+export const LOSER_CPL_MULTIPLE = 1.25 // 25% worse than the blended CPL
+export const LOSER_CTR_FRACTION = 0.75 // clicking through at 3/4 of the account rate
 
 // ---------------------------------------------------------------- null-safe maths
 /** a ÷ b, or null unless both are real numbers and b > 0. The guard behind every derived tile. */
@@ -253,17 +261,33 @@ export function scorecard(
     .sort((a, b) => (a.cpl as number) - (b.cpl as number))
     .slice(0, 3)
 
-  // Losers by cost: an ad that spent real money. No leads at all sorts worst —
-  // that's the point, and cpl === null is exactly that case.
+  // Losers by cost: spent real money AND is doing measurably worse than the
+  // account as a whole — either no leads at all, or a CPL a quarter worse than
+  // blended. A winner can never appear here, which is the whole point.
+  const winnerIds = new Set(winners.map((w) => w.ad_id))
   const losersByCPL = ads
-    .filter((a) => a.spend >= LOSER_MIN_SPEND)
+    .filter(
+      (a) =>
+        !winnerIds.has(a.ad_id) &&
+        a.spend >= LOSER_MIN_SPEND &&
+        (a.leads === 0 || (avgCPL !== null && (a.cpl as number) > avgCPL * LOSER_CPL_MULTIPLE)),
+    )
     .sort((a, b) => (b.cpl ?? Infinity) - (a.cpl ?? Infinity))
     .slice(0, 3)
 
-  // Losers by attention: nobody is clicking through. Needs enough impressions
-  // for the rate to mean anything.
+  // Losers by attention: nobody is clicking through, judged against how this
+  // account actually performs rather than a number from a blog post.
+  const accountCtr = ratio(
+    ads.reduce((s, a) => s + a.link_clicks, 0),
+    ads.reduce((s, a) => s + a.impressions, 0),
+  )
   const losersByCTR = ads
-    .filter((a) => a.impressions >= LOSER_MIN_IMPRESSIONS && a.ctr !== null)
+    .filter(
+      (a) =>
+        a.impressions >= LOSER_MIN_IMPRESSIONS &&
+        a.ctr !== null &&
+        (accountCtr === null || a.ctr < accountCtr * LOSER_CTR_FRACTION),
+    )
     .sort((a, b) => (a.ctr as number) - (b.ctr as number))
     .slice(0, 3)
 

@@ -13,8 +13,8 @@ import { saveFunnelNumbers, type FunnelInput } from '@/app/projects/[id]/actions
 // (tile shows 0). Never pre-fill these with zeros.
 
 const FIELDS: { key: keyof FunnelInput; label: string; hint: string }[] = [
-  { key: 'leads', label: 'Opt-ins', hint: 'GHL landing page' },
-  { key: 'attended', label: 'Attended', hint: 'master sheet' },
+  { key: 'leads', label: 'Opt-ins', hint: 'registered' },
+  { key: 'attended', label: 'Attended', hint: 'showed up' },
   { key: 'appointments', label: 'Appointments', hint: 'booked' },
   { key: 'signups', label: 'Sign-ups', hint: 'paid' },
   { key: 'cash_collected', label: 'Cash collected', hint: 'banked' },

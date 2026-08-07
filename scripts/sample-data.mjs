@@ -112,14 +112,128 @@ const funnel = [
   [d(-2), null, null, 4, null, null],
 ]
 
+// ---------------------------------------------------------------- demo projects
+// Two extra clients with no ad account of their own. Their numbers are written
+// into the SAME tables a real client fills from Meta, so the dashboard, the
+// morning brief and the Telegram bot treat them identically — no demo mode
+// threaded through the app, just seeded rows.
+//
+// The shapes are deliberately different from each other and from the real
+// client, so a portfolio view shows contrast rather than three of the same:
+//   Lotus  — high volume, cheap-ish leads, comfortably under target
+//   Kestrel— lower volume, expensive leads, over target (the one to worry about)
+const DEMO_PROJECTS = [
+  {
+    project: 'lotus-clinic',
+    currency: 'RM',
+    campaign: 'Aesthetics — Lead Form (MY)',
+    dailySpend: [118, 132, 145, 139, 151, 128, 96, 142, 155, 149, 133, 127, 141, 138, 152, 147, 129, 118, 136, 144, 158, 151, 139, 126, 133, 148, 142, 137, 145, 130],
+    cplBase: 28,
+    ads: [
+      ['Before After — Skin Reset 30s', 'ACTIVE', 0.34, 0.82],
+      ['Testimonial — Aunty Mei 45s', 'ACTIVE', 0.26, 0.71],
+      ['Carousel — Package Pricing', 'ACTIVE', 0.18, 1.24],
+      ['Static — Free Consult Offer', 'ACTIVE', 0.12, 1.02],
+      ['Video — Doctor Explains Filler', 'PAUSED', 0.07, 1.51],
+      ['Static — Slimming Trial RM99', 'PAUSED', 0.03, 2.35],
+    ],
+    funnel: { leads: 148, attended: null, appointments: 52, signups: 11, cash: 27500 },
+  },
+  {
+    project: 'kestrel-advisory',
+    currency: 'RM',
+    campaign: 'Leadership Bootcamp — Webinar Reg',
+    dailySpend: [88, 94, 102, 97, 111, 86, 74, 99, 108, 103, 91, 88, 96, 101, 107, 99, 84, 79, 93, 98, 104, 96, 89, 83, 92, 100, 95, 90, 97, 87],
+    cplBase: 47,
+    ads: [
+      ['Webinar Reg — 5 Mistakes Managers Make', 'ACTIVE', 0.41, 0.94],
+      ['Webinar Reg — HRD Corp Claimable', 'ACTIVE', 0.29, 1.11],
+      ['Video — Client Story, Manufacturing SME', 'ACTIVE', 0.19, 0.68],
+      ['Static — Cohort Starts 19 Aug', 'PAUSED', 0.08, 0.52],
+      ['Carousel — Curriculum Breakdown', 'PAUSED', 0.03, 0.41],
+    ],
+    funnel: { leads: 61, attended: 38, appointments: 14, signups: 6, cash: 11280 },
+  },
+]
+
+/** Deterministic jitter so re-seeding produces the same numbers, not new ones. */
+const jitter = (seed, spread = 0.18) => {
+  const x = Math.sin(seed * 12.9898) * 43758.5453
+  return 1 + ((x - Math.floor(x)) * 2 - 1) * spread
+}
+
+function demoAdRows(cfg) {
+  const rows = []
+  const now = new Date()
+  cfg.dailySpend.forEach((daySpend, i) => {
+    // dailySpend is oldest-first across the last 30 days.
+    const date = new Date(now)
+    date.setDate(date.getDate() - (cfg.dailySpend.length - 1 - i))
+    const iso = date.toISOString().slice(0, 10)
+    cfg.ads.forEach(([name, status, share, cplMult], j) => {
+      const spend = Math.round(daySpend * share * jitter(i * 7 + j) * 100) / 100
+      if (spend <= 0) return
+      const cpl = cfg.cplBase * cplMult * jitter(i * 13 + j, 0.12)
+      // Leads are whole people: round, and let a thin day legitimately produce 0.
+      const leads = Math.max(0, Math.round(spend / cpl))
+      const impressions = Math.round(spend * 42 * jitter(i * 3 + j, 0.25))
+      const linkClicks = Math.round(impressions * 0.019 * jitter(i * 5 + j, 0.3))
+      rows.push({
+        project: cfg.project,
+        date: iso,
+        ad_id: `demo-${cfg.project}-${j}`,
+        ad_name: name,
+        campaign_name: cfg.campaign,
+        adset_name: 'Broad — MY 25-55',
+        effective_status: status,
+        spend,
+        impressions,
+        reach: Math.round(impressions * 0.78),
+        clicks: Math.round(linkClicks * 1.6),
+        link_clicks: linkClicks,
+        leads,
+        currency: cfg.currency,
+        synced_at: new Date().toISOString(),
+      })
+    })
+  })
+  return rows
+}
+
+/**
+ * Give each demo project a market to talk about by filing a slice of the ads
+ * already stored for the real clients under the demo project's id. Same shape,
+ * same raw_payload, so the brief's competitor section is genuinely rebuilt
+ * rather than faked — and it costs no Adyntel credit.
+ */
+async function seedDemoCompetitors(projectId, sourceClient, limit) {
+  const { data, error } = await db
+    .from('competitor_ads')
+    .select('*')
+    .eq('client', sourceClient)
+    .not('body_text', 'is', null)
+    .limit(limit)
+  if (error || !data?.length) { console.log(`  no source ads to copy from ${sourceClient}`); return 0 }
+  const rows = data.map(({ id, created_at, ...rest }) => ({ ...rest, client: projectId }))
+  const { data: ins, error: e2 } = await db
+    .from('competitor_ads')
+    .upsert(rows, { onConflict: 'client,competitor,ad_archive_id' })
+    .select('id')
+  if (e2) { console.error(`  competitor copy failed: ${e2.message}`); return 0 }
+  return ins?.length ?? 0
+}
+
 // ---------------------------------------------------------------- run
 const SAMPLE_FILTER = ['meta->>sample', 'eq', 'true']
+const DEMO_IDS = DEMO_PROJECTS.map((p) => p.project)
 
 async function status() {
   const { count: recs } = await db.from('records').select('id', { count: 'exact', head: true }).filter(...SAMPLE_FILTER)
   const { count: pf } = await db.from('project_funnel').select('id', { count: 'exact', head: true }).eq('source', 'sample')
-  console.log(`sample rows present: ${recs ?? 0} in records · ${pf ?? 0} in project_funnel`)
-  return { recs: recs ?? 0, pf: pf ?? 0 }
+  const { count: ads } = await db.from('ad_daily').select('id', { count: 'exact', head: true }).in('project', DEMO_IDS)
+  const { count: comp } = await db.from('competitor_ads').select('id', { count: 'exact', head: true }).in('client', DEMO_IDS)
+  console.log(`sample rows: ${recs ?? 0} records · ${pf ?? 0} project_funnel · ${ads ?? 0} ad_daily · ${comp ?? 0} competitor_ads`)
+  return { recs: recs ?? 0, pf: pf ?? 0, ads: ads ?? 0, comp: comp ?? 0 }
 }
 
 async function purge() {
@@ -128,8 +242,17 @@ async function purge() {
   if (e1) { console.error('records purge failed:', e1.message); process.exitCode = 1 }
   const { error: e2 } = await db.from('project_funnel').delete().eq('source', 'sample')
   if (e2) { console.error('project_funnel purge failed:', e2.message); process.exitCode = 1 }
+  // Demo projects own their id, so everything filed under it is ours to remove.
+  // Real clients' ad_daily and competitor_ads are never touched by this filter.
+  const { error: e3 } = await db.from('ad_daily').delete().in('project', DEMO_IDS)
+  if (e3) { console.error('ad_daily purge failed:', e3.message); process.exitCode = 1 }
+  const { error: e4 } = await db.from('competitor_ads').delete().in('client', DEMO_IDS)
+  if (e4) { console.error('competitor_ads purge failed:', e4.message); process.exitCode = 1 }
   const after = await status()
-  console.log(`purged ${before.recs - after.recs} record(s) and ${before.pf - after.pf} funnel row(s). Real data untouched.`)
+  console.log(
+    `purged ${before.recs - after.recs} record(s), ${before.pf - after.pf} funnel row(s), ` +
+      `${before.ads - after.ads} ad-day(s), ${before.comp - after.comp} competitor ad(s). Real data untouched.`,
+  )
 }
 
 async function seed() {
@@ -153,6 +276,33 @@ async function seed() {
   const { error: e2 } = await db.from('project_funnel').upsert(funnelRows, { onConflict: 'project,date' })
   if (e2) { console.error('project_funnel insert failed:', e2.message); process.exit(1) }
   console.log(`inserted ${funnelRows.length} sample funnel rows for ${PROJECT}`)
+
+  // ---- the two demo projects: ads, funnel, and a market to talk about ----
+  for (const cfg of DEMO_PROJECTS) {
+    const adRows = demoAdRows(cfg)
+    const { data: ins, error: e3 } = await db
+      .from('ad_daily')
+      .upsert(adRows, { onConflict: 'project,date,ad_id' })
+      .select('id')
+    if (e3) { console.error(`${cfg.project} ad_daily failed:`, e3.message); process.exit(1) }
+    const spend = adRows.reduce((n, r) => n + r.spend, 0)
+    const leads = adRows.reduce((n, r) => n + r.leads, 0)
+
+    // The funnel is written on one date inside the window; the scorecard sums
+    // the window, so a single row is enough and keeps the intent readable.
+    const f = cfg.funnel
+    const { error: e4 } = await db.from('project_funnel').upsert(
+      [{ project: cfg.project, date: d(-1), leads: f.leads, attended: f.attended, appointments: f.appointments, signups: f.signups, cash_collected: f.cash, source: 'sample' }],
+      { onConflict: 'project,date' },
+    )
+    if (e4) { console.error(`${cfg.project} project_funnel failed:`, e4.message); process.exit(1) }
+
+    const copied = await seedDemoCompetitors(cfg.project, cfg.project === 'lotus-clinic' ? PROJECT : 'dianna-nlp', 45)
+    console.log(
+      `${cfg.project}: ${ins.length} ad-days (RM ${spend.toFixed(0)}, ${leads} leads, CPL RM ${(spend / leads).toFixed(2)}), ` +
+        `funnel ${f.leads} → ${f.signups} sign-ups, ${copied} competitor ads`,
+    )
+  }
 
   const owed = cashIn.filter(([, s]) => s !== 'paid').reduce((n, [, , a]) => n + a, 0)
   console.log(`\nready — RM ${owed.toLocaleString()} outstanding across ${cashIn.filter(([, s]) => s !== 'paid').length} invoices,`)

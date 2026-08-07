@@ -5,6 +5,7 @@ import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaU
 import { AD_CLIENTS, keywordsForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, type AdClient } from '@/lib/ad-clients'
 import { campaignInsights, type Camp } from '@/lib/meta'
 import { leadsSummary } from '@/lib/leads-sheet'
+import { demoCampaigns, demoCompetitors, demoLeadsBlock } from '@/lib/demo'
 import { syncProjectAds } from '@/lib/ad-sync'
 
 // The 8am ads brief, once per client. For each client in lib/ad-clients.ts:
@@ -246,16 +247,22 @@ async function runClient(client: AdClient) {
   const cur = client.currency
   const money = (n: number) => fmt(cur, n)
 
+  // A demo project has no ad account: it reads the tables a real client's Meta
+  // pull would have filled. Everything downstream is identical.
+  const isDemo = client.demo === true
+
   // ① Yesterday vs the trailing 7-day daily average.
   let yesterday: Camp[] = []
   let week: Camp[] = []
   let month: Camp[] = []
   try {
-    ;[yesterday, week, month] = await Promise.all([
-      campaignInsights(client, 'yesterday'),
-      campaignInsights(client, 'last_7d'),
-      campaignInsights(client, 'last_30d'),
-    ])
+    ;[yesterday, week, month] = isDemo
+      ? await Promise.all([demoCampaigns(client, 1), demoCampaigns(client, 7), demoCampaigns(client, 30)])
+      : await Promise.all([
+          campaignInsights(client, 'yesterday'),
+          campaignInsights(client, 'last_7d'),
+          campaignInsights(client, 'last_30d'),
+        ])
   } catch (e) {
     notes.push(`Meta unavailable: ${(e as Error).message}`)
   }
@@ -264,10 +271,12 @@ async function runClient(client: AdClient) {
   // the trailing week because Meta keeps restating attributed conversions for
   // days already past. Failure here must never cost you the briefing.
   let synced: Awaited<ReturnType<typeof syncProjectAds>> | null = null
-  try {
-    synced = await syncProjectAds(client, 7)
-  } catch (e) {
-    notes.push(`Dashboard sync failed: ${(e as Error).message}`)
+  if (!isDemo) {
+    try {
+      synced = await syncProjectAds(client, 7)
+    } catch (e) {
+      notes.push(`Dashboard sync failed: ${(e as Error).message}`)
+    }
   }
 
   const weekByName = new Map(week.map((c) => [c.name, c]))
@@ -322,6 +331,10 @@ async function runClient(client: AdClient) {
   let partial: string[] = []
   let echo: Record<string, unknown> = {}
   try {
+    // A demo project never spends a credit: its market section is rebuilt from
+    // the ads already stored against it, exactly like the offline replay tool.
+    if (isDemo) competitors = await demoCompetitors(client)
+    else {
     const jobs = todaysKeywords.flatMap((k) => client.countries.map((c) => [k, c] as const))
     const maxPages = client.adyntelMaxPages ?? 1
     const batches = await Promise.all(
@@ -354,6 +367,7 @@ async function runClient(client: AdClient) {
       notes.push(
         `Saw only the first ${maxPages} page(s) for ${partial.length} search(es) — more ads exist for: ${partial.slice(0, 4).join(', ')}${partial.length > 4 ? '…' : ''}. Raise adyntelMaxPages to see deeper (each page costs a credit).`,
       )
+    }
   } catch (e) {
     // Out of credits is not "the API is flaky" — it's a bill to pay, and the
     // brief should say so in words rather than leaving you to wonder why the
@@ -374,15 +388,20 @@ async function runClient(client: AdClient) {
   // ②b The client's own book of leads. This is the half of the funnel Meta
   // cannot see: who opted in, who actually paid, and who nobody has called yet.
   let sheet: Awaited<ReturnType<typeof leadsSummary>> = null
+  let demoLeads: string[] = []
   try {
-    sheet = await leadsSummary(client)
-    if (sheet && !sheet.ok) notes.push(`Master leads sheet: ${sheet.error}`)
+    if (isDemo) demoLeads = await demoLeadsBlock(client, 30, money)
+    else {
+      sheet = await leadsSummary(client)
+      if (sheet && !sheet.ok) notes.push(`Master leads sheet: ${sheet.error}`)
+    }
   } catch (e) {
-    notes.push(`Master leads sheet unreadable: ${(e as Error).message}`)
+    notes.push(`Leads unreadable: ${(e as Error).message}`)
   }
 
-  const leadsBlock =
-    sheet && sheet.ok
+  const leadsBlock = isDemo
+    ? demoLeads
+    : sheet && sheet.ok
       ? [
           '',
           'LEADS (from the client master sheet — this is the truth about opt-ins and payments):',
