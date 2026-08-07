@@ -10,6 +10,7 @@ import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
 import { normaliseAd, competitorSection, stripLoneSurrogates, type NormalisedAd } from '../lib/adyntel.ts'
 import { AD_CLIENTS, LIVE_PROMPT, PRE_LAUNCH_PROMPT } from '../lib/ad-clients.ts'
+import { leadsSummary } from '../lib/leads-sheet.ts'
 
 const SEND = process.argv.includes('--send')
 const ID = process.argv.find((a) => a.startsWith('--client='))?.split('=')[1] ?? 'dianna-nlp'
@@ -58,6 +59,35 @@ const preLaunch = spend === 0
 const window = preLaunch ? 'no delivery' : 'last 30 days'
 console.log(`Meta: ${money(spend)} across ${month.length} campaign(s), ${leads} leads → ${preLaunch ? 'PRE-LAUNCH' : 'LIVE'} brief`)
 
+// ---- the client's own leads (live read of the master sheet, free) ----------
+const sheet = await leadsSummary(client)
+if (sheet && !sheet.ok) console.log('sheet unreadable:', sheet.error)
+if (sheet?.ok) console.log(`sheet: ${sheet.total} opt-ins · ${sheet.yesterday} yesterday · ${sheet.signups} paid · ${sheet.followUps.length} to chase`)
+
+// Mirrors the LEADS block in app/api/cron-ads/route.ts so a replay reads like
+// the real thing.
+const leadsBlock = sheet?.ok
+  ? [
+      '',
+      'LEADS (from the client master sheet — this is the truth about opt-ins and payments):',
+      `- yesterday: ${sheet.yesterday} new opt-in(s) · today so far: ${sheet.today} · last 7 days: ${sheet.last7} · ${sheet.total} tracked in total`,
+      `- paid: ${sheet.signups} of ${sheet.total} (${money(sheet.revenue)} collected)`,
+      sheet.attended !== null
+        ? `- attended the webinar: ${sheet.attended}`
+        : '- attendance: the sheet has no "Attended" column yet, so show-up rate is unknown (do not guess it)',
+      sheet.byAd.length
+        ? '- opt-ins by ad: ' + sheet.byAd.slice(0, 6).map((a) => `${a.ad} ${a.leads}${a.paid ? ` (${a.paid} paid)` : ''}`).join(' · ')
+        : '',
+      sheet.recentPayers.length
+        ? '- most recent payments: ' + sheet.recentPayers.slice(0, 5).map((p) => `${p.name} ${money(p.amount ?? 0)} on ${p.date}`).join(' · ')
+        : '- no payments recorded yet',
+      sheet.followUps.length
+        ? `- ${sheet.followUps.length} lead(s) have no payment and no next action. The coldest: ` +
+          sheet.followUps.slice(0, 6).map((f) => `${f.name} (${f.phone || 'no phone'}, ${f.days}d, via ${f.ad || 'unknown ad'})`).join(' · ')
+        : '- every lead has either paid or has a next action against it',
+    ].filter((l) => l !== '')
+  : []
+
 // ---- build + write ---------------------------------------------------------
 const market = competitorSection(ads, [], client.countries.join('+'), {}, client.relevanceTerms, client.excludeTerms)
 const facts = stripLoneSurrogates([
@@ -67,6 +97,7 @@ const facts = stripLoneSurrogates([
     ? 'OWN PERFORMANCE: none. This account has no delivery in any window, so there are no numbers to analyse.'
     : `WINDOW = LAST 30 DAYS: spent ${money(spend)}, ${leads} leads across ${month.length} campaigns.`,
   ...(preLaunch ? [] : month.slice(0, 8).map((c) => `- ${c.name}: ${money(c.spend)}, ${c.leads} leads, CPL ${c.cpl ? money(c.cpl) : 'n/a'}`)),
+  ...leadsBlock,
   '',
   market.text,
 ].filter((l) => l !== '').join('\n'))

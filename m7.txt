@@ -1,0 +1,23 @@
+feat(demo): sample-data seeder, and put the leads block in the replay tool
+
+scripts/sample-data.mjs --seed / --purge / --status
+
+The dashboard is honest to a fault: a metric with no source shows a dash, not a
+zero. That is right in daily use and useless on a stage, where a funnel of
+dashes tells an audience nothing. This fills the gaps so the whole river can be
+shown end to end — receivables with real due dates, project expenses, customers,
+mid-funnel leads, tasks, and the attendance/1-1 numbers nothing is recording yet.
+
+Every row is stamped meta.sample=true (records) or source='sample'
+(project_funnel). No tab renders those fields — the dashboard and the brief look
+exactly like production — and --purge removes every trace in one command. It
+never updates or deletes anything it did not create.
+
+It also does not invent money that competes with the truth: the real leads sheet
+still owns opt-ins, payments and revenue for the workshop, so the sign-up and
+ROAS numbers on stage are the client's actual ones.
+
+ads-brief-replay.ts now assembles the same LEADS block as the cron, so a dry run
+reads like the real 8am message instead of an older shape of it.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
