@@ -121,6 +121,17 @@ export type AdClient = {
   targetCPL?: number
   /** Where the non-Meta numbers come from. Omit a field = not connected yet. */
   sources?: MetricSources
+
+  /**
+   * The master leads sheet — one row per opt-in, with whether they paid.
+   *
+   * Read through Google's CSV export, which works for any sheet shared as
+   * "anyone with the link": no API key, no OAuth, no service account to expire
+   * at the worst possible moment. The trade is that the sheet must stay
+   * link-shared, and that we can only read it, never write — which is the right
+   * permission for a robot to have over the client's book of leads anyway.
+   */
+  leadsSheet?: { id: string; gid?: string }
 }
 
 /** Same objects, named for the dashboard's vocabulary. A client IS a project here. */
@@ -165,8 +176,13 @@ export const AD_CLIENTS: AdClient[] = [
     ],
   },
   {
-    id: 'kingsley-ai',
-    name: 'Kingsley AI Workshop',
+    // Renamed from 'kingsley-ai' on 2026-08-08. The id is a foreign key in three
+    // tables (ad_daily.project, competitor_ads.client, project_funnel.project),
+    // so the rename came with a data migration — see scripts/rename-project.mjs.
+    // The env var NAMES keep the old prefix on purpose: renaming those would
+    // mean re-entering the token in Vercel for no gain.
+    id: 'claude-malaysia',
+    name: 'Claude Malaysia Ads',
     adAccountEnv: 'KINGSLEY_META_AD_ACCOUNT_ID',
     tokenEnv: 'KINGSLEY_META_ACCESS_TOKEN',
     keywords: [
@@ -187,14 +203,19 @@ export const AD_CLIENTS: AdClient[] = [
     currency: 'RM',
     leadActionTypes: PIXEL_LEAD,
     chatIdEnv: 'OWNER_CHAT_ID',
-    client: 'Kingsley',
-    stage: 'pre-launch',
+    client: 'Claude Malaysia',
+    stage: 'active',
     launchDate: '2026-08-02',
-    // coursePrice: 0,
-    // targetCPL: 0,
+    coursePrice: 397, // the real ticket price, read off the sheet's "RM397 (General)"
+    targetCPL: 15,
+    // The master leads sheet — every opt-in, and whether they paid.
+    leadsSheet: { id: '1zI9FCROdsU0OwfzNuOPzHhrL9MWEggPzKQhzPKASIik' },
     sources: {
-      // leads: 'GHL landing page',
-      // attended: 'Master leads sheet · Attended',
+      leads: 'Master leads sheet',
+      attended: 'Master leads sheet · Attended column',
+      appointments: 'Master leads sheet · Booked 1-1?',
+      signups: 'Master leads sheet · Purchase Ticket',
+      cash: 'Master leads sheet · Purchase Ticket',
     },
     relevanceTerms: [
       // subject: is it about AI at all?
@@ -259,10 +280,21 @@ export const HONESTY =
 export const LIVE_PROMPT = (name: string) =>
   `You write an 8am ads briefing for ${name}, a Malaysian business. ` +
   'Be concrete and short. No preamble, no markdown headers, no bullet symbols other than "-". ' +
-  'Structure: one line on what changed in the numbers; then three to five lines on specific competitor ads - ' +
-  'name the advertiser, quote the actual hook or headline, and say the format and how long it has run; ' +
+  'Structure, in this order:\n' +
+  'ONE line on what changed in the ad numbers.\n' +
+  'If a LEADS section is present, then these three short blocks, using "-" bullets:\n' +
+  '  LEADS: opt-ins yesterday vs the 7-day pattern, and which ad produced them. If one ad is producing ' +
+  'most of the leads, say so by name.\n' +
+  '  MONEY: who paid and how much, and the gap between opt-ins and payments in plain words.\n' +
+  '  CHASE TODAY: name up to 5 specific people to contact, with their phone number and how many days ' +
+  'they have been waiting. Real names from the data, never invented ones. If someone has been waiting ' +
+  'longer than the others, put them first and say so.\n' +
+  'Then three to five lines on specific competitor ads - name the advertiser, quote the actual hook or ' +
+  'headline, and say the format and how long it has run; ' +
   'then exactly 3 numbered actions, each one sentence and specific enough to do today. ' +
   'Prefer naming a real ad over generalising about "competitors". ' +
+  'Never state a show-up rate, attendance figure or conversion rate that is not in the data you were ' +
+  'given - if the sheet has no attendance column, say attendance is not being recorded yet. ' +
   HONESTY
 
 // Pre-launch: there is no performance to report, so the entire brief is market

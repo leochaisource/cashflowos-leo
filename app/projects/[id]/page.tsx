@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getProject } from '@/lib/ad-clients'
-import { projectScorecard, WINNER_MIN_LEADS, LOSER_MIN_IMPRESSIONS, LOSER_MIN_SPEND } from '@/lib/metrics'
+import { projectScorecard, ratio as ratioSafe, WINNER_MIN_LEADS, LOSER_MIN_IMPRESSIONS, LOSER_MIN_SPEND } from '@/lib/metrics'
 import { todayISO } from '@/lib/records'
 import Metric from '@/app/_components/Metric'
 import Spark from '@/app/_components/Spark'
@@ -149,6 +149,71 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           />
         </div>
       </div>
+
+      {/* ─────────────────────────────── LEADS (live from the master sheet) */}
+      {s.sheet && (
+        <div className="band">
+          <div className="band-head">
+            <h2>Leads — live from the master sheet</h2>
+            <span>
+              {s.sheet.ok
+                ? `${s.sheet.total} opt-ins · ${s.sheet.yesterday} yesterday · ${s.sheet.today} today`
+                : 'sheet unreachable'}
+            </span>
+          </div>
+          {s.sheet.ok ? (
+            <>
+              <div className="grid" style={{ marginBottom: 18 }}>
+                <Metric label="Opt-ins yesterday" value={num(s.sheet.yesterday)} sub={`${num(s.sheet.last7)} in the last 7 days`} />
+                <Metric label="Paid" value={num(s.sheet.signups)} sub={money(s.sheet.revenue, cur)} />
+                <Metric
+                  label="To follow up"
+                  value={num(s.sheet.followUps.length)}
+                  sub="opted in, no payment, no next action"
+                  tone={s.sheet.followUps.length > 20 ? 'warn' : undefined}
+                />
+              </div>
+              {s.sheet.byAd.length > 0 && (
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>Ad (UTM content)</th>
+                      <th>Leads</th>
+                      <th>Paid</th>
+                      <th>Cost per lead</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {s.sheet.byAd.slice(0, 8).map((a) => {
+                      // Match the sheet's ad tag to Meta spend on the same-named ad.
+                      // Names are typed by hand into UTMs, so a miss is normal and
+                      // shows as a dash rather than a wrong number.
+                      const meta = s.winners
+                        .concat(s.losersByCPL, s.losersByCTR)
+                        .find((x) => x.ad_name.toLowerCase().includes(a.ad.toLowerCase()))
+                      return (
+                        <tr key={a.ad}>
+                          <td data-label="Ad">{a.ad}</td>
+                          <td data-label="Leads">{num(a.leads)}</td>
+                          <td data-label="Paid">{num(a.paid)}</td>
+                          <td data-label="Cost per lead">
+                            {meta ? money(ratioSafe(meta.spend, a.leads), cur) : DASH}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </>
+          ) : (
+            <div className="empty">
+              Couldn&apos;t read the sheet: {s.sheet.error}. The numbers below fall back to what&apos;s
+              stored.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ─────────────────────────────── FUNNEL */}
       <p className="rowlabel">Funnel — what happened to those people</p>

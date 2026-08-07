@@ -1,6 +1,7 @@
 import 'server-only'
 import { supabase, supabaseConfigured } from './supabase'
 import type { Project } from './ad-clients'
+import { leadsSummary, type LeadsSummary } from './leads-sheet'
 
 // Every number the dashboard shows is computed here, and every one of them can
 // be `null`.
@@ -118,6 +119,8 @@ export type Scorecard = {
   revenueBasis: 'cash collected' | 'sign-ups × course price' | null
   cpa: number | null
   roas: number | null
+  /** Live read of the client's master leads sheet, when one is configured. */
+  sheet: LeadsSummary | null
 }
 
 // ---------------------------------------------------------------- loading
@@ -171,6 +174,7 @@ export function scorecard(
   funnelRows: FunnelRow[],
   days: number,
   lookbackDays = LOOKBACK_DAYS,
+  sheet: LeadsSummary | null = null,
 ): Scorecard {
   const since = dayISO(days)
   const until = dayISO(0)
@@ -266,12 +270,22 @@ export function scorecard(
   const syncedAt =
     adRows.map((r) => r.synced_at).filter(Boolean).sort().slice(-1)[0] ?? null
 
-  // ── funnel — every one of these may be null, and null must survive the maths
-  const optIns = sumOrNull(funnelRows, 'leads')
-  const attended = sumOrNull(funnelRows, 'attended')
-  const appointments = sumOrNull(funnelRows, 'appointments')
-  const signups = sumOrNull(funnelRows, 'signups')
-  const cashCollected = sumOrNull(funnelRows, 'cash_collected')
+  // ── funnel — every one of these may be null, and null must survive the maths.
+  //
+  // The master sheet is the source of truth for anything it actually records:
+  // it is what the client types into all day, so it cannot be stale relative to
+  // a table we maintain. Where the sheet has no column for something — today it
+  // has no "Attended" — it returns null and the stored rows answer instead. A
+  // sheet that is unreachable falls back the same way, rather than zeroing the
+  // funnel because Google had a bad minute.
+  const pick = (fromSheet: number | null | undefined, stored: number | null) =>
+    fromSheet ?? stored
+
+  const optIns = pick(sheet?.ok ? sheet.total : null, sumOrNull(funnelRows, 'leads'))
+  const attended = pick(sheet?.attended, sumOrNull(funnelRows, 'attended'))
+  const appointments = pick(sheet?.appointments, sumOrNull(funnelRows, 'appointments'))
+  const signups = pick(sheet?.ok ? sheet.signups : null, sumOrNull(funnelRows, 'signups'))
+  const cashCollected = pick(sheet?.ok ? sheet.revenue : null, sumOrNull(funnelRows, 'cash_collected'))
 
   // Show-up = of the people who opted in, how many turned up. Falls back to
   // Meta's lead count only when no opt-in figure has been entered, and the page
@@ -325,6 +339,7 @@ export function scorecard(
     revenueBasis,
     cpa: ratio(spend, signups),
     roas: ratio(revenue, spend),
+    sheet,
   }
 }
 
@@ -341,17 +356,19 @@ export async function scorecards(
   days = 14,
 ): Promise<Map<string, Scorecard>> {
   const ids = projects.map((p) => p.id)
-  const [adRows, funnelRows] = await Promise.all([
+  const [adRows, funnelRows, sheets] = await Promise.all([
     loadAdRows(ids, dayISO(LOOKBACK_DAYS)),
     // Funnel numbers are only ever shown for the window, so read only the window.
     loadFunnelRows(ids, dayISO(days)),
+    // One CSV fetch per project that has a sheet; projects without one cost nothing.
+    Promise.all(projects.map((p) => leadsSummary(p).catch(() => null))),
   ])
   const out = new Map<string, Scorecard>()
-  for (const p of projects) {
+  projects.forEach((p, i) => {
     const a = (adRows as (AdRow & { project: string })[]).filter((r) => r.project === p.id)
     const f = (funnelRows as (FunnelRow & { project: string })[]).filter((r) => r.project === p.id)
-    out.set(p.id, scorecard(p, a, f, days))
-  }
+    out.set(p.id, scorecard(p, a, f, days, LOOKBACK_DAYS, sheets[i]))
+  })
   return out
 }
 

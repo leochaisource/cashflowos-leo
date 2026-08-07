@@ -3,8 +3,8 @@
 // which is exactly why raw_payload is kept. Meta is read live (free) and Claude
 // writes it up, using the SAME prompts the cron uses.
 //
-//   node scripts/ads-brief-replay.ts --client=kingsley-ai          (dry run)
-//   node scripts/ads-brief-replay.ts --client=kingsley-ai --send
+//   node scripts/ads-brief-replay.ts --client=claude-malaysia          (dry run)
+//   node scripts/ads-brief-replay.ts --client=claude-malaysia --send
 import fs from 'node:fs'
 import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'

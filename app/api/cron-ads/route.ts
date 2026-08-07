@@ -4,6 +4,7 @@ import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 import { AD_CLIENTS, keywordsForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, type AdClient } from '@/lib/ad-clients'
 import { campaignInsights, type Camp } from '@/lib/meta'
+import { leadsSummary } from '@/lib/leads-sheet'
 import { syncProjectAds } from '@/lib/ad-sync'
 
 // The 8am ads brief, once per client. For each client in lib/ad-clients.ts:
@@ -370,6 +371,50 @@ async function runClient(client: AdClient) {
       `Watching ${todaysKeywords.length} of ${client.keywords.length} keywords today (rotating): ${todaysKeywords.join(', ')}`,
     )
 
+  // ②b The client's own book of leads. This is the half of the funnel Meta
+  // cannot see: who opted in, who actually paid, and who nobody has called yet.
+  let sheet: Awaited<ReturnType<typeof leadsSummary>> = null
+  try {
+    sheet = await leadsSummary(client)
+    if (sheet && !sheet.ok) notes.push(`Master leads sheet: ${sheet.error}`)
+  } catch (e) {
+    notes.push(`Master leads sheet unreadable: ${(e as Error).message}`)
+  }
+
+  const leadsBlock =
+    sheet && sheet.ok
+      ? [
+          '',
+          'LEADS (from the client master sheet — this is the truth about opt-ins and payments):',
+          `- yesterday: ${sheet.yesterday} new opt-in(s) · today so far: ${sheet.today} · last 7 days: ${sheet.last7} · ${sheet.total} tracked in total`,
+          `- paid: ${sheet.signups} of ${sheet.total} (${money(sheet.revenue)} collected)`,
+          sheet.attended !== null
+            ? `- attended the webinar: ${sheet.attended}`
+            : '- attendance: the sheet has no "Attended" column yet, so show-up rate is unknown (do not guess it)',
+          sheet.byAd.length
+            ? '- opt-ins by ad: ' +
+              sheet.byAd
+                .slice(0, 6)
+                .map((a) => `${a.ad} ${a.leads}${a.paid ? ` (${a.paid} paid)` : ''}`)
+                .join(' · ')
+            : '',
+          sheet.recentPayers.length
+            ? '- most recent payments: ' +
+              sheet.recentPayers
+                .slice(0, 5)
+                .map((p) => `${p.name} ${money(p.amount ?? 0)} on ${p.date}`)
+                .join(' · ')
+            : '- no payments recorded yet',
+          sheet.followUps.length
+            ? `- ${sheet.followUps.length} lead(s) have no payment and no next action. The coldest: ` +
+              sheet.followUps
+                .slice(0, 6)
+                .map((f) => `${f.name} (${f.phone || 'no phone'}, ${f.days}d, via ${f.ad || 'unknown ad'})`)
+                .join(' · ')
+            : '- every lead has either paid or has a next action against it',
+        ].filter((l) => l !== '')
+      : []
+
   // ③ Turn it into advice.
   // An account that has never delivered is a different report, not a broken one:
   // there is nothing to optimise, so the whole brief becomes competitor
@@ -389,6 +434,7 @@ async function runClient(client: AdClient) {
             `- ${c.name}: ${money(c.spend)}, ${c.leads} leads, CPL ${c.cpl ? money(c.cpl) : 'n/a'}` +
             (c.cplDelta ? ` (${c.cplDelta > 0 ? '+' : ''}${c.cplDelta}% vs 7-day avg ${money(c.avgCpl)})` : ''),
         )),
+    ...leadsBlock,
     '',
     market.text,
   ]
@@ -421,7 +467,10 @@ async function runClient(client: AdClient) {
 
   const header =
     `📊 <b>${esc(client.name)}</b> — ${window}: ${money(spent)} spent · ${leads} leads` +
-    (movers.length ? ` · ${movers.length} live campaigns` : '')
+    (movers.length ? ` · ${movers.length} live campaigns` : '') +
+    (sheet?.ok
+      ? `\n🧲 <b>${sheet.yesterday}</b> opt-in(s) yesterday · <b>${sheet.signups}</b> paid (${money(sheet.revenue)}) · <b>${sheet.followUps.length}</b> to follow up`
+      : '')
   const text = [
     header,
     '',
