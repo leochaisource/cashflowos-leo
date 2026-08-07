@@ -205,11 +205,12 @@ export const AD_CLIENTS: AdClient[] = [
     ],
     excludeTerms: ['real estate', 'property', 'properties', 'condo', 'condominium', 'insurance', 'langsir', 'curtain', 'renovation', 'skincare', 'forex'],
     briefContext:
-      'PRE-LAUNCH. This ad account has never run an ad — zero campaigns, zero lifetime spend, ' +
-      'and that is expected, not a tracking fault. Planning stage as of 29 July 2026. ' +
-      'Landing page to be confirmed by 31 July 2026. First ads go live 2 August 2026. ' +
-      'The offer is an AI workshop for Malaysian and Singaporean business owners and SMEs, ' +
-      'including HRD Corp claimable training.',
+      'LIVE since 2 August 2026, after a pre-launch period. Early days: a few hundred ringgit spent ' +
+      'so far, so treat swings in CPL as small-sample noise rather than trends, and do not recommend ' +
+      'killing an ad on one bad day. Lead tracking is VERIFIED — the landing-page opt-in fires ' +
+      'offsite_conversion.fb_pixel_lead, and Meta reports the same conversion under three names, ' +
+      'which the brief already de-duplicates. The offer is an AI workshop for Malaysian and ' +
+      'Singaporean business owners and SMEs, including HRD Corp claimable training.',
   },
 ]
 
