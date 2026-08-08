@@ -550,20 +550,30 @@ export async function GET(req: Request) {
 
   const results: unknown[] = []
   const skipped: string[] = []
-  // Sequential on purpose: each client is several Adyntel calls plus a model
-  // call, and running them all at once risks rate limits and a 300s timeout.
-  for (const client of queue) {
-    if (!isConfigured(client)) {
-      skipped.push(`${client.id} (missing ${client.adAccountEnv} or ${client.tokenEnv})`)
-      continue
-    }
-    try {
-      results.push(await runClient(client))
-    } catch (e) {
-      // One client failing must never take the others down with it.
-      console.error(`[CFO] client ${client.id} failed:`, e)
-      results.push({ client: client.id, ok: false, error: (e as Error).message })
-    }
+  const runnable = queue.filter((c) => {
+    if (isConfigured(c)) return true
+    skipped.push(`${c.id} (missing ${c.adAccountEnv} or ${c.tokenEnv})`)
+    return false
+  })
+
+  // TWO AT A TIME. Fully sequential was right at two clients and stops being
+  // right at four: each one is several Adyntel calls plus a model write-up —
+  // call it 40-70s — and four in a row runs at the 300s ceiling, where the last
+  // client's brief silently never sends. All-at-once instead risks rate limits.
+  // Pairs halve the wall time and keep concurrent load where it already was.
+  const CONCURRENCY = 2
+  for (let i = 0; i < runnable.length; i += CONCURRENCY) {
+    const batch = runnable.slice(i, i + CONCURRENCY)
+    const settled = await Promise.all(
+      batch.map((client) =>
+        runClient(client).catch((e) => {
+          // One client failing must never take the others down with it.
+          console.error(`[CFO] client ${client.id} failed:`, e)
+          return { client: client.id, ok: false, error: (e as Error).message }
+        }),
+      ),
+    )
+    results.push(...settled)
   }
 
   return Response.json({ ok: true, clients: results.length, skipped, results })

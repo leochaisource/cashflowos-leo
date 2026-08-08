@@ -1,0 +1,12 @@
+fix(cron): run the morning briefs two at a time
+
+Fully sequential was right at two clients and stops being right at four. Each
+client is several Adyntel calls plus a model write-up — 40-70 seconds — and four
+in a row runs at the 300s function ceiling, where the LAST client's brief simply
+never sends and nothing says why. All-at-once would instead risk rate limits.
+
+Pairs halve the wall time and keep concurrent load roughly where it already was
+(one client already fires 8 parallel Adyntel searches). A failing client still
+cannot take down the others.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
