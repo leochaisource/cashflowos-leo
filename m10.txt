@@ -1,0 +1,37 @@
+feat(ads-brief): real competitor data for the two demo clients
+
+They had keywords but never used them: the demo branch skipped Adyntel entirely
+and rebuilt their market from ads COPIED off the real clients — so an aesthetics
+clinic's brief discussed AI workshop ads. A demo project has no ad account, but
+its market is real, and Adyntel does not care that our side of the account is
+seeded.
+
+- Both clients get proper keyword sets (5 each, rotating 2/day = 2 credits/day)
+  plus relevance and exclusion terms. Result: Lotus 72% on-topic, Kestrel 41%,
+  against 38% on the untuned AI keyword set.
+- Exclusions now also read the advertiser's PAGE NAME, because that is often the
+  only place the disqualifying fact appears: country_code=MY still returns
+  "ReDerm Clinic Bangkok" and "Karlovy clinic thrissur", whose copy never
+  mentions where they are. Relevance groups deliberately still ignore the page
+  name — a page called "AI Academy" must not satisfy "sells training" on its
+  name alone.
+- Every project now searches for real competitors; the stored-ads rebuild is a
+  FALLBACK for demo clients only when the search fails. A real client should see
+  that their feed broke, not a quietly recycled market from last week.
+- scripts/adyntel-seed-client.ts: populate one client's whole keyword list on day
+  one, since "new since last fetch" is meaningless without a baseline. Prints the
+  credit bill before spending and degrades if the enrich columns are missing.
+- The replay tool now handles demo clients (ad_daily + project_funnel), so a dry
+  run reads like the real 8am message for all four projects.
+
+VERIFIED, and it settles an open question: Adyntel IGNORES the undocumented
+filters it echoes. Two identical searches — one plain, one sending
+active_status/search_type/start_min_date — returned the same 30 ads, with the
+echo showing the server's own defaults both times. The echo describes what
+Adyntel did, not what we asked for. Noted in the config so nobody chases it again.
+
+Seeded: Lotus 122 ads from 72 advertisers, Kestrel 135 from 91. Real Malaysian
+clinics and training providers — Borneo Medispa (987 days), Dr. Chong Clinic,
+Maxwell Leadership Asia.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

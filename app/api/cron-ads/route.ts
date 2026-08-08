@@ -330,11 +330,12 @@ async function runClient(client: AdClient) {
   let credits = 0
   let partial: string[] = []
   let echo: Record<string, unknown> = {}
+  // A demo project has no ad account, but its MARKET is real: these are genuine
+  // Malaysian clinics and training providers, and Adyntel doesn't care that our
+  // side of the account is seeded. So every project searches for real
+  // competitors; only if that fails does a demo project fall back to the ads
+  // already stored against it (which keeps the brief whole when credits run out).
   try {
-    // A demo project never spends a credit: its market section is rebuilt from
-    // the ads already stored against it, exactly like the offline replay tool.
-    if (isDemo) competitors = await demoCompetitors(client)
-    else {
     const jobs = todaysKeywords.flatMap((k) => client.countries.map((c) => [k, c] as const))
     const maxPages = client.adyntelMaxPages ?? 1
     const batches = await Promise.all(
@@ -367,7 +368,6 @@ async function runClient(client: AdClient) {
       notes.push(
         `Saw only the first ${maxPages} page(s) for ${partial.length} search(es) — more ads exist for: ${partial.slice(0, 4).join(', ')}${partial.length > 4 ? '…' : ''}. Raise adyntelMaxPages to see deeper (each page costs a credit).`,
       )
-    }
   } catch (e) {
     // Out of credits is not "the API is flaky" — it's a bill to pay, and the
     // brief should say so in words rather than leaving you to wonder why the
@@ -377,6 +377,13 @@ async function runClient(client: AdClient) {
         ? `⛔ ${e.message} — the competitor section is blank until then.`
         : `Adyntel unavailable: ${(e as Error).message}`,
     )
+    // Fall back to what's already stored so the brief still has a market
+    // section. Only for demo projects: a real client deserves to SEE that the
+    // feed broke, not a quietly recycled one from last week.
+    if (isDemo) {
+      competitors = await demoCompetitors(client)
+      if (competitors.length) notes.push('Competitor section rebuilt from stored ads (no fresh search this run).')
+    }
   }
 
   const market = competitorSection(competitors, prior, client.countries.join('+'), {}, client.relevanceTerms, client.excludeTerms)

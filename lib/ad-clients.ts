@@ -96,13 +96,16 @@ export type AdClient = {
   /**
    * Extra search parameters passed straight through to Adyntel.
    *
-   * The API ECHOES fields it never documents as inputs — active_status,
-   * media_types, platform, search_type, start_min_date — which strongly
-   * suggests they are accepted, and an exact-phrase search would fix relevance
-   * at the source instead of us filtering 6 of every 10 ads out after paying
-   * for them. UNVERIFIED: the account ran out of credits before it could be
-   * probed. Left empty on purpose so nothing changes until it's tested; the
-   * run's JSON now returns the echo so one live call settles it.
+   * VERIFIED IGNORED, 2026-08-08. The API echoes back active_status,
+   * search_type, media_types and start_min_date, which looked like they were
+   * accepted as inputs. They are not: two identical searches — one plain, one
+   * sending all four — returned the SAME 30 ads, and the echo showed the
+   * server's own defaults (active_status "active", search_type
+   * "keyword_unordered") in both. The echo describes what Adyntel did, not what
+   * we asked for.
+   *
+   * Kept as a passthrough in case they ever ship real filtering; don't spend
+   * time on it again without evidence that changed.
    */
   adyntelParams?: Record<string, unknown>
 
@@ -262,11 +265,25 @@ AD_CLIENTS.push(
     adAccountEnv: 'LOTUS_META_AD_ACCOUNT_ID',
     tokenEnv: 'LOTUS_META_ACCESS_TOKEN',
     chatIdEnv: 'OWNER_CHAT_ID',
-    keywords: ['aesthetic clinic', 'skin treatment', 'slimming programme'],
+    keywords: ['aesthetic clinic', 'skin treatment', 'slimming treatment', 'botox filler promo', 'acne treatment clinic'],
     countries: ['MY'],
-    keywordsPerRun: 0,
+    keywordsPerRun: 2, // 2 credits/day, whole list covered every 3 days
     currency: 'RM',
     leadActionTypes: NATIVE_LEAD, // instant forms straight into WhatsApp follow-up
+    relevanceTerms: [
+      // subject: is this about aesthetics/skin at all?
+      ['aesthetic', 'aesthetics', 'skin', 'facial', 'face', 'beauty', 'slimming', 'botox', 'filler',
+       'laser', 'acne', 'pigmentation', 'whitening', 'glow', 'anti-ageing', 'anti-aging', 'derma',
+       'dermatology', 'hair removal', 'clinic', 'aesthetician'],
+      // offer type: is something actually being SOLD or booked?
+      ['treatment', 'package', 'promo', 'promotion', 'consultation', 'consult', 'appointment',
+       'book', 'booking', 'trial', 'session', 'doctor', 'dr', 'certified', 'free', 'rm', 'discount',
+       'voucher', 'whatsapp'],
+    ],
+    // country_code=MY still returns clinics in Bangkok, Kerala and Taipei, and a
+    // brief about the wrong country is worse than a shorter brief.
+    excludeTerms: ['bangkok', 'thailand', 'thrissur', 'kerala', 'india', 'taipei', 'taiwan',
+      'jakarta', 'vietnam', 'manila', 'dubai', 'property', 'real estate', 'insurance', 'forex', 'crypto'],
     coursePrice: 2500,
     targetCPL: 35,
     sources: {
@@ -285,11 +302,25 @@ AD_CLIENTS.push(
     adAccountEnv: 'KESTREL_META_AD_ACCOUNT_ID',
     tokenEnv: 'KESTREL_META_ACCESS_TOKEN',
     chatIdEnv: 'OWNER_CHAT_ID',
-    keywords: ['leadership training', 'management bootcamp', 'HRD Corp leadership'],
+    keywords: ['leadership training', 'management bootcamp', 'HRD Corp leadership', 'supervisor training', 'people manager course'],
     countries: ['MY'],
-    keywordsPerRun: 0,
+    keywordsPerRun: 2, // 2 credits/day, whole list covered every 3 days
     currency: 'RM',
     leadActionTypes: PIXEL_LEAD,
+    relevanceTerms: [
+      // subject: is this about leading/managing people?
+      ['leadership', 'leader', 'leaders', 'manager', 'managers', 'management', 'supervisor',
+       'supervisory', 'executive', 'team lead', 'people management', 'delegation', 'culture',
+       'performance review', 'coaching', 'mentoring'],
+      // offer type: is it TEACHING it, rather than hiring or consulting?
+      ['training', 'course', 'courses', 'bootcamp', 'workshop', 'masterclass', 'programme',
+       'program', 'seminar', 'webinar', 'certification', 'certified', 'hrd', 'hrdc', 'hrdf',
+       'academy', 'cohort', 'class', 'upskill', 'learn', 'curriculum', 'intake'],
+    ],
+    // Recruiters and MLMs use the same vocabulary as leadership trainers.
+    excludeTerms: ['hiring', 'we are hiring', 'job vacancy', 'vacancy', 'recruitment agency',
+      'mlm', 'network marketing', 'forex', 'crypto', 'property', 'real estate', 'insurance',
+      'bangkok', 'thailand', 'india', 'jakarta', 'dubai'],
     coursePrice: 1880,
     targetCPL: 40,
     sources: {

@@ -377,12 +377,18 @@ export function describeConcept(c: Concept, localMedia: Record<string, string[]>
 export function isRelevant(a: NormalisedAd, groups?: string[][], exclude?: string[]): boolean {
   if (!groups?.length && !exclude?.length) return true
   const hay = `${a.title ?? ''} ${a.body_text} ${a.caption ?? ''} ${a.link_description ?? ''} ${a.link_url ?? ''}`.toLowerCase()
-  const hits = (t: string) => {
+  // EXCLUSIONS also read the advertiser's own name, because that is often the
+  // only place the disqualifying fact appears: a search for Malaysian clinics
+  // returns "ReDerm Clinic Bangkok" whose copy never mentions Thailand.
+  // The relevance GROUPS deliberately do not read it — a page called
+  // "AI Academy" must not satisfy "sells training" on its name alone.
+  const hayWithPage = `${a.page_name} ${hay}`.toLowerCase()
+  const matcher = (h: string) => (t: string) => {
     const esc = t.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    return new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`).test(hay)
+    return new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`).test(h)
   }
-  if (exclude?.some(hits)) return false
-  return (groups ?? []).every((g) => g.some(hits))
+  if (exclude?.some(matcher(hayWithPage))) return false
+  return (groups ?? []).every((g) => g.some(matcher(hay)))
 }
 
 export function competitorSection(

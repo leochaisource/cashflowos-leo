@@ -52,7 +52,24 @@ async function meta(preset: string): Promise<Camp[]> {
     return { name: String(d.campaign_name ?? 'Unnamed'), spend, leads, cpl: leads ? spend / leads : 0 }
   })
 }
-const month = (await meta('last_30d')).filter((c) => c.spend > 0).sort((a, b) => b.spend - a.spend)
+/** A demo client has no ad account — its performance lives in ad_daily. */
+async function demoMeta(): Promise<Camp[]> {
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10)
+  const { data } = await s.from('ad_daily').select('campaign_name, spend, leads').eq('project', client!.id).gte('date', since)
+  const by = new Map<string, Camp>()
+  for (const r of data ?? []) {
+    const name = (r.campaign_name as string) || 'Unnamed'
+    const c = by.get(name) ?? { name, spend: 0, leads: 0, cpl: 0 }
+    c.spend += Number(r.spend) || 0
+    c.leads += Number(r.leads) || 0
+    by.set(name, c)
+  }
+  return [...by.values()].map((c) => ({ ...c, cpl: c.leads ? c.spend / c.leads : 0 }))
+}
+
+const month = (client.demo ? await demoMeta() : await meta('last_30d'))
+  .filter((c) => c.spend > 0)
+  .sort((a, b) => b.spend - a.spend)
 const spend = month.reduce((n, c) => n + c.spend, 0)
 const leads = month.reduce((n, c) => n + c.leads, 0)
 const preLaunch = spend === 0
@@ -60,13 +77,41 @@ const window = preLaunch ? 'no delivery' : 'last 30 days'
 console.log(`Meta: ${money(spend)} across ${month.length} campaign(s), ${leads} leads → ${preLaunch ? 'PRE-LAUNCH' : 'LIVE'} brief`)
 
 // ---- the client's own leads (live read of the master sheet, free) ----------
-const sheet = await leadsSummary(client)
+// Demo clients have no sheet; their funnel lives in project_funnel, which the
+// cron reads through lib/demo.ts. Replays of those clients show the ads and the
+// market, and skip the leads block rather than invent one.
+const sheet = client.demo ? null : await leadsSummary(client)
+
+/** Demo clients have no sheet: their funnel lives in project_funnel, exactly as
+ *  lib/demo.ts reads it for the real cron. Without this the replay looks like a
+ *  client with no lead tracking at all, and the model says so at length. */
+async function demoLeads(): Promise<string[]> {
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10)
+  const { data } = await s.from('project_funnel').select('*').eq('project', client!.id).gte('date', since)
+  if (!data?.length) return []
+  const sum = (k: string) => {
+    const v = data.map((r) => r[k]).filter((x): x is number => typeof x === 'number')
+    return v.length ? v.reduce((a, b) => a + b, 0) : null
+  }
+  const optIns = sum('leads'), attended = sum('attended'), appts = sum('appointments')
+  const signups = sum('signups'), cash = sum('cash_collected')
+  const pct = (a: number | null, b: number | null) => (a !== null && b !== null && b > 0 ? `${Math.round((a / b) * 100)}%` : 'not tracked')
+  return [
+    '',
+    `LEADS (${client!.sources?.leads ?? 'client system'} — 30-day window):`,
+    `- opt-ins: ${optIns ?? 'not tracked'} · attended: ${attended ?? 'not tracked'} (show-up ${pct(attended, optIns)})`,
+    `- appointments booked: ${appts ?? 'not tracked'} · sign-ups: ${signups ?? 'not tracked'} · collected: ${cash === null ? 'not tracked' : money(cash)}`,
+    signups !== null && attended !== null ? `- attendee → sign-up: ${pct(signups, attended)}` : '',
+  ].filter((l) => l !== '')
+}
 if (sheet && !sheet.ok) console.log('sheet unreadable:', sheet.error)
 if (sheet?.ok) console.log(`sheet: ${sheet.total} opt-ins · ${sheet.yesterday} yesterday · ${sheet.signups} paid · ${sheet.followUps.length} to chase`)
 
 // Mirrors the LEADS block in app/api/cron-ads/route.ts so a replay reads like
 // the real thing.
-const leadsBlock = sheet?.ok
+const leadsBlock = client.demo
+  ? await demoLeads()
+  : sheet?.ok
   ? [
       '',
       'LEADS (from the client master sheet — this is the truth about opt-ins and payments):',
