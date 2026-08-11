@@ -2,6 +2,7 @@ import 'server-only'
 import { supabase, supabaseConfigured } from './supabase'
 import type { Project } from './ad-clients'
 import { leadsSummary, type LeadsSummary } from './leads-sheet'
+import { ratio, delivery, perDay, type Delivery } from './delivery'
 
 // Every number the dashboard shows is computed here, and every one of them can
 // be `null`.
@@ -30,9 +31,11 @@ export const LOSER_CPL_MULTIPLE = 1.25 // 25% worse than the blended CPL
 export const LOSER_CTR_FRACTION = 0.75 // clicking through at 3/4 of the account rate
 
 // ---------------------------------------------------------------- null-safe maths
-/** a ÷ b, or null unless both are real numbers and b > 0. The guard behind every derived tile. */
-export const ratio = (a: number | null | undefined, b: number | null | undefined): number | null =>
-  typeof a === 'number' && typeof b === 'number' && Number.isFinite(a) && b > 0 ? a / b : null
+// ratio(), Delivery and delivery() live in lib/delivery.ts — free of the
+// `server-only` guard, so the offline replay script can compute the same numbers
+// the dashboard does. Re-exported here because everything already imports them
+// from this module.
+export { ratio, delivery, perDay, type Delivery, type DeliveryRow } from './delivery'
 
 /**
  * Sum a column that is allowed to be NULL. Returns null when NO row has a value
@@ -53,6 +56,7 @@ export type AdRow = {
   effective_status: string | null
   spend: number
   impressions: number
+  reach: number
   clicks: number
   link_clicks: number
   leads: number
@@ -77,10 +81,14 @@ export type AdPerf = {
   status: string | null
   spend: number
   impressions: number
+  clicks: number
   link_clicks: number
   leads: number
   cpl: number | null // null = spent but produced no lead (shown as "no leads")
   ctr: number | null // link clicks ÷ impressions
+  allCtr: number | null // every click ÷ impressions
+  cpm: number | null
+  cpc: number | null
 }
 
 export type Scorecard = {
@@ -109,6 +117,15 @@ export type Scorecard = {
   leads: number // leads Meta attributed, always a real number
   avgCPL: number | null
   dailySpend: { date: string; spend: number; leads: number }[]
+  /** The whole window as one delivery block: CPM, CTR, CPC and the rest. */
+  delivery: Delivery
+  /** Yesterday on its own. */
+  yesterday: Delivery
+  /** The three days before today, and the same figures expressed per day. */
+  last3: Delivery
+  last3PerDay: Delivery
+  /** Per-day rows with reach and frequency, which are only exact per day. */
+  daily: (Delivery & { date: string; reach: number; frequency: number | null })[]
   winners: AdPerf[]
   losersByCPL: AdPerf[]
   losersByCTR: AdPerf[]
@@ -144,7 +161,7 @@ export async function loadAdRows(projectIds: string[], since: string): Promise<A
   const { data, error } = await supabase
     .from('ad_daily')
     .select(
-      'project, date, ad_id, ad_name, campaign_name, effective_status, spend, impressions, clicks, link_clicks, leads, currency, synced_at',
+      'project, date, ad_id, ad_name, campaign_name, effective_status, spend, impressions, reach, clicks, link_clicks, leads, currency, synced_at',
     )
     .in('project', projectIds)
     .gte('date', since)
@@ -208,13 +225,18 @@ export function scorecard(
         status: r.effective_status,
         spend: 0,
         impressions: 0,
+        clicks: 0,
         link_clicks: 0,
         leads: 0,
         cpl: null,
         ctr: null,
+        allCtr: null,
+        cpm: null,
+        cpc: null,
       } satisfies AdPerf)
     cur.spend += Number(r.spend) || 0
     cur.impressions += Number(r.impressions) || 0
+    cur.clicks += Number(r.clicks) || 0
     cur.link_clicks += Number(r.link_clicks) || 0
     cur.leads += Number(r.leads) || 0
     byAd.set(r.ad_id, cur)
@@ -223,6 +245,9 @@ export function scorecard(
     ...a,
     cpl: ratio(a.spend, a.leads),
     ctr: ratio(a.link_clicks, a.impressions),
+    allCtr: ratio(a.clicks, a.impressions),
+    cpm: a.impressions > 0 ? (a.spend / a.impressions) * 1000 : null,
+    cpc: ratio(a.spend, a.clicks),
   }))
 
   const spend = ads.reduce((s, a) => s + a.spend, 0)
@@ -252,6 +277,35 @@ export function scorecard(
   const dailySpend = Array.from(perDay.entries()).map(([date, v]) => ({ date, ...v }))
   const yRow = perDay.get(dayISO(1))
   const spendYesterday = yRow ? yRow.spend : null
+
+  // ── delivery metrics: the whole window, yesterday, and the trailing 3 days.
+  const inRange = (from: string, to: string) => adRows.filter((r) => r.date >= from && r.date <= to)
+  const yesterdayRows = inRange(dayISO(1), dayISO(1))
+  // "Past 3 days" means the three COMPLETE days behind us — today is still being
+  // written and would drag every average down as the morning goes on.
+  const last3Rows = inRange(dayISO(3), dayISO(1))
+  const last3 = delivery(last3Rows)
+  const daysWithSpend = new Set(last3Rows.filter((r) => Number(r.spend) > 0).map((r) => r.date)).size || 1
+  const perDayOf = (d: Delivery, n: number): Delivery => ({
+    ...d,
+    spend: d.spend / n,
+    impressions: d.impressions / n,
+    clicks: d.clicks / n,
+    linkClicks: d.linkClicks / n,
+    leads: d.leads / n,
+    // The rates are already per-impression — dividing them by days would be wrong.
+  })
+
+  // Per-day rows keep reach and frequency, which only mean anything on one day.
+  const byDate = new Map<string, AdRow[]>()
+  for (const r of adRows) (byDate.get(r.date) ?? byDate.set(r.date, []).get(r.date)!).push(r)
+  const daily = Array.from(byDate.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, rows]) => {
+      const reach = rows.reduce((s, r) => s + (Number(r.reach) || 0), 0)
+      const d = delivery(rows)
+      return { date, ...d, reach, frequency: ratio(d.impressions, reach) }
+    })
 
   const avgCPL = ratio(spend, leads)
 
@@ -351,6 +405,11 @@ export function scorecard(
     losersByCPL,
     losersByCTR,
     syncedAt,
+    delivery: delivery(adRows),
+    yesterday: delivery(yesterdayRows),
+    last3,
+    last3PerDay: perDayOf(last3, daysWithSpend),
+    daily,
     optIns,
     attended,
     appointments,

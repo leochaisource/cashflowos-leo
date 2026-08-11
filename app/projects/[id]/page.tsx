@@ -111,6 +111,77 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         <Metric label="Leads (Meta)" value={num(s.leads)} sub={project.leadActionTypes[0]} source="Meta ad account" />
       </div>
 
+      {/* Delivery — the metrics that explain WHY the CPL is what it is. */}
+      <div className="grid">
+        <Metric
+          label="CPM"
+          value={money(s.delivery.cpm, cur)}
+          sub={`${num(s.delivery.impressions)} impressions`}
+          source="Meta ad account"
+        />
+        <Metric
+          label="Link CTR"
+          value={pct(s.delivery.linkCtr, 2)}
+          sub={`${num(s.delivery.linkClicks)} link clicks`}
+          source="Meta ad account"
+        />
+        <Metric label="CTR (all)" value={pct(s.delivery.ctr, 2)} sub={`${num(s.delivery.clicks)} clicks`} source="Meta ad account" />
+        <Metric label="CPC" value={money(s.delivery.cpc, cur)} sub={`per link click ${money(s.delivery.costPerLinkClick, cur)}`} source="Meta ad account" />
+        <Metric
+          label="Click → lead"
+          value={pct(s.delivery.leadRate)}
+          sub="of link clicks that opted in"
+          source="needs clicks and leads"
+        />
+      </div>
+
+      {/* Yesterday against the trailing three days — the same comparison the
+          morning brief makes, so the screen and the message never disagree. */}
+      {(s.yesterday.spend > 0 || s.last3.spend > 0) && (
+        <div className="band">
+          <div className="band-head">
+            <h2>Yesterday vs the last 3 days</h2>
+            <span>lower CPM, CPC and CPL are better · higher CTR is better</span>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Yesterday</th>
+                <th>3-day average, per day</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {([
+                ['Spend', money(s.yesterday.spend, cur), money(s.last3PerDay.spend, cur), s.yesterday.spend, s.last3PerDay.spend, 'up'],
+                ['CPM', money(s.yesterday.cpm, cur), money(s.last3PerDay.cpm, cur), s.yesterday.cpm, s.last3PerDay.cpm, 'down'],
+                ['Link CTR', pct(s.yesterday.linkCtr, 2), pct(s.last3PerDay.linkCtr, 2), s.yesterday.linkCtr, s.last3PerDay.linkCtr, 'up'],
+                ['CPC', money(s.yesterday.cpc, cur), money(s.last3PerDay.cpc, cur), s.yesterday.cpc, s.last3PerDay.cpc, 'down'],
+                ['Leads', num(s.yesterday.leads), num(Math.round(s.last3PerDay.leads * 10) / 10), s.yesterday.leads, s.last3PerDay.leads, 'up'],
+                ['CPL', money(s.yesterday.cpl, cur), money(s.last3PerDay.cpl, cur), s.yesterday.cpl, s.last3PerDay.cpl, 'down'],
+              ] as const).map(([label, now, base, nowV, baseV, better]) => {
+                const change = ratioSafe((nowV ?? 0) - (baseV ?? 0), baseV)
+                const good = change === null ? undefined : better === 'up' ? change > 0 : change < 0
+                return (
+                  <tr key={label}>
+                    <td data-label="Metric">{label}</td>
+                    <td data-label="Yesterday">{now}</td>
+                    <td data-label="3-day average">{base}</td>
+                    <td
+                      data-label="Change"
+                      style={change === null ? undefined : { color: good ? '#2E5A40' : '#8A3E2D', fontWeight: 600 }}
+                    >
+                      {change === null ? DASH : `${change > 0 ? '+' : ''}${(change * 100).toFixed(0)}%`}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="band">
         <div className="band-head">
           <h2>Daily ad spend</h2>

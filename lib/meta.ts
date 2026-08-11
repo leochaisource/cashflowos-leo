@@ -69,7 +69,23 @@ async function getAll(url: string, token: string, maxPages = 10): Promise<Record
 }
 
 // ---------------------------------------------------------------- campaigns
-export type Camp = { name: string; spend: number; impressions: number; leads: number; cpl: number }
+export type Camp = {
+  name: string
+  spend: number
+  impressions: number
+  leads: number
+  cpl: number
+  // Delivery quality. Meta computes cpm/ctr/cpc itself, so we take its numbers
+  // rather than re-deriving them and disagreeing with Ads Manager by a rounding.
+  reach: number
+  frequency: number | null
+  clicks: number
+  linkClicks: number
+  cpm: number | null
+  ctr: number | null // Meta's ctr = ALL clicks ÷ impressions
+  linkCtr: number | null
+  cpc: number | null
+}
 
 /** Campaign-level totals for a preset window. This is what the 8am brief reports. */
 export async function campaignInsights(client: AdClient, datePreset: string): Promise<Camp[]> {
@@ -77,17 +93,31 @@ export async function campaignInsights(client: AdClient, datePreset: string): Pr
   if (!c) return []
   const url =
     `${GRAPH}/act_${c.acct}/insights?level=campaign&date_preset=${datePreset}` +
-    `&fields=campaign_name,spend,impressions,actions&limit=200`
+    '&fields=campaign_name,spend,impressions,reach,frequency,clicks,inline_link_clicks,' +
+    'cpm,ctr,cpc,actions&limit=200'
   const rows = await getAll(url, c.token)
   return rows.map((d) => {
     const spend = Number(d.spend) || 0
+    const impressions = Number(d.impressions) || 0
+    const linkClicks = actionValue(d.inline_link_clicks)
     const leads = leadsOf(d.actions as { action_type: string; value: string }[], client.leadActionTypes)
+    const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : null)
     return {
       name: String(d.campaign_name ?? 'Unnamed'),
       spend,
-      impressions: Number(d.impressions) || 0,
+      impressions,
       leads,
       cpl: leads > 0 ? spend / leads : 0,
+      reach: Number(d.reach) || 0,
+      frequency: num(d.frequency),
+      clicks: Number(d.clicks) || 0,
+      linkClicks,
+      // Fall back to deriving only when Meta omits the field (it does on rows
+      // with zero delivery).
+      cpm: num(d.cpm) ?? (impressions > 0 ? (spend / impressions) * 1000 : null),
+      ctr: num(d.ctr) !== null ? (num(d.ctr) as number) / 100 : impressions > 0 ? (Number(d.clicks) || 0) / impressions : null,
+      linkCtr: impressions > 0 ? linkClicks / impressions : null,
+      cpc: num(d.cpc) ?? (Number(d.clicks) > 0 ? spend / Number(d.clicks) : null),
     }
   })
 }
@@ -143,6 +173,72 @@ export async function adInsights(
       leads: leadsOf(d.actions as { action_type: string; value: string }[], client.leadActionTypes),
       currency: (d.account_currency as string) ?? null,
     }))
+}
+
+/**
+ * Account-level insights straight from Meta for one window — the only correct
+ * source of REACH and FREQUENCY over multiple days, because reach is
+ * de-duplicated people and daily reach cannot be added up.
+ */
+export type AccountInsights = {
+  spend: number
+  impressions: number
+  reach: number
+  frequency: number | null
+  clicks: number
+  linkClicks: number
+  uniqueLinkClicks: number
+  cpm: number | null
+  ctr: number | null
+  linkCtr: number | null
+  cpc: number | null
+  costPerLinkClick: number | null
+  leads: number
+  cpl: number | null
+  actions: { action_type: string; value: number }[]
+  window: string
+}
+
+export async function accountInsights(client: AdClient, datePreset = 'last_7d'): Promise<AccountInsights | null> {
+  const c = creds(client)
+  if (!c) return null
+  const url =
+    `${GRAPH}/act_${c.acct}/insights?level=account&date_preset=${datePreset}` +
+    '&fields=spend,impressions,reach,frequency,clicks,inline_link_clicks,unique_inline_link_clicks,' +
+    'cpm,ctr,cpc,cost_per_inline_link_click,actions&limit=50'
+  const rows = await getAll(url, c.token, 2)
+  const d = rows[0]
+  if (!d) return null
+  const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : null)
+  const spend = Number(d.spend) || 0
+  const impressions = Number(d.impressions) || 0
+  const linkClicks = actionValue(d.inline_link_clicks)
+  const leads = leadsOf(d.actions as { action_type: string; value: string }[], client.leadActionTypes)
+  return {
+    spend,
+    impressions,
+    reach: Number(d.reach) || 0,
+    frequency: num(d.frequency),
+    clicks: Number(d.clicks) || 0,
+    linkClicks,
+    uniqueLinkClicks: actionValue(d.unique_inline_link_clicks),
+    cpm: num(d.cpm),
+    ctr: num(d.ctr) !== null ? (num(d.ctr) as number) / 100 : null,
+    linkCtr: impressions > 0 ? linkClicks / impressions : null,
+    cpc: num(d.cpc),
+    costPerLinkClick: num(d.cost_per_inline_link_click),
+    leads,
+    cpl: leads > 0 ? spend / leads : null,
+    // The whole action list, so "how many landing page views?" can be answered
+    // without another deploy.
+    actions: Array.isArray(d.actions)
+      ? (d.actions as { action_type: string; value: string }[]).map((a) => ({
+          action_type: a.action_type,
+          value: Number(a.value) || 0,
+        }))
+      : [],
+    window: datePreset,
+  }
 }
 
 // ---------------------------------------------------------------- ad statuses

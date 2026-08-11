@@ -23,20 +23,36 @@ export async function demoCampaigns(project: Project, days: number): Promise<Cam
   if (!supabaseConfigured) return []
   const { data, error } = await supabase
     .from('ad_daily')
-    .select('campaign_name, spend, impressions, leads')
+    .select('campaign_name, spend, impressions, reach, clicks, link_clicks, leads')
     .eq('project', project.id)
     .gte('date', dayISO(days))
   if (error || !data?.length) return []
+  const blank = (name: string): Camp => ({
+    name, spend: 0, impressions: 0, leads: 0, cpl: 0, reach: 0, frequency: null,
+    clicks: 0, linkClicks: 0, cpm: null, ctr: null, linkCtr: null, cpc: null,
+  })
   const by = new Map<string, Camp>()
   for (const r of data) {
     const name = r.campaign_name || 'Unnamed'
-    const c = by.get(name) ?? { name, spend: 0, impressions: 0, leads: 0, cpl: 0 }
+    const c = by.get(name) ?? blank(name)
     c.spend += Number(r.spend) || 0
     c.impressions += Number(r.impressions) || 0
+    c.reach += Number(r.reach) || 0
+    c.clicks += Number(r.clicks) || 0
+    c.linkClicks += Number(r.link_clicks) || 0
     c.leads += Number(r.leads) || 0
     by.set(name, c)
   }
-  return [...by.values()].map((c) => ({ ...c, cpl: c.leads > 0 ? c.spend / c.leads : 0 }))
+  return [...by.values()].map((c) => ({
+    ...c,
+    cpl: c.leads > 0 ? c.spend / c.leads : 0,
+    cpm: c.impressions > 0 ? (c.spend / c.impressions) * 1000 : null,
+    ctr: c.impressions > 0 ? c.clicks / c.impressions : null,
+    linkCtr: c.impressions > 0 ? c.linkClicks / c.impressions : null,
+    cpc: c.clicks > 0 ? c.spend / c.clicks : null,
+    // Summed daily reach is not de-duplicated, so no frequency here on purpose.
+    frequency: null,
+  }))
 }
 
 /**

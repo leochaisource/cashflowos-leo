@@ -11,6 +11,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { normaliseAd, competitorSection, stripLoneSurrogates, type NormalisedAd } from '../lib/adyntel.ts'
 import { AD_CLIENTS, LIVE_PROMPT, PRE_LAUNCH_PROMPT } from '../lib/ad-clients.ts'
 import { leadsSummary } from '../lib/leads-sheet.ts'
+import { delivery, perDay } from '../lib/delivery.ts'
 
 const SEND = process.argv.includes('--send')
 const ID = process.argv.find((a) => a.startsWith('--client='))?.split('=')[1] ?? 'dianna-nlp'
@@ -133,6 +134,43 @@ const leadsBlock = client.demo
     ].filter((l) => l !== '')
   : []
 
+// ---- delivery: yesterday vs the trailing 3 days, from ad_daily -------------
+// Uses the SAME delivery() the dashboard and the cron use (lib/delivery.ts is
+// free of `server-only` precisely so this script can import it), so a replay
+// can't quietly disagree with the real brief.
+async function deliveryBlockFor(): Promise<string[]> {
+  const day = (o: number) => { const d = new Date(); d.setDate(d.getDate() - o); return d.toISOString().slice(0, 10) }
+  const { data } = await s
+    .from('ad_daily')
+    .select('date, spend, impressions, clicks, link_clicks, leads')
+    .eq('project', client!.id)
+    .gte('date', day(3))
+    .lte('date', day(1))
+  if (!data?.length) return []
+  const rows = data as any[]
+  const y = delivery(rows.filter((r) => r.date === day(1)))
+  const l3 = delivery(rows)
+  const activeDays = new Set(rows.filter((r) => Number(r.spend) > 0).map((r) => r.date)).size || 1
+  const avg = perDay(l3, activeDays)
+  const pctS = (n: number | null) => (n === null ? 'n/a' : `${(n * 100).toFixed(2)}%`)
+  const line = (label: string, d: typeof y) =>
+    `- ${label}: ${money(d.spend)} · ${Math.round(d.impressions).toLocaleString('en-MY')} impressions · ` +
+    `CPM ${d.cpm === null ? 'n/a' : money(d.cpm)} · CTR ${pctS(d.ctr)} (link ${pctS(d.linkCtr)}) · ` +
+    `${Math.round(d.clicks)} clicks (${Math.round(d.linkClicks)} link) · CPC ${d.cpc === null ? 'n/a' : money(d.cpc)} · ` +
+    `${Math.round(d.leads)} leads · CPL ${d.cpl === null ? 'n/a' : money(d.cpl)}`
+  const delta = (now: number | null, base: number | null) =>
+    now === null || base === null || base === 0 ? '' : ` (${now >= base ? '+' : ''}${Math.round(((now - base) / base) * 100)}% vs 3-day)`
+  return [
+    '',
+    'DELIVERY (from the stored daily snapshot):',
+    line('YESTERDAY', y),
+    line('LAST 3 DAYS, PER DAY', avg),
+    `- yesterday vs the 3-day average: CPM${delta(y.cpm, avg.cpm)}, link CTR${delta(y.linkCtr, avg.linkCtr)}, CPL${delta(y.cpl, avg.cpl)}`,
+    '- for CPM, CPC and CPL a NEGATIVE change is an improvement; for CTR and leads a positive change is.',
+  ]
+}
+const deliveryBlock = await deliveryBlockFor()
+
 // ---- build + write ---------------------------------------------------------
 const market = competitorSection(ads, [], client.countries.join('+'), {}, client.relevanceTerms, client.excludeTerms)
 const facts = stripLoneSurrogates([
@@ -142,6 +180,7 @@ const facts = stripLoneSurrogates([
     ? 'OWN PERFORMANCE: none. This account has no delivery in any window, so there are no numbers to analyse.'
     : `WINDOW = LAST 30 DAYS: spent ${money(spend)}, ${leads} leads across ${month.length} campaigns.`,
   ...(preLaunch ? [] : month.slice(0, 8).map((c) => `- ${c.name}: ${money(c.spend)}, ${c.leads} leads, CPL ${c.cpl ? money(c.cpl) : 'n/a'}`)),
+  ...deliveryBlock,
   ...leadsBlock,
   '',
   market.text,

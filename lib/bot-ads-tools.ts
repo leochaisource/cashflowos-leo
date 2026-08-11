@@ -3,6 +3,7 @@ import { PROJECTS, getProject, matchProject, type Project } from './ad-clients'
 import { activeProjects } from './settings'
 import { scorecards, projectScorecard, WINNER_MIN_LEADS, LOSER_MIN_IMPRESSIONS } from './metrics'
 import { syncProjectAds } from './ad-sync'
+import { accountInsights } from './meta'
 import { loadSheetLeads, type SheetLead } from './leads-sheet'
 import { todayISO, type Rec } from './records'
 
@@ -64,6 +65,26 @@ export const BOT_ADS_TOOLS = [
       properties: {
         project: { type: 'string', description: 'Project or client name, e.g. "Claude Malaysia" or "Dianna". Omit to be asked.' },
         days: { type: 'number', description: `Window in days. Default ${WINDOW}.` },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'ad_metrics_detail',
+    description:
+      'EVERY delivery metric for a project: spend, impressions, reach, frequency, clicks, link clicks, ' +
+      'CPM, CTR, link CTR, CPC, cost per link click, leads, CPL, and click-to-lead rate — for ' +
+      'yesterday, for the last 3 days, and for the window, plus a per-ad breakdown. ' +
+      'USE THIS for any question naming a specific metric: "what is my CPM", "what is my CTR", ' +
+      '"how is my frequency", "what am I paying per click", "detailed metrics", "full numbers", ' +
+      '"break it down". Set live=true to pull it straight from Meta instead of this morning snapshot ' +
+      '(that is also the only accurate source of multi-day reach and frequency).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'Project or client name.' },
+        days: { type: 'number', description: 'Window in days. Default 30.' },
+        live: { type: 'boolean', description: 'True = ask Meta right now. Slower, but current to the minute.' },
       },
       required: [],
     },
@@ -356,6 +377,93 @@ export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []):
 
     const c = await projectScorecard(project, days)
 
+    if (name === 'ad_metrics_detail') {
+      // Rates go out as percentages with two decimals: a model handed 0.0447
+      // will sooner or later report it as "0.04%".
+      const block = (d: typeof c.yesterday) => ({
+        spend: r2(d.spend),
+        impressions: Math.round(d.impressions),
+        clicks: Math.round(d.clicks),
+        link_clicks: Math.round(d.linkClicks),
+        leads: Math.round(d.leads * 100) / 100,
+        cpm: r2(d.cpm),
+        ctr_pct: pct(d.ctr),
+        link_ctr_pct: pct(d.linkCtr),
+        cpc: r2(d.cpc),
+        cost_per_link_click: r2(d.costPerLinkClick),
+        cpl: r2(d.cpl),
+        link_click_to_lead_pct: pct(d.leadRate),
+      })
+
+      // Live: Meta is the only correct source of multi-day reach and frequency,
+      // because reach is de-duplicated people and daily reach cannot be summed.
+      let live = null
+      if (input?.live && !project.demo) {
+        const preset = days <= 1 ? 'yesterday' : days <= 7 ? 'last_7d' : days <= 14 ? 'last_14d' : 'last_30d'
+        const a = await accountInsights(project, preset).catch(() => null)
+        if (a)
+          live = {
+            window: a.window,
+            spend: r2(a.spend),
+            impressions: a.impressions,
+            reach: a.reach,
+            frequency: r2(a.frequency),
+            clicks: a.clicks,
+            link_clicks: a.linkClicks,
+            unique_link_clicks: a.uniqueLinkClicks,
+            cpm: r2(a.cpm),
+            ctr_pct: pct(a.ctr),
+            link_ctr_pct: pct(a.linkCtr),
+            cpc: r2(a.cpc),
+            cost_per_link_click: r2(a.costPerLinkClick),
+            leads: a.leads,
+            cpl: r2(a.cpl),
+            // The full action list answers "how many landing page views /
+            // video views / messaging starts" without another deploy.
+            all_actions: a.actions.filter((x) => x.value > 0).slice(0, 25),
+          }
+      }
+
+      return JSON.stringify({
+        project: project.name,
+        currency: project.currency,
+        window_days: days,
+        source: live ? 'Meta, live just now' : `stored snapshot, synced ${c.syncedAt ?? 'never'}`,
+        yesterday: block(c.yesterday),
+        last_3_days_total: block(c.last3),
+        last_3_days_per_day: block(c.last3PerDay),
+        window_total: block(c.delivery),
+        live_from_meta: live,
+        per_day: c.daily.slice(-7).map((d) => ({
+          date: d.date,
+          spend: r2(d.spend),
+          impressions: d.impressions,
+          reach: d.reach,
+          frequency: r2(d.frequency),
+          cpm: r2(d.cpm),
+          link_ctr_pct: pct(d.linkCtr),
+          cpc: r2(d.cpc),
+          leads: d.leads,
+          cpl: r2(d.cpl),
+        })),
+        per_ad: [...c.winners, ...c.losersByCPL, ...c.losersByCTR]
+          .filter((a, i, arr) => arr.findIndex((x) => x.ad_id === a.ad_id) === i)
+          .map((a) => ({
+            ad: a.ad_name,
+            spend: r2(a.spend),
+            impressions: a.impressions,
+            cpm: r2(a.cpm),
+            ctr_pct: pct(a.allCtr),
+            link_ctr_pct: pct(a.ctr),
+            cpc: r2(a.cpc),
+            leads: a.leads,
+            cpl: r2(a.cpl),
+            status: a.status,
+          })),
+        note: 'Multi-day reach and frequency are only in live_from_meta — daily reach cannot be added up.',
+      })
+    }
+
     if (name === 'get_ad_performance') {
       const last7 = c.dailySpend.slice(-7).reduce((s, d) => s + d.spend, 0)
       return JSON.stringify({
@@ -368,6 +476,27 @@ export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []):
         spend_last_7_days: r2(last7),
         leads: c.leads,
         cpl: r2(c.avgCPL),
+        // The headline delivery metrics, so the commonest follow-up ("and the
+        // CPM?") doesn't need a second tool call.
+        cpm: r2(c.delivery.cpm),
+        ctr_pct: pct(c.delivery.ctr),
+        link_ctr_pct: pct(c.delivery.linkCtr),
+        cpc: r2(c.delivery.cpc),
+        impressions: c.delivery.impressions,
+        yesterday: {
+          spend: r2(c.yesterday.spend),
+          cpm: r2(c.yesterday.cpm),
+          link_ctr_pct: pct(c.yesterday.linkCtr),
+          cpl: r2(c.yesterday.cpl),
+          leads: c.yesterday.leads,
+        },
+        last_3_days_per_day: {
+          spend: r2(c.last3PerDay.spend),
+          cpm: r2(c.last3PerDay.cpm),
+          link_ctr_pct: pct(c.last3PerDay.linkCtr),
+          cpl: r2(c.last3PerDay.cpl),
+          leads: Math.round(c.last3PerDay.leads * 100) / 100,
+        },
         target_cpl: project.targetCPL ?? null,
         vs_target: c.avgCPL !== null && project.targetCPL ? (c.avgCPL <= project.targetCPL ? 'at or under target' : 'over target') : null,
         active_ads: c.activeAds,

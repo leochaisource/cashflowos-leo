@@ -427,7 +427,11 @@ export const LIVE_PROMPT = (name: string) =>
   `You write an 8am ads briefing for ${name}, a Malaysian business. ` +
   'Be concrete and short. No preamble, no markdown headers, no bullet symbols other than "-". ' +
   'Structure, in this order:\n' +
-  'ONE line on what changed in the ad numbers.\n' +
+  'DELIVERY — two or three lines when a DELIVERY block is present. State yesterday\'s spend, CPM, ' +
+  'link CTR, CPC and CPL, then how each compares with the 3-day-per-day average, in that order. ' +
+  'Say plainly which way each moved: a lower CPM, CPC or CPL is better, a higher CTR is better. ' +
+  'If one metric explains another — CPM up while CTR held, so CPL rose on auction price rather than ' +
+  'creative fatigue — say so; that is the whole point of showing them together.\n' +
   'If a LEADS section is present, then these three short blocks, using "-" bullets:\n' +
   '  LEADS: opt-ins yesterday vs the 7-day pattern, and which ad produced them. If one ad is producing ' +
   'most of the leads, say so by name.\n' +

@@ -7,6 +7,7 @@ import { activeProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
 import { leadsSummary } from '@/lib/leads-sheet'
 import { demoCampaigns, demoCompetitors, demoLeadsBlock } from '@/lib/demo'
+import { projectScorecard } from '@/lib/metrics'
 import { syncProjectAds } from '@/lib/ad-sync'
 
 // The 8am ads brief, once per client. For each client in lib/ad-clients.ts:
@@ -448,6 +449,38 @@ async function runClient(client: AdClient) {
   // intelligence and what to BUILD from it.
   const preLaunch = window === 'no delivery'
 
+  // ①c DELIVERY — yesterday against the trailing 3 days, from the ad_daily rows
+  // the sync just refreshed. This is where CPM and CTR come from: they were
+  // always derivable from what we store, and simply never computed.
+  let deliveryBlock: string[] = []
+  try {
+    const card = await projectScorecard(client, 30)
+    const pctS = (n: number | null) => (n === null ? 'n/a' : `${(n * 100).toFixed(2)}%`)
+    const line = (label: string, d: typeof card.yesterday) =>
+      `- ${label}: ${money(d.spend)} · ${d.impressions.toLocaleString('en-MY')} impressions · ` +
+      `CPM ${d.cpm === null ? 'n/a' : money(d.cpm)} · CTR ${pctS(d.ctr)} (link ${pctS(d.linkCtr)}) · ` +
+      `${d.clicks} clicks (${d.linkClicks} link) · CPC ${d.cpc === null ? 'n/a' : money(d.cpc)} · ` +
+      `${d.leads} leads · CPL ${d.cpl === null ? 'n/a' : money(d.cpl)}`
+    // Deltas are what turn two rows of numbers into a signal. Only quote one
+    // when both sides exist, so a first day never reads as a 100% collapse.
+    const delta = (now: number | null, base: number | null) =>
+      now === null || base === null || base === 0 ? '' : ` (${now >= base ? '+' : ''}${Math.round(((now - base) / base) * 100)}% vs 3-day)`
+    deliveryBlock = card.yesterday.spend > 0 || card.last3.spend > 0
+      ? [
+          '',
+          'DELIVERY (from the stored daily snapshot):',
+          line('YESTERDAY', card.yesterday),
+          line('LAST 3 DAYS, PER DAY', card.last3PerDay),
+          `- yesterday vs the 3-day average: CPM${delta(card.yesterday.cpm, card.last3PerDay.cpm)}, ` +
+            `link CTR${delta(card.yesterday.linkCtr, card.last3PerDay.linkCtr)}, ` +
+            `CPL${delta(card.yesterday.cpl, card.last3PerDay.cpl)}`,
+          '- for CPM, CPC and CPL a NEGATIVE change is an improvement; for CTR and leads a positive change is.',
+        ]
+      : []
+  } catch (e) {
+    notes.push(`Delivery metrics unavailable: ${(e as Error).message}`)
+  }
+
   const factsRaw = [
     `CLIENT: ${client.name}`,
     client.briefContext ? `SITUATION: ${client.briefContext}` : '',
@@ -459,8 +492,12 @@ async function runClient(client: AdClient) {
       : movers.slice(0, 8).map(
           (c) =>
             `- ${c.name}: ${money(c.spend)}, ${c.leads} leads, CPL ${c.cpl ? money(c.cpl) : 'n/a'}` +
-            (c.cplDelta ? ` (${c.cplDelta > 0 ? '+' : ''}${c.cplDelta}% vs 7-day avg ${money(c.avgCpl)})` : ''),
+            `, CPM ${c.cpm === null ? 'n/a' : money(c.cpm)}, CTR ${c.ctr === null ? 'n/a' : (c.ctr * 100).toFixed(2) + '%'}` +
+            `, link CTR ${c.linkCtr === null ? 'n/a' : (c.linkCtr * 100).toFixed(2) + '%'}` +
+            (c.frequency ? `, frequency ${c.frequency.toFixed(2)}` : '') +
+            (c.cplDelta ? ` (${c.cplDelta > 0 ? '+' : ''}${c.cplDelta}% CPL vs 7-day avg ${money(c.avgCpl)})` : ''),
         )),
+    ...deliveryBlock,
     ...leadsBlock,
     '',
     market.text,

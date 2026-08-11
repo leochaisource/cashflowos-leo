@@ -1,0 +1,35 @@
+feat(metrics): CPM, CTR, CPC everywhere — and yesterday against the last 3 days
+
+The inputs were always in ad_daily (impressions, clicks, link clicks, spend).
+Nothing ever divided them, so the app could report cost per lead but not the two
+metrics that explain WHY the cost per lead moved.
+
+- lib/delivery.ts: one delivery() used by the dashboard, the brief, the bot and
+  the offline replay, so none of them can disagree. Free of `server-only` on
+  purpose — that guard is what stopped the replay script sharing this maths.
+- Campaign insights now request clicks, inline_link_clicks, reach, frequency,
+  cpm, ctr and cpc, and prefer META'S computed cpm/ctr/cpc over re-deriving them,
+  so the brief cannot drift from Ads Manager by a rounding. Meta returns ctr as a
+  percentage; it is normalised to a fraction on the way in.
+- accountInsights(): the live window read, and the only correct source of
+  multi-day REACH and FREQUENCY. Daily reach is de-duplicated people and cannot
+  be summed — so window-level frequency is deliberately absent from the stored
+  path rather than quietly wrong. Per day, both are exact and are reported.
+- The morning brief gains a DELIVERY block: yesterday, the trailing 3 days
+  expressed per day, and the percentage change between them. "Past 3 days" means
+  the three COMPLETE days behind us, because today is still being written and
+  would drag every average down as the morning goes on. The prompt is told which
+  direction is good for each metric — down for CPM/CPC/CPL, up for CTR.
+- The bot gains ad_metrics_detail (yesterday / 3-day / window / per-day /
+  per-ad, with live=true for Meta right now, including the full action list so
+  "how many landing page views" needs no deploy), and get_ad_performance now
+  carries CPM and CTR so the commonest follow-up costs no second call.
+- Project pages show CPM, link CTR, CTR, CPC and click-to-lead, plus a
+  yesterday-vs-3-day table coloured by whether each move is good or bad.
+
+Verified against the live account: yesterday CPM RM19.27, link CTR 2.30%, CPL
+RM6.58 against a 3-day average of RM20.37 / 2.60% / RM4.38 — the CPL rise came
+with a CTR fall while CPM improved, which is the kind of read the numbers exist
+to support.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
