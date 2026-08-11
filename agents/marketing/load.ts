@@ -1,6 +1,6 @@
 import 'server-only'
 import { loadAdRows } from '@/lib/metrics'
-import { PROJECTS } from '@/lib/ad-clients'
+import { activeProjects } from '@/lib/settings'
 import { aggregate, windowDays, type AdAgg } from './definition'
 
 // The Head of Marketing's data mouth. Split out from definition.ts on purpose:
@@ -16,10 +16,15 @@ const sinceISO = (days: number) => {
   return d.toISOString().slice(0, 10)
 }
 
-/** Every ad in the window, rolled up per ad, across every configured project. */
+/**
+ * Every ad in the window, rolled up per ad, across every project that currently
+ * counts. With the demo switch off the sample clients drop out, so the head
+ * never grades an ad the rest of the dashboard is hiding.
+ */
 export async function loadAdAggregates(): Promise<AdAgg[]> {
+  const projects = await activeProjects()
   const rows = await loadAdRows(
-    PROJECTS.map((p) => p.id),
+    projects.map((p) => p.id),
     sinceISO(windowDays()),
   )
   return aggregate(rows as any[])

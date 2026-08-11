@@ -16,6 +16,7 @@ import { readImage, type VisionResult } from '@/lib/vision'
 import { BOT_TOOLS, runBotTool } from '@/lib/bot-tools'
 import { BOT_ADS_TOOLS, ADS_TOOL_NAMES, runBotAdsTool } from '@/lib/bot-ads-tools'
 import { matchProject } from '@/lib/ad-clients'
+import { demoEnabled, setDemoEnabled, activeProjects } from '@/lib/settings'
 import { BOT_ACTION_TOOLS, ACTION_TOOL_NAMES, runBotAction } from '@/lib/bot-actions'
 import { SCHEDULED } from '@/agents/registry'
 import { jarvisIdentity, jarvisName } from '@/jarvis/config'
@@ -248,6 +249,39 @@ async function handleMessage(msg: any): Promise<Response> {
     }
     const res = await undoAction(Number(undoMatch[1]))
     await sendMessage(chatId, res.message)
+    return Response.json({ ok: true })
+  }
+
+  // /demo on | /demo off | /demo — the sample-data switch, from your phone.
+  // Matched before the agent-key handler below, which would otherwise treat
+  // "demo" as a robot name.
+  const demoCmd = text.match(/^\/demo(?:\s+(on|off))?\s*$/i)
+  if (demoCmd) {
+    if (!isOwner(msg.from?.id)) {
+      await sendMessage(chatId, 'Only the owner can change settings.')
+      return Response.json({ ok: true })
+    }
+    const want = demoCmd[1]?.toLowerCase()
+    if (!want) {
+      const on = await demoEnabled()
+      await sendMessage(
+        chatId,
+        `Sample data is <b>${on ? 'ON' : 'OFF'}</b>. Send <code>/demo ${on ? 'off' : 'on'}</code> to change it.`,
+      )
+      return Response.json({ ok: true })
+    }
+    try {
+      const on = want === 'on'
+      await setDemoEnabled(on)
+      await sendMessage(
+        chatId,
+        on
+          ? '✅ Sample data <b>ON</b> — the demo clients are back on the dashboard and in tomorrow’s brief.'
+          : '✅ Sample data <b>OFF</b> — demo clients hidden, and they stop spending Adyntel credits. Nothing was deleted.',
+      )
+    } catch (e) {
+      await sendMessage(chatId, `Couldn't change it: ${(e as Error).message}`)
+    }
     return Response.json({ ok: true })
   }
 
@@ -561,7 +595,7 @@ async function runVaultPipeline(msg: any): Promise<void> {
   // client. Without a caption it still files, just untagged: an expense on the
   // wrong client's P&L is worse than one that needs sorting later.
   const caption = String(msg.caption ?? '').trim()
-  const matched = caption ? matchProject(caption) : { candidates: [] as ReturnType<typeof matchProject>['candidates'] }
+  const matched = caption ? matchProject(caption, await activeProjects()) : { candidates: [] as ReturnType<typeof matchProject>['candidates'] }
   const project = 'project' in matched ? matched.project : undefined
 
   // The immutable payload every downstream step reads (executor + /undo).

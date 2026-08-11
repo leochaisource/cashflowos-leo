@@ -1,5 +1,6 @@
 import 'server-only'
 import { PROJECTS, getProject, matchProject, type Project } from './ad-clients'
+import { activeProjects } from './settings'
 import { scorecards, projectScorecard, WINNER_MIN_LEADS, LOSER_MIN_IMPRESSIONS } from './metrics'
 import { syncProjectAds } from './ad-sync'
 import { loadSheetLeads, type SheetLead } from './leads-sheet'
@@ -26,11 +27,11 @@ const WINDOW = 30
  * Match however the owner says it: "kingsley", "claude malaysia", "dianna",
  * "the workshop one". Matches id, project name and client name.
  */
-function resolve(q: string | undefined): { project?: Project; candidates?: Project[] } {
+function resolve(q: string | undefined, pool: Project[]): { project?: Project; candidates?: Project[] } {
   if (!q || !q.trim()) {
-    return PROJECTS.length === 1 ? { project: PROJECTS[0] } : { candidates: PROJECTS }
+    return pool.length === 1 ? { project: pool[0] } : { candidates: pool }
   }
-  return matchProject(q)
+  return matchProject(q, pool)
 }
 
 const ask = (candidates: Project[]) =>
@@ -192,7 +193,7 @@ function interestLevel(
   return { level: 'unknown', because: 'no activity recorded' }
 }
 
-async function lookupPerson(q: string, rows: Rec[]): Promise<string> {
+async function lookupPerson(q: string, rows: Rec[], pool: Project[] = PROJECTS): Promise<string> {
   const needle = q.trim().toLowerCase()
   if (!needle) return JSON.stringify({ error: 'no name given' })
 
@@ -204,7 +205,7 @@ async function lookupPerson(q: string, rows: Rec[]): Promise<string> {
   // The same person can appear in the leads sheet of any project.
   let sheetLead: SheetLead | undefined
   let sheetProject: string | undefined
-  for (const p of PROJECTS.filter((x) => x.leadsSheet)) {
+  for (const p of pool.filter((x) => x.leadsSheet)) {
     const { leads } = await loadSheetLeads(p)
     const found = leads.find(
       (l) => hit(l.name) || (needle.length > 5 && (hit(l.phone) || hit(l.email))),
@@ -305,13 +306,16 @@ export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []):
   try {
     const days = Number.isFinite(Number(input?.days)) ? Math.min(Math.max(Number(input.days), 1), 90) : WINDOW
 
-    if (name === 'lookup_person') return await lookupPerson(String(input?.name ?? ''), rows)
+    // Which clients exist right now — the demo switch can hide the samples.
+    const pool = await activeProjects()
+
+    if (name === 'lookup_person') return await lookupPerson(String(input?.name ?? ''), rows, pool)
 
     if (name === 'list_projects') {
-      const cards = await scorecards(PROJECTS, days)
+      const cards = await scorecards(pool, days)
       return JSON.stringify({
         window_days: days,
-        projects: PROJECTS.map((p) => {
+        projects: pool.map((p) => {
           const c = cards.get(p.id)!
           return {
             id: p.id,
@@ -332,8 +336,8 @@ export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []):
       })
     }
 
-    const { project, candidates } = resolve(input?.project)
-    if (!project) return ask(candidates ?? PROJECTS)
+    const { project, candidates } = resolve(input?.project, pool)
+    if (!project) return ask(candidates ?? pool)
 
     if (name === 'refresh_ads') {
       const pulled = await syncProjectAds(project, Number.isFinite(Number(input?.days)) ? Number(input.days) : 7)

@@ -1,4 +1,5 @@
 import { supabase, supabaseConfigured } from './supabase'
+import { readDemoFlag, SETTING_CATEGORY } from './settings'
 
 // One row of the business spine. The whole app reads this single table.
 // `meta` is a free-form bag of extra fields each tab can use (a lead's next
@@ -25,6 +26,15 @@ export type Category = (typeof CATEGORIES)[number]
 export const LEAD_STAGES = ['new', 'contacted', 'appointment', 'closed', 'nurture'] as const
 
 // Every tab calls this, then filters in its own way.
+//
+// TWO THINGS NEVER COME OUT OF HERE:
+//   • the system settings row (category '_setting') — it's configuration, not a
+//     record, and no tab should ever count or display it;
+//   • the seeded demo rows, whenever the demo switch is off.
+// Doing it HERE means every tab, the agency river, the C-suite heads, the
+// morning brief and the Telegram bot all respect the switch without any of them
+// knowing it exists. The switch itself is one of the rows we just fetched, so
+// reading it costs nothing extra.
 export async function getRecords(): Promise<Rec[]> {
   // Before Supabase is wired (placeholder env), skip the fetch entirely — a bad
   // or unreachable URL otherwise hangs ~7s per request before failing. The
@@ -36,7 +46,9 @@ export async function getRecords(): Promise<Rec[]> {
     .order('created_at', { ascending: false })
   if (error) console.warn('[CFO] could not read records:', error.message)
   // Default meta to {} so a row added before the meta column existed never crashes a tab.
-  return (data ?? []).map(r => ({ ...r, meta: r.meta ?? {} })) as Rec[]
+  const all = (data ?? []).map(r => ({ ...r, meta: r.meta ?? {} })) as Rec[]
+  const demoOn = readDemoFlag(all)
+  return all.filter(r => r.category !== SETTING_CATEGORY && (demoOn || !r.meta?.sample))
 }
 
 // Read one field out of a record's meta bag, with a dash fallback for display.

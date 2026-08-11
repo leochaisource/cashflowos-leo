@@ -349,16 +349,20 @@ export const getProject = (id: string): Project | undefined =>
  * caller can ASK instead of guessing — filing a receipt against the wrong
  * client's P&L is worse than one extra question.
  */
-export function matchProject(text: string | undefined | null): { project?: Project; candidates: Project[] } {
+export function matchProject(
+  text: string | undefined | null,
+  /** Which projects are selectable right now — the demo switch narrows this. */
+  pool: Project[] = PROJECTS,
+): { project?: Project; candidates: Project[] } {
   const hay = (text ?? '').toLowerCase().trim()
-  if (!hay) return { candidates: PROJECTS }
+  if (!hay) return { candidates: pool }
 
-  const exact = PROJECTS.find((p) => p.id === hay)
+  const exact = pool.find((p) => p.id === hay)
   if (exact) return { project: exact, candidates: [exact] }
 
   // Score each project on the most specific thing that matched, so "Claude
   // Malaysia" doesn't tie with a project whose name merely contains "ads".
-  const scored = PROJECTS.map((p) => {
+  const scored = pool.map((p) => {
     const names = [p.id.replace(/-/g, ' '), p.name.toLowerCase(), (p.client ?? '').toLowerCase()].filter(Boolean)
     let score = 0
     for (const n of names) {
@@ -372,7 +376,7 @@ export function matchProject(text: string | undefined | null): { project?: Proje
     return { p, score }
   }).filter((s) => s.score > 0)
 
-  if (!scored.length) return { candidates: PROJECTS }
+  if (!scored.length) return { candidates: pool }
   scored.sort((a, b) => b.score - a.score)
   // A clear leader wins; a tie goes back to the human.
   if (scored.length === 1 || scored[0].score > scored[1].score) return { project: scored[0].p, candidates: [scored[0].p] }

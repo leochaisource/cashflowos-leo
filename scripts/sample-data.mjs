@@ -227,6 +227,24 @@ async function seedDemoCompetitors(projectId, sourceClient, limit) {
 const SAMPLE_FILTER = ['meta->>sample', 'eq', 'true']
 const DEMO_IDS = DEMO_PROJECTS.map((p) => p.project)
 
+/**
+ * The demo switch (see lib/settings.ts) — one row in `records` under a category
+ * no tab reads. Purging turns it off as well as deleting the rows, so the app is
+ * never left hunting for data that isn't there.
+ */
+async function setSwitch(on) {
+  const { data } = await db.from('records').select('id').eq('category', '_setting').eq('title', 'demo_data').limit(1)
+  const row = {
+    title: 'demo_data', status: on ? 'on' : 'off', amount: 0, category: '_setting',
+    notes: 'System row — the demo-data switch. Safe to delete; deleting it means ON.',
+    meta: { on, changed_at: new Date().toISOString() },
+  }
+  const { error } = data?.length
+    ? await db.from('records').update(row).eq('id', data[0].id)
+    : await db.from('records').insert(row)
+  if (error) console.error('could not set the demo switch:', error.message)
+}
+
 async function status() {
   const { count: recs } = await db.from('records').select('id', { count: 'exact', head: true }).filter(...SAMPLE_FILTER)
   const { count: pf } = await db.from('project_funnel').select('id', { count: 'exact', head: true }).eq('source', 'sample')
@@ -253,6 +271,8 @@ async function purge() {
     `purged ${before.recs - after.recs} record(s), ${before.pf - after.pf} funnel row(s), ` +
       `${before.ads - after.ads} ad-day(s), ${before.comp - after.comp} competitor ad(s). Real data untouched.`,
   )
+  // Only when purging for real — --seed calls purge() first and turns it back on.
+  if (MODE === 'purge') { await setSwitch(false); console.log('demo switch: OFF') }
 }
 
 async function seed() {
@@ -303,6 +323,12 @@ async function seed() {
         `funnel ${f.leads} → ${f.signups} sign-ups, ${copied} competitor ads`,
     )
   }
+
+  // Seeding implies wanting to SEE it. Without this you'd seed a presentation's
+  // worth of data and watch nothing appear, because the switch was still off
+  // from last time.
+  await setSwitch(true)
+  console.log('demo switch: ON')
 
   const owed = cashIn.filter(([, s]) => s !== 'paid').reduce((n, [, , a]) => n + a, 0)
   console.log(`\nready — RM ${owed.toLocaleString()} outstanding across ${cashIn.filter(([, s]) => s !== 'paid').length} invoices,`)

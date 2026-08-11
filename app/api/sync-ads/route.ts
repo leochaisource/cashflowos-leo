@@ -1,4 +1,5 @@
 import { AD_CLIENTS, isConfigured } from '@/lib/ad-clients'
+import { activeProjects } from '@/lib/settings'
 import { syncProjectAds } from '@/lib/ad-sync'
 
 // Meta → `ad_daily`, and NOTHING else. No Adyntel credits, no model call, no
@@ -26,7 +27,8 @@ export async function GET(req: Request) {
   // Clamped: a typo'd ?days=9999 would page through years of Meta data.
   const days = Math.min(Math.max(Number(url.searchParams.get('days')) || 7, 1), 90)
 
-  const queue = AD_CLIENTS.filter((c) => (only ? c.id === only : true))
+  const available = only ? AD_CLIENTS : await activeProjects()
+  const queue = available.filter((c) => (only ? c.id === only : true))
   const results: unknown[] = []
   const skipped: string[] = []
 

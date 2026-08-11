@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { PROJECTS } from '@/lib/ad-clients'
+import { activeProjects } from '@/lib/settings'
 import { scorecards, ratio } from '@/lib/metrics'
 import { getRecords, m, type Rec } from '@/lib/records'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
@@ -33,13 +33,15 @@ async function proposedCount(): Promise<number> {
 }
 
 export default async function Home() {
+  // Which projects exist right now depends on the demo switch (lib/settings.ts).
+  const projects = await activeProjects()
   const [cards, waiting, rows] = await Promise.all([
-    scorecards(PROJECTS, WINDOW_DAYS),
+    scorecards(projects, WINDOW_DAYS),
     proposedCount(),
     getRecords(),
   ])
 
-  const all = PROJECTS.map((p) => ({ project: p, card: cards.get(p.id)! }))
+  const all = projects.map((p) => ({ project: p, card: cards.get(p.id)! }))
   const live = all.filter((x) => x.card.hasDelivery)
 
   // The agency line. Blended CPL is spend ÷ leads across every project that

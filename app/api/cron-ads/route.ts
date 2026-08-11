@@ -3,6 +3,7 @@ import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 import { AD_CLIENTS, keywordsForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, type AdClient } from '@/lib/ad-clients'
+import { activeProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
 import { leadsSummary } from '@/lib/leads-sheet'
 import { demoCampaigns, demoCompetitors, demoLeadsBlock } from '@/lib/demo'
@@ -546,7 +547,12 @@ export async function GET(req: Request) {
 
   // ?client=<id> runs just one, for testing without spending every client's credit.
   const only = new URL(req.url).searchParams.get('client')
-  const queue = AD_CLIENTS.filter((c) => (only ? c.id === only : true))
+  // THE POINT OF THE DEMO SWITCH: with it off, the sample clients are not
+  // briefed at all, so they stop spending Adyntel credits between presentations.
+  // Asking for one by name still runs it, so a demo brief can be previewed
+  // without turning the whole thing back on.
+  const available = only ? AD_CLIENTS : await activeProjects()
+  const queue = available.filter((c) => (only ? c.id === only : true))
 
   const results: unknown[] = []
   const skipped: string[] = []

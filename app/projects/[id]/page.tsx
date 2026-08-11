@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getProject } from '@/lib/ad-clients'
+import { demoEnabled } from '@/lib/settings'
 import { projectScorecard, ratio as ratioSafe, WINNER_MIN_LEADS, LOSER_MIN_IMPRESSIONS, LOSER_MIN_SPEND } from '@/lib/metrics'
 import { todayISO, getRecords, m } from '@/lib/records'
 import Metric from '@/app/_components/Metric'
@@ -28,7 +29,9 @@ const WINDOW_DAYS = 30
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const project = getProject(id)
-  if (!project) notFound()
+  // A demo project doesn't exist while the demo switch is off — 404, rather than
+  // a live-looking page for a client that isn't yours reachable by URL.
+  if (!project || (project.demo && !(await demoEnabled()))) notFound()
 
   const [s, allRecords] = await Promise.all([projectScorecard(project, WINDOW_DAYS), getRecords()])
 

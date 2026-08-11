@@ -4,6 +4,7 @@ import Nav from './_components/Nav'
 import BottomNav from './_components/BottomNav'
 import ConnStatus from './_components/ConnStatus'
 import { getPendingCount } from '@/lib/records'
+import { activeProjects } from '@/lib/settings'
 
 export const metadata: Metadata = {
   title: 'Firstin5 Dashboard',
@@ -20,7 +21,10 @@ export const viewport: Viewport = {
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const pending = await getPendingCount()
+  // The nav is a client component and the project list depends on a database
+  // switch, so the server resolves it once here and hands it down.
+  const [pending, projects] = await Promise.all([getPendingCount(), activeProjects()])
+  const navProjects = projects.map(p => ({ id: p.id, label: p.client ?? p.name }))
   return (
     <html lang="en">
       <body>
@@ -32,13 +36,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <img className="logo" src="/icons/firstin5-logo.svg" alt="" width={26} height={26} />
               Firstin5 Dashboard
             </div>
-            <Nav pendingCount={pending} />
+            <Nav pendingCount={pending} projects={navProjects} />
             <p className="hint">One <code>records</code> table behind every tab. Your robots live in <code>agents/</code>.</p>
           </aside>
           <main className="main"><ConnStatus />{children}</main>
         </div>
         {/* Phone bottom bar — hidden on desktop. */}
-        <BottomNav />
+        <BottomNav projects={navProjects} />
       </body>
     </html>
   )

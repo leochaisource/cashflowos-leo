@@ -1,7 +1,6 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { PROJECTS } from '@/lib/ad-clients'
 
 // 👉 The desktop sidebar tabs, grouped under micro-cap section labels.
 //    Adding a tab? Add ONE line to the right group here, add the SAME tab to
@@ -9,14 +8,15 @@ import { PROJECTS } from '@/lib/ad-clients'
 //    and create app/<name>/page.tsx.
 //    See docs/add-a-tab-prompt.md for the copy-paste prompt that does all three.
 //
-//    The PROJECTS group builds itself from lib/ad-clients.ts — add a client
-//    there and it appears here, in the ads brief, and on the home grid at once.
-//    (lib/ad-clients.ts holds no secrets, only env var NAMES, so a client
-//    component can safely import it.)
-export const NAV_GROUPS: { label: string; tabs: { href: string; label: string }[] }[] = [
+//    The PROJECTS group is passed IN from the layout rather than imported here:
+//    which projects exist depends on the demo switch, and that lives in the
+//    database — something a client component can't read.
+export type NavProject = { id: string; label: string }
+
+export const navGroups = (projects: NavProject[]): { label: string; tabs: { href: string; label: string }[] }[] => [
   { label: 'Projects', tabs: [
     { href: '/', label: 'All projects' },
-    ...PROJECTS.map(p => ({ href: `/projects/${p.id}`, label: p.client ?? p.name })),
+    ...projects.map(p => ({ href: `/projects/${p.id}`, label: p.label })),
   ] },
   { label: 'Overview', tabs: [
     { href: '/agency', label: 'Agency' },
@@ -37,20 +37,18 @@ export const NAV_GROUPS: { label: string; tabs: { href: string; label: string }[
     { href: '/approvals', label: 'Approvals' },
     { href: '/employees', label: 'AI Employees' },
     { href: '/vault', label: 'Vault' },
+    { href: '/settings', label: 'Settings' },
   ] },
 ]
-
-// Flat list kept for anything that wants every tab in one array.
-export const TABS = NAV_GROUPS.flatMap(g => g.tabs)
 
 // `pendingCount` is an optional seam: pass it (from a server component that
 // already knows the number) to show the clay 🙋 badge on Approvals. We never
 // fetch here — a client nav must stay free of its own server round-trips.
-export default function Nav({ pendingCount }: { pendingCount?: number }) {
+export default function Nav({ pendingCount, projects = [] }: { pendingCount?: number; projects?: NavProject[] }) {
   const path = usePathname()
   return (
     <nav className="nav">
-      {NAV_GROUPS.map(group => (
+      {navGroups(projects).map(group => (
         <div className="nav-group" key={group.label}>
           <p className="nav-label">{group.label}</p>
           {group.tabs.map(t => (

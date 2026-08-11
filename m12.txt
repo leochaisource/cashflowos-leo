@@ -1,0 +1,29 @@
+feat(settings): one switch for the sample data, so it costs nothing between demos
+
+The demo clients search Adyntel every morning — about 4 credits a day buying
+nothing while no one is watching. This turns all of it off and back on again.
+
+WHERE THE SWITCH LIVES: a single row in `records`, under a category no tab
+reads. Deliberately not a new table: there is no "paste this SQL first" step
+between deciding to flip it and it being flipped — and getRecords() can then
+read the switch out of rows it already fetched, so checking it costs nothing.
+
+ONE CONTROL POINT: getRecords() drops the seeded rows when the switch is off, so
+every tab, the agency river, the C-suite heads, the morning brief and the
+Telegram bot respect it without any of them knowing it exists. Projects are
+filtered alongside, which is where the saving actually happens — the cron
+briefs two clients instead of four, and demo pages 404 rather than being
+reachable by URL.
+
+Flip it from /settings, or by text: /demo, /demo on, /demo off. Asking for a
+demo client by name (?client=lotus-clinic) still runs it either way, so a brief
+can be previewed the morning of a presentation without turning everything on.
+
+OFF hides, never deletes: 40 records, 5 funnel rows, 330 ad-days and 281
+competitor ads stay in the database and return untouched. --purge is still the
+way to remove them for good, and it now sets the switch off; --seed sets it on,
+so you can't seed a presentation's worth of data and watch nothing appear.
+
+Verified: with the switch off the scheduled sync processed 2 projects, not 4.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

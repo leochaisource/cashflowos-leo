@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import MoreSheet, { type MoreTab } from './MoreSheet'
-import { PROJECTS } from '@/lib/ad-clients'
+import type { NavProject } from './Nav'
 
 // 👉 The phone bottom bar (shown ≤768px). Four thumb-size primary tabs + a
 //    "More" button that opens the slide-up sheet with everything else, so every
@@ -16,9 +16,10 @@ const PRIMARY = [
 ]
 
 // Everything not on the bottom bar lives in the More sheet — including one entry
-// per project, so a client's scorecard is two taps away on a phone.
-const MORE: MoreTab[] = [
-  ...PROJECTS.map(p => ({ href: `/projects/${p.id}`, label: p.client ?? p.name, ico: '📈' })),
+// per project, so a client's scorecard is two taps away on a phone. The project
+// list comes from the layout: which ones exist depends on the demo switch.
+const moreTabs = (projects: NavProject[]): MoreTab[] => [
+  ...projects.map(p => ({ href: `/projects/${p.id}`, label: p.label, ico: '📈' })),
   { href: '/agency', label: 'Agency', ico: '🏠' },
   { href: '/leads', label: 'Leads', ico: '🧲' },
   { href: '/customers', label: 'Customers', ico: '🧑‍🤝‍🧑' },
@@ -26,11 +27,13 @@ const MORE: MoreTab[] = [
   { href: '/tasks', label: 'Tasks', ico: '✅' },
   { href: '/employees', label: 'AI Employees', ico: '🤖' },
   { href: '/vault', label: 'Vault', ico: '🗄️' },
+  { href: '/settings', label: 'Settings', ico: '⚙️' },
 ]
 
-export default function BottomNav() {
+export default function BottomNav({ projects = [] }: { projects?: NavProject[] }) {
   const path = usePathname()
   const [moreOpen, setMoreOpen] = useState(false)
+  const MORE = moreTabs(projects)
   const moreActive = MORE.some(t => t.href === path)
   return (
     <>
