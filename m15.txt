@@ -1,0 +1,13 @@
+fix(telegram): brief destinations are additive — your chat AND the group
+
+Pointing a client's brief at a group replaced the owner's copy instead of adding
+to it, so setting up a client group would have quietly stopped Leo's own
+briefing. Every destination now stacks: owner's chat, then the agency team list,
+then that client's own groups, deduped with the owner first.
+
+Verified across the cases that matter: with a group configured, Claude Malaysia
+goes to both owner and group while Dianna and the demo clients still go to the
+owner alone; an id listed twice sends once; a mistyped group id degrades to the
+owner rather than sending nowhere.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

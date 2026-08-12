@@ -57,8 +57,9 @@ export type AdClient = {
   leadActionTypes: string[]
   chatIdEnv: string // env var holding the Telegram chat id for this brief
   /**
-   * WHERE THIS CLIENT'S BRIEF GOES, when it should go somewhere other than the
-   * owner's own chat — typically a shared group with that client's team.
+   * EXTRA places this client's brief goes — typically a group shared with that
+   * client's team. Additive: the owner's own chat always receives it too, so
+   * pointing a brief at a group never costs you your own copy.
    *
    * Names of env vars, not ids, matching the pattern used for tokens: the value
    * lives in Vercel, so a group id never lands in git. Per CLIENT on purpose —

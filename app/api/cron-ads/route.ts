@@ -36,17 +36,19 @@ const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'
 const fmt = (cur: string, n: number) => cur + n.toLocaleString('en-MY', { maximumFractionDigits: 2 })
 
 /**
- * Where THIS client's brief goes, most specific first:
- *   1. the client's own destinations (briefChatIdEnvs) — a group shared with that
- *      client's team;
- *   2. TELEGRAM_TEAM_CHAT_IDS — the whole-agency list, every project;
- *   3. the owner's private chat.
+ * Where THIS client's brief goes. Every destination is ADDITIVE:
+ *   • the owner's own chat — always, so you never lose your copy by pointing a
+ *     brief at a group;
+ *   • TELEGRAM_TEAM_CHAT_IDS — the whole-agency list, every project;
+ *   • the client's own destinations (briefChatIdEnvs) — a group shared with that
+ *     client's team.
  *
- * The order matters more than it looks. The team list is GLOBAL: if a client
- * group were configured there, every other client's spend, leads and revenue
- * would land in it too. A per-client list wins so that can't happen by accident.
+ * The per-client list is the important one. TELEGRAM_TEAM_CHAT_IDS is GLOBAL: put
+ * a client group there and every OTHER client's spend, leads and revenue lands in
+ * it too. Keeping each client's group on the client makes that impossible.
  *
- * Ids may be negative — that's what a group id looks like.
+ * Deduped, owner first, so the same id listed twice sends once. Ids may be
+ * negative — that's what a group id looks like.
  */
 function recipients(client: AdClient): string[] {
   const ids = (s: string | undefined) =>
@@ -55,13 +57,13 @@ function recipients(client: AdClient): string[] {
       .map((x) => x.trim())
       .filter((x) => /^-?\d+$/.test(x))
 
-  const own = (client.briefChatIdEnvs ?? []).flatMap((name) => ids(process.env[name]))
-  if (own.length) return Array.from(new Set(own))
-
-  const team = ids(process.env.TELEGRAM_TEAM_CHAT_IDS)
-  if (team.length) return Array.from(new Set(team))
-
-  return Array.from(new Set(ids(process.env[client.chatIdEnv])))
+  return Array.from(
+    new Set([
+      ...ids(process.env[client.chatIdEnv]),
+      ...ids(process.env.TELEGRAM_TEAM_CHAT_IDS),
+      ...(client.briefChatIdEnvs ?? []).flatMap((name) => ids(process.env[name])),
+    ]),
+  )
 }
 
 // ---------------------------------------------------------------- Adyntel
