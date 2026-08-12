@@ -1,0 +1,22 @@
+feat(dashboard): today alongside yesterday and the 3-day average
+
+The comparison table gains a "Today so far" column, and the bot's metrics tools
+gain the same block.
+
+The care is in what today ISN'T. A partial day's TOTALS are not comparable with a
+full day — at 10am "spend RM71 vs RM92 yesterday" reads as a collapse when it is
+simply an unfinished day. Its RATES are perfectly comparable, because CPM, CTR,
+CPC and CPL are per-impression or per-click and do not care what time it is.
+
+So spend and leads are greyed and marked ⏳ as running totals, the percentage
+change column still compares yesterday against the 3-day average (two complete
+days), and a caption says today covers everything up to the last sync with a
+pointer to Refresh. The bot's tool output carries the same caveat in words, with
+an explicit instruction never to report spend or leads as having "dropped" based
+on today.
+
+Live right now: today RM71.52 at CPM RM19.94, link CTR 2.79%, CPL RM3.58 against
+yesterday's RM92.16 / RM25.11 / 2.81% / RM5.12 — cheaper media and a better cost
+per lead, on a day that is only part-run.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

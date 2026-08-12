@@ -429,6 +429,11 @@ export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []):
         currency: project.currency,
         window_days: days,
         source: live ? 'Meta, live just now' : `stored snapshot, synced ${c.syncedAt ?? 'never'}`,
+        today_so_far: block(c.today),
+        today_caveat:
+          'Today is INCOMPLETE — it covers up to the last sync only. Its rates (CPM, CTR, CPC, CPL) ' +
+          'are comparable with other days; its totals (spend, clicks, leads) are not, because the day ' +
+          'is still running. Never say spend or leads "dropped" based on today.',
         yesterday: block(c.yesterday),
         last_3_days_total: block(c.last3),
         last_3_days_per_day: block(c.last3PerDay),
@@ -483,6 +488,14 @@ export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []):
         link_ctr_pct: pct(c.delivery.linkCtr),
         cpc: r2(c.delivery.cpc),
         impressions: c.delivery.impressions,
+        today_so_far: {
+          spend: r2(c.today.spend),
+          cpm: r2(c.today.cpm),
+          link_ctr_pct: pct(c.today.linkCtr),
+          cpl: r2(c.today.cpl),
+          leads: c.today.leads,
+          note: 'incomplete day — rates comparable, totals still climbing',
+        },
         yesterday: {
           spend: r2(c.yesterday.spend),
           cpm: r2(c.yesterday.cpm),

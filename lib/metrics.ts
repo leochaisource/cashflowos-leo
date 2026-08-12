@@ -119,6 +119,14 @@ export type Scorecard = {
   dailySpend: { date: string; spend: number; leads: number }[]
   /** The whole window as one delivery block: CPM, CTR, CPC and the rest. */
   delivery: Delivery
+  /**
+   * Today SO FAR — everything Meta had recorded as of the last sync.
+   *
+   * Its RATES (CPM, CTR, CPC, CPL) are comparable with any other day; its
+   * TOTALS are not, because the day isn't over. Anything displaying this has to
+   * say so, or a 10am glance reads as "spend collapsed".
+   */
+  today: Delivery
   /** Yesterday on its own. */
   yesterday: Delivery
   /** The three days before today, and the same figures expressed per day. */
@@ -280,6 +288,7 @@ export function scorecard(
 
   // ── delivery metrics: the whole window, yesterday, and the trailing 3 days.
   const inRange = (from: string, to: string) => adRows.filter((r) => r.date >= from && r.date <= to)
+  const todayRows = inRange(dayISO(0), dayISO(0))
   const yesterdayRows = inRange(dayISO(1), dayISO(1))
   // "Past 3 days" means the three COMPLETE days behind us — today is still being
   // written and would drag every average down as the morning goes on.
@@ -406,6 +415,7 @@ export function scorecard(
     losersByCTR,
     syncedAt,
     delivery: delivery(adRows),
+    today: delivery(todayRows),
     yesterday: delivery(yesterdayRows),
     last3,
     last3PerDay: perDayOf(last3, daysWithSpend),

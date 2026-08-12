@@ -137,39 +137,51 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
 
       {/* Yesterday against the trailing three days — the same comparison the
           morning brief makes, so the screen and the message never disagree. */}
-      {(s.yesterday.spend > 0 || s.last3.spend > 0) && (
+      {(s.today.spend > 0 || s.yesterday.spend > 0 || s.last3.spend > 0) && (
         <div className="band">
           <div className="band-head">
-            <h2>Yesterday vs the last 3 days</h2>
+            <h2>Today vs yesterday vs the last 3 days</h2>
             <span>lower CPM, CPC and CPL are better · higher CTR is better</span>
           </div>
           <table className="tbl">
             <thead>
               <tr>
                 <th>Metric</th>
+                <th>Today so far</th>
                 <th>Yesterday</th>
-                <th>3-day average, per day</th>
-                <th>Change</th>
+                <th>3-day avg, per day</th>
+                <th>Yesterday vs 3-day</th>
               </tr>
             </thead>
             <tbody>
-              {([
-                ['Spend', money(s.yesterday.spend, cur), money(s.last3PerDay.spend, cur), s.yesterday.spend, s.last3PerDay.spend, 'up'],
-                ['CPM', money(s.yesterday.cpm, cur), money(s.last3PerDay.cpm, cur), s.yesterday.cpm, s.last3PerDay.cpm, 'down'],
-                ['Link CTR', pct(s.yesterday.linkCtr, 2), pct(s.last3PerDay.linkCtr, 2), s.yesterday.linkCtr, s.last3PerDay.linkCtr, 'up'],
-                ['CPC', money(s.yesterday.cpc, cur), money(s.last3PerDay.cpc, cur), s.yesterday.cpc, s.last3PerDay.cpc, 'down'],
-                ['Leads', num(s.yesterday.leads), num(Math.round(s.last3PerDay.leads * 10) / 10), s.yesterday.leads, s.last3PerDay.leads, 'up'],
-                ['CPL', money(s.yesterday.cpl, cur), money(s.last3PerDay.cpl, cur), s.yesterday.cpl, s.last3PerDay.cpl, 'down'],
-              ] as const).map(([label, now, base, nowV, baseV, better]) => {
-                const change = ratioSafe((nowV ?? 0) - (baseV ?? 0), baseV)
+              {(
+                [
+                  // label, today, yesterday, 3-day avg, raw yest, raw avg, which
+                  // direction is good, and whether TODAY's figure is comparable
+                  // mid-day (rates yes, running totals no).
+                  ['Spend', money(s.today.spend, cur), money(s.yesterday.spend, cur), money(s.last3PerDay.spend, cur), s.yesterday.spend, s.last3PerDay.spend, 'up', false],
+                  ['CPM', money(s.today.cpm, cur), money(s.yesterday.cpm, cur), money(s.last3PerDay.cpm, cur), s.yesterday.cpm, s.last3PerDay.cpm, 'down', true],
+                  ['Link CTR', pct(s.today.linkCtr, 2), pct(s.yesterday.linkCtr, 2), pct(s.last3PerDay.linkCtr, 2), s.yesterday.linkCtr, s.last3PerDay.linkCtr, 'up', true],
+                  ['CPC', money(s.today.cpc, cur), money(s.yesterday.cpc, cur), money(s.last3PerDay.cpc, cur), s.yesterday.cpc, s.last3PerDay.cpc, 'down', true],
+                  ['Leads', num(s.today.leads), num(s.yesterday.leads), num(Math.round(s.last3PerDay.leads * 10) / 10), s.yesterday.leads, s.last3PerDay.leads, 'up', false],
+                  ['CPL', money(s.today.cpl, cur), money(s.yesterday.cpl, cur), money(s.last3PerDay.cpl, cur), s.yesterday.cpl, s.last3PerDay.cpl, 'down', true],
+                ] as const
+              ).map(([label, todayV, yestV, baseV, yestRaw, baseRaw, better, comparable]) => {
+                const change = ratioSafe((yestRaw ?? 0) - (baseRaw ?? 0), baseRaw)
                 const good = change === null ? undefined : better === 'up' ? change > 0 : change < 0
                 return (
                   <tr key={label}>
                     <td data-label="Metric">{label}</td>
-                    <td data-label="Yesterday">{now}</td>
-                    <td data-label="3-day average">{base}</td>
+                    {/* A running total mid-morning is not a low number, it's an
+                        unfinished one — greyed so it never reads as a crash. */}
+                    <td data-label="Today so far" style={comparable ? undefined : { color: 'var(--ink-faint)' }}>
+                      {todayV}
+                      {comparable ? '' : ' ⏳'}
+                    </td>
+                    <td data-label="Yesterday">{yestV}</td>
+                    <td data-label="3-day avg">{baseV}</td>
                     <td
-                      data-label="Change"
+                      data-label="Yesterday vs 3-day"
                       style={change === null ? undefined : { color: good ? '#2E5A40' : '#8A3E2D', fontWeight: 600 }}
                     >
                       {change === null ? DASH : `${change > 0 ? '+' : ''}${(change * 100).toFixed(0)}%`}
@@ -179,6 +191,12 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               })}
             </tbody>
           </table>
+          <p className="set-note">
+            ⏳ marks a running total — today isn&apos;t over, so spend and leads will keep climbing and
+            can&apos;t be compared with a full day. The rates (CPM, CTR, CPC, CPL) are comparable right
+            now. Today covers everything up to the last sync, {whenShort(s.syncedAt)} — press Refresh
+            for the last few hours.
+          </p>
         </div>
       )}
 
