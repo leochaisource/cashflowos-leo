@@ -35,16 +35,33 @@ export const maxDuration = 300
 const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const fmt = (cur: string, n: number) => cur + n.toLocaleString('en-MY', { maximumFractionDigits: 2 })
 
-/** Where this client's brief goes: the team list if set, else its own chat id. */
+/**
+ * Where THIS client's brief goes, most specific first:
+ *   1. the client's own destinations (briefChatIdEnvs) — a group shared with that
+ *      client's team;
+ *   2. TELEGRAM_TEAM_CHAT_IDS — the whole-agency list, every project;
+ *   3. the owner's private chat.
+ *
+ * The order matters more than it looks. The team list is GLOBAL: if a client
+ * group were configured there, every other client's spend, leads and revenue
+ * would land in it too. A per-client list wins so that can't happen by accident.
+ *
+ * Ids may be negative — that's what a group id looks like.
+ */
 function recipients(client: AdClient): string[] {
-  const team = (process.env.TELEGRAM_TEAM_CHAT_IDS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => /^-?\d+$/.test(s))
-  const list = team.length
-    ? team
-    : ([process.env[client.chatIdEnv]?.trim()].filter(Boolean) as string[])
-  return Array.from(new Set(list))
+  const ids = (s: string | undefined) =>
+    (s || '')
+      .split(',')
+      .map((x) => x.trim())
+      .filter((x) => /^-?\d+$/.test(x))
+
+  const own = (client.briefChatIdEnvs ?? []).flatMap((name) => ids(process.env[name]))
+  if (own.length) return Array.from(new Set(own))
+
+  const team = ids(process.env.TELEGRAM_TEAM_CHAT_IDS)
+  if (team.length) return Array.from(new Set(team))
+
+  return Array.from(new Set(ids(process.env[client.chatIdEnv])))
 }
 
 // ---------------------------------------------------------------- Adyntel
@@ -554,11 +571,33 @@ async function runClient(client: AdClient) {
     else chunks.push(para)
   }
   const to = recipients(client)
-  for (const chat of to) for (const chunk of chunks) await sendMessage(chat, chunk)
+  // Track delivery per destination. A group the bot was removed from, or a
+  // mistyped id, must show up in the run result — otherwise the brief goes
+  // missing for a week before anyone notices (which has already happened once
+  // here, with Adyntel).
+  const delivered: string[] = []
+  const failed: { chat: string; error: string }[] = []
+  for (const chat of to) {
+    let ok = true
+    for (const chunk of chunks) {
+      const r = await sendMessage(chat, chunk)
+      if (!r.ok) {
+        ok = false
+        failed.push({ chat, error: r.error ?? 'unknown' })
+        break // don't send the rest of a brief nobody is receiving
+      }
+    }
+    if (ok) delivered.push(chat)
+  }
+  if (failed.length)
+    console.error(`[CFO] ${client.id}: brief undelivered to ${failed.map((f) => `${f.chat} (${f.error})`).join(', ')}`)
 
   return {
     client: client.id,
-    sent: to.length,
+    sent: delivered.length,
+    recipients: to,
+    delivered,
+    failed,
     messages: chunks.length,
     window,
     spend: spent,

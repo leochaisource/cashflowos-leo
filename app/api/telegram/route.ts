@@ -8,6 +8,7 @@ import {
   editMessageReplyMarkup,
   getFilePath,
   downloadFileBytes,
+  botUsername,
 } from '@/lib/telegram'
 import { loadTurns, appendTurn, bumpDailyCounter } from '@/lib/bot-memory'
 import { getRecords, rm, todayISO } from '@/lib/records'
@@ -208,14 +209,38 @@ async function handleCallback(cb: any): Promise<Response> {
 // ============================================================
 async function handleMessage(msg: any): Promise<Response> {
   const chatId = msg.chat?.id
+  const isGroup = msg.chat?.type === 'group' || msg.chat?.type === 'supergroup'
 
   // Allowlist on the sender — fail closed, echo the id.
   if (!isAllowed(msg.from?.id)) {
-    await sendMessage(
-      chatId,
-      `Not authorized. Your Telegram id is ${msg.from?.id} — add it to TELEGRAM_ALLOWED_USER_IDS, then redeploy.`,
-    )
+    // In a GROUP, say nothing. The friendly "your id is 12345, add it to the
+    // allowlist" belongs in a private chat; in a client's group it announces
+    // itself to everyone, publishes a member's Telegram id, and makes the bot
+    // look broken. Refusing quietly is still refusing.
+    if (!isGroup) {
+      await sendMessage(
+        chatId,
+        `Not authorized. Your Telegram id is ${msg.from?.id} — add it to TELEGRAM_ALLOWED_USER_IDS, then redeploy.`,
+      )
+    }
     return Response.json({ ok: true })
+  }
+
+  // IN A GROUP, ONLY ANSWER WHEN SPOKEN TO. Telegram's privacy mode usually
+  // hides ordinary chatter from bots, but it can be switched off — and then
+  // every message in the group would reach the tool loop and spend model credit
+  // answering conversations nobody addressed to us. Commands, @mentions and
+  // replies to the bot count as being spoken to; everything else is ignored.
+  if (isGroup) {
+    const text: string = (msg.text || msg.caption || '').trim()
+    const username = await botUsername()
+    const addressed =
+      text.startsWith('/') ||
+      (!!username && text.toLowerCase().includes(`@${username.toLowerCase()}`)) ||
+      msg.reply_to_message?.from?.is_bot === true ||
+      !!msg.photo ||
+      !!msg.document
+    if (!addressed) return Response.json({ ok: true })
   }
 
   // Photo / document → the Vault agent. ACK-FIRST (MANDATED): the ONLY work we do
@@ -249,6 +274,22 @@ async function handleMessage(msg: any): Promise<Response> {
     }
     const res = await undoAction(Number(undoMatch[1]))
     await sendMessage(chatId, res.message)
+    return Response.json({ ok: true })
+  }
+
+  // /chatid — the id of wherever this was sent from. The only friendly way to
+  // learn a group's id: add the bot to the group, send /chatid, paste the number
+  // into Vercel. Group ids are negative; supergroups look like -1001234567890.
+  if (/^\/chatid/i.test(text)) {
+    const kind = msg.chat?.type ?? 'unknown'
+    const title = msg.chat?.title ? ` — <i>${htmlEsc(String(msg.chat.title))}</i>` : ''
+    await sendMessage(
+      chatId,
+      `🆔 This ${kind} chat id is <code>${chatId}</code>${title}\n\n` +
+        (kind === 'group' || kind === 'supergroup'
+          ? 'To send a client brief here, set that number as the client\'s group env var in Vercel (e.g. <code>CLAUDE_MALAYSIA_GROUP_CHAT_ID</code>) and redeploy.'
+          : 'That\'s your private chat. Add me to a group and send /chatid there to get the group id.'),
+    )
     return Response.json({ ok: true })
   }
 

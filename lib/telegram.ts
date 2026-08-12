@@ -64,11 +64,42 @@ export async function downloadFileBytes(filePath: string): Promise<Buffer | null
 export type InlineButton = { text: string; callback_data: string }
 export type InlineKeyboard = InlineButton[][]
 
-export async function sendMessage(chatId: string | number, text: string) {
+/**
+ * The bot's own @username, fetched once and kept for the life of the instance.
+ * Needed to tell "someone mentioned me in a group" from ordinary chatter; a
+ * getMe call per message would be a round trip for a value that never changes.
+ */
+let cachedUsername: string | null | undefined
+export async function botUsername(): Promise<string | null> {
+  if (cachedUsername !== undefined) return cachedUsername
+  const url = api('getMe')
+  if (!url) return (cachedUsername = null)
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    const json = (await res.json()) as { ok?: boolean; result?: { username?: string } }
+    cachedUsername = json.ok && json.result?.username ? json.result.username : null
+  } catch {
+    cachedUsername = null // a failed lookup must not block a message
+  }
+  return cachedUsername
+}
+
+/**
+ * Send one message. Returns whether it actually landed.
+ *
+ * It used to swallow failures into a console log, which is fine for a chat reply
+ * and quietly wrong for a scheduled brief: a bot removed from a group, or a
+ * mistyped group id, would produce a run that reported "sent" while nobody
+ * received anything. The caller now gets the truth and can say so.
+ */
+export async function sendMessage(
+  chatId: string | number,
+  text: string,
+): Promise<{ ok: boolean; error?: string }> {
   const url = api('sendMessage')
   if (!url) {
     console.warn('[CFO] TELEGRAM_BOT_TOKEN not set yet — skipping sendMessage.')
-    return
+    return { ok: false, error: 'TELEGRAM_BOT_TOKEN not set' }
   }
   const res = await fetch(url, {
     method: 'POST',
@@ -77,8 +108,11 @@ export async function sendMessage(chatId: string | number, text: string) {
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    console.error('[CFO] Telegram sendMessage failed:', body.description || res.status)
+    const error = String(body.description || res.status)
+    console.error('[CFO] Telegram sendMessage failed:', error)
+    return { ok: false, error }
   }
+  return { ok: true }
 }
 
 // Send a message with Approve/Reject (or any) inline buttons. RETURNS the sent

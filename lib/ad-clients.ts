@@ -57,6 +57,20 @@ export type AdClient = {
   leadActionTypes: string[]
   chatIdEnv: string // env var holding the Telegram chat id for this brief
   /**
+   * WHERE THIS CLIENT'S BRIEF GOES, when it should go somewhere other than the
+   * owner's own chat — typically a shared group with that client's team.
+   *
+   * Names of env vars, not ids, matching the pattern used for tokens: the value
+   * lives in Vercel, so a group id never lands in git. Per CLIENT on purpose —
+   * the global TELEGRAM_TEAM_CHAT_IDS applies to every project at once, which
+   * would put one client's spend, leads and revenue in another client's group.
+   * That is the one mistake this field exists to make impossible.
+   *
+   * Group chat ids are NEGATIVE (supergroups look like -1001234567890). Send the
+   * bot /chatid inside the group to get it.
+   */
+  briefChatIdEnvs?: string[]
+  /**
    * Broad keywords drag in advertisers who merely share vocabulary — searching
    * "automate business operations" returns a real-estate app, an IT reseller and
    * a curtain shop, and because they have run for two years they outrank every
@@ -218,6 +232,11 @@ export const AD_CLIENTS: AdClient[] = [
     currency: 'RM',
     leadActionTypes: PIXEL_LEAD,
     chatIdEnv: 'OWNER_CHAT_ID',
+    // Set CLAUDE_MALAYSIA_GROUP_CHAT_ID in Vercel to the group's id and this
+    // client's morning brief goes there instead of a private chat. Unset, it
+    // falls back to the owner — so adding this line changes nothing until the
+    // env var exists.
+    briefChatIdEnvs: ['CLAUDE_MALAYSIA_GROUP_CHAT_ID'],
     client: 'Claude Malaysia',
     stage: 'active',
     launchDate: '2026-08-02',
