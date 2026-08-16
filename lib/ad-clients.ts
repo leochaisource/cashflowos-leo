@@ -270,6 +270,32 @@ export const AD_CLIENTS: AdClient[] = [
   },
 ]
 
+// ---------------------------------------------------------------- Starcity
+// Third real ad client — added 2026-08-16, WAITING ON CREDENTIALS. Until
+// STARCITY_META_AD_ACCOUNT_ID and STARCITY_META_ACCESS_TOKEN exist in Vercel,
+// isConfigured() is false, so the morning cron skips it (no Meta call, no
+// Adyntel spend) and the dashboard shows it as "no delivery recorded".
+AD_CLIENTS.push({
+  id: 'starcity-global',
+  name: 'Starcity Global',
+  client: 'Starcity Global',
+  stage: 'pre-launch',
+  adAccountEnv: 'STARCITY_META_AD_ACCOUNT_ID',
+  tokenEnv: 'STARCITY_META_ACCESS_TOKEN',
+  chatIdEnv: 'OWNER_CHAT_ID',
+  // 👉 Empty ON PURPOSE: competitor keywords cost Adyntel credits, and we don't
+  // know this client's niche terms yet. Fill these in when the account is
+  // connected and the offer is confirmed; until then the brief runs Meta-only.
+  keywords: [],
+  countries: ['MY'],
+  keywordsPerRun: 0,
+  currency: 'RM',
+  // UNVERIFIED — like Kingsley's was before launch. Once ads run, check which
+  // action_type Meta actually reports (see the Kingsley note above) and correct.
+  leadActionTypes: PIXEL_LEAD,
+  sources: {},
+})
+
 // ---------------------------------------------------------------- demo clients
 // Two more projects so the dashboard shows a portfolio rather than a single
 // client. They carry no credentials and cost nothing to run: their numbers are
@@ -369,11 +395,15 @@ export const getProject = (id: string): Project | undefined =>
  * caller can ASK instead of guessing — filing a receipt against the wrong
  * client's P&L is worse than one extra question.
  */
-export function matchProject(
+/** The minimum a thing needs to be matchable — work projects qualify too. */
+export type Matchable = { id: string; name: string; client?: string | null }
+
+export function matchProject<T extends Matchable = Project>(
   text: string | undefined | null,
-  /** Which projects are selectable right now — the demo switch narrows this. */
-  pool: Project[] = PROJECTS,
-): { project?: Project; candidates: Project[] } {
+  /** Which projects are selectable right now — the demo switch narrows this,
+   *  and callers may widen it with work projects. */
+  pool: T[] = PROJECTS as unknown as T[],
+): { project?: T; candidates: T[] } {
   const hay = (text ?? '').toLowerCase().trim()
   if (!hay) return { candidates: pool }
 
@@ -462,6 +492,9 @@ export const LIVE_PROMPT = (name: string) =>
   'Then three to five lines on specific competitor ads - name the advertiser, quote the actual hook or ' +
   'headline, and say the format and how long it has run; ' +
   'then exactly 3 numbered actions, each one sentence and specific enough to do today. ' +
+  "If an OWNER'S NEXT STEPS list is present, the actions MUST start from it: anything OVERDUE or due " +
+  'today/tomorrow comes first, quoted with its real deadline; only after those may you add ad-side ' +
+  'actions. A step with no deadline set should be nudged once ("set a date for X") rather than ignored. ' +
   'Prefer naming a real ad over generalising about "competitors". ' +
   'Never state a show-up rate, attendance figure or conversion rate that is not in the data you were ' +
   'given - if the sheet has no attendance column, say attendance is not being recorded yet. ' +

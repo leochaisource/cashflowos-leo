@@ -9,6 +9,8 @@ import { leadsSummary } from '@/lib/leads-sheet'
 import { demoCampaigns, demoCompetitors, demoLeadsBlock } from '@/lib/demo'
 import { projectScorecard } from '@/lib/metrics'
 import { syncProjectAds } from '@/lib/ad-sync'
+import { getRecords, type Rec } from '@/lib/records'
+import { stepsFor } from '@/lib/work-projects'
 
 // The 8am ads brief, once per client. For each client in lib/ad-clients.ts:
 //   ① Meta Marketing API — yesterday vs the trailing 7-day average, per campaign.
@@ -263,7 +265,7 @@ async function saveAds(
 }
 
 // ------------------------------------------------------------- one client
-async function runClient(client: AdClient) {
+async function runClient(client: AdClient, records: Rec[]) {
   const notes: string[] = []
   const cur = client.currency
   const money = (n: number) => fmt(cur, n)
@@ -462,6 +464,20 @@ async function runClient(client: AdClient) {
         ].filter((l) => l !== '')
       : []
 
+  // ②c The owner's OWN to-do list for this client — the mini-PM layer. The
+  // model is told to fold the urgent ones into its 3 actions, so the brief
+  // stops suggesting work in a vacuum and starts scheduling what's real.
+  const openSteps = stepsFor(records, client.id).open
+  const stepsBlock = openSteps.length
+    ? [
+        '',
+        "OWNER'S NEXT STEPS for this client (their own to-do list, with deadlines — fold the urgent ones into the 3 actions; never invent a deadline that isn't here):",
+        ...openSteps
+          .slice(0, 6)
+          .map((st) => `- ${st.title}${st.due ? ` (due ${st.due}${st.overdue ? ' — OVERDUE' : ''})` : ' (no deadline set)'}`),
+      ]
+    : []
+
   // ③ Turn it into advice.
   // An account that has never delivered is a different report, not a broken one:
   // there is nothing to optimise, so the whole brief becomes competitor
@@ -518,6 +534,7 @@ async function runClient(client: AdClient) {
         )),
     ...deliveryBlock,
     ...leadsBlock,
+    ...stepsBlock,
     '',
     market.text,
   ]
@@ -632,6 +649,9 @@ export async function GET(req: Request) {
   const available = only ? AD_CLIENTS : await activeProjects()
   const queue = available.filter((c) => (only ? c.id === only : true))
 
+  // One records read shared by every client in the run — next steps live there.
+  const records = await getRecords()
+
   const results: unknown[] = []
   const skipped: string[] = []
   const runnable = queue.filter((c) => {
@@ -650,7 +670,7 @@ export async function GET(req: Request) {
     const batch = runnable.slice(i, i + CONCURRENCY)
     const settled = await Promise.all(
       batch.map((client) =>
-        runClient(client).catch((e) => {
+        runClient(client, records).catch((e) => {
           // One client failing must never take the others down with it.
           console.error(`[CFO] client ${client.id} failed:`, e)
           return { client: client.id, ok: false, error: (e as Error).message }

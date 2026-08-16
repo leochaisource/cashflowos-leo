@@ -17,7 +17,7 @@ import { readImage, type VisionResult } from '@/lib/vision'
 import { BOT_TOOLS, runBotTool } from '@/lib/bot-tools'
 import { BOT_ADS_TOOLS, ADS_TOOL_NAMES, runBotAdsTool } from '@/lib/bot-ads-tools'
 import { matchProject } from '@/lib/ad-clients'
-import { demoEnabled, setDemoEnabled, activeProjects } from '@/lib/settings'
+import { demoEnabled, setDemoEnabled, activeProjects, matchableProjects } from '@/lib/settings'
 import { BOT_ACTION_TOOLS, ACTION_TOOL_NAMES, runBotAction } from '@/lib/bot-actions'
 import { SCHEDULED } from '@/agents/registry'
 import { jarvisIdentity, jarvisName } from '@/jarvis/config'
@@ -636,7 +636,7 @@ async function runVaultPipeline(msg: any): Promise<void> {
   // client. Without a caption it still files, just untagged: an expense on the
   // wrong client's P&L is worse than one that needs sorting later.
   const caption = String(msg.caption ?? '').trim()
-  const matched = caption ? matchProject(caption, await activeProjects()) : { candidates: [] as ReturnType<typeof matchProject>['candidates'] }
+  const matched = caption ? matchProject(caption, await matchableProjects(await getRecords())) : { candidates: [] as ReturnType<typeof matchProject>['candidates'] }
   const project = 'project' in matched ? matched.project : undefined
 
   // The immutable payload every downstream step reads (executor + /undo).

@@ -88,3 +88,21 @@ export async function activeProjects(): Promise<Project[]> {
 
 /** Same filter, when the caller already knows the flag. */
 export const filterProjects = (on: boolean): Project[] => (on ? PROJECTS : PROJECTS.filter((p) => !p.demo))
+
+/**
+ * Everything a human might name when tagging something to "a project": the
+ * active ad clients PLUS the work projects found in the given rows. This is the
+ * pool captions, typed expenses and add_task match against — so "Dr Tariq —
+ * hosting invoice" files against the malware project even though it has no ad
+ * account.
+ */
+export async function matchableProjects(
+  rows: { category: string | null; title: string; status: string; meta?: Record<string, any> | null }[],
+): Promise<{ id: string; name: string; client?: string | null }[]> {
+  const { workProjectsFrom } = await import('./work-projects')
+  const ads = await activeProjects()
+  return [
+    ...ads.map((p) => ({ id: p.id, name: p.name, client: p.client })),
+    ...workProjectsFrom(rows as any).map((w) => ({ id: w.slug, name: w.name, client: w.client })),
+  ]
+}

@@ -1,10 +1,11 @@
 import Link from 'next/link'
 import { activeProjects } from '@/lib/settings'
 import { scorecards, ratio } from '@/lib/metrics'
-import { getRecords, m, type Rec } from '@/lib/records'
+import { getRecords, todayISO } from '@/lib/records'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import ProjectCard from '@/app/_components/ProjectCard'
 import Stat from '@/app/_components/Stat'
+import { workProjectsFrom, stepsSummary } from '@/lib/work-projects'
 import { money, num } from '@/lib/format'
 
 export const dynamic = 'force-dynamic'
@@ -52,12 +53,8 @@ export default async function Home() {
   const activeAds = all.reduce((s, x) => s + (x.card.activeAds ?? 0), 0)
   const blendedCPL = ratio(spend, leads)
 
-  // Anything in `records` that isn't one of the ad projects — the old Projects
-  // tab's rows. Kept visible so nothing you'd typed in disappeared with the
-  // makeover, but no longer the headline.
-  const otherWork = (rows as Rec[])
-    .filter((r) => r.category === 'project')
-    .sort((a, b) => ((a.due_date ?? '9999') < (b.due_date ?? '9999') ? -1 : 1))
+  const today = todayISO()
+  const work = workProjectsFrom(rows)
 
   return (
     <>
@@ -74,38 +71,65 @@ export default async function Home() {
         <Stat label="🙋 Needs your YES" value={waiting} yes={waiting > 0} href="/approvals" />
       </div>
 
-      <p className="rowlabel">The projects</p>
+      <p className="rowlabel">The ad clients</p>
       <div className="pgrid">
         {all.map(({ project, card }) => (
-          <ProjectCard key={project.id} project={project} card={card} />
+          <ProjectCard key={project.id} project={project} card={card} steps={stepsSummary(rows, project.id, today)} />
         ))}
       </div>
 
-      {otherWork.length > 0 && (
+      {/* The rest of the plate: every work project, what stage it's at, and the
+          next step with its deadline. Click through to add/tick steps. */}
+      {work.length > 0 && (
         <>
-          <p className="rowlabel">Other work</p>
+          <p className="rowlabel">Work projects</p>
           <table className="tbl">
             <thead>
               <tr>
                 <th>Project</th>
-                <th>Client</th>
                 <th>Phase</th>
-                <th>Deadline</th>
+                <th>Target</th>
+                <th>Next step</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              {otherWork.map((r) => (
-                <tr key={r.id}>
-                  <td data-label="Project">{r.title}</td>
-                  <td data-label="Client">{m(r, 'client')}</td>
-                  <td data-label="Phase">{m(r, 'phase')}</td>
-                  <td data-label="Deadline">{r.due_date ?? '—'}</td>
-                  <td data-label="Status">
-                    <span className={`pill ${(r.status || '').toLowerCase()}`}>{r.status || '—'}</span>
-                  </td>
-                </tr>
-              ))}
+              {work.map((w) => {
+                const s = stepsSummary(rows, w.slug, today)
+                const overdueProject = !!w.due && w.due < today && !['done', 'completed', 'closed'].includes(w.status.toLowerCase())
+                return (
+                  <tr key={w.slug}>
+                    <td data-label="Project">
+                      <Link href={`/projects/${w.slug}`} style={{ fontWeight: 600, textDecoration: 'none' }}>
+                        {w.name}
+                      </Link>
+                      {w.client ? <span style={{ display: 'block', fontSize: 12, color: 'var(--dim)' }}>{w.client}</span> : null}
+                    </td>
+                    <td data-label="Phase">{w.phase ?? '—'}</td>
+                    <td data-label="Target" style={overdueProject ? { color: 'var(--rust)', fontWeight: 600 } : undefined}>
+                      {w.due ?? '—'}
+                    </td>
+                    <td data-label="Next step">
+                      {s.next ? (
+                        <>
+                          {s.next.title.length > 48 ? s.next.title.slice(0, 48) + '…' : s.next.title}
+                          <span style={{ display: 'block', fontSize: 12, color: s.next.overdue ? 'var(--rust)' : 'var(--dim)' }}>
+                            {s.next.due ? (s.next.overdue ? `${s.next.due} · overdue` : s.next.due) : 'no deadline set'}
+                            {s.open > 1 ? ` · +${s.open - 1} more` : ''}
+                          </span>
+                        </>
+                      ) : (
+                        <span style={{ color: 'var(--dim)' }}>nothing open</span>
+                      )}
+                    </td>
+                    <td data-label="Status">
+                      <span className={`pill ${overdueProject ? 'overdue' : w.status.toLowerCase()}`}>
+                        {overdueProject ? 'overdue' : w.status}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </>

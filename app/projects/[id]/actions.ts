@@ -59,6 +59,48 @@ const numOrNull = (v: string | undefined): number | null => {
   return Number.isFinite(n) ? n : null
 }
 
+/**
+ * Add a next step to a project (ad client or work project — meta.project holds
+ * either id). A direct write, like the funnel form: the approval engine guards
+ * ROBOT-initiated actions, and this is the owner clicking a button in their own
+ * app. Reversible by ticking it off or /undo-style deletion later.
+ */
+export async function addStep(
+  projectId: string,
+  title: string,
+  due: string,
+): Promise<ActionResult> {
+  const t = title.trim()
+  if (!t) return { ok: false, message: 'What is the step?' }
+  if (due && !/^\d{4}-\d{2}-\d{2}$/.test(due)) return { ok: false, message: 'Bad date.' }
+  if (!supabaseConfigured) return { ok: false, message: 'Supabase isn’t connected yet.' }
+  const { error } = await supabase.from('records').insert({
+    title: t.slice(0, 200),
+    status: 'open',
+    amount: 0,
+    category: 'task',
+    due_date: due || null,
+    meta: { project: projectId, source: 'dashboard' },
+  })
+  if (error) return { ok: false, message: error.message }
+  revalidatePath('/', 'layout')
+  return { ok: true, message: due ? `Added — due ${due}.` : 'Added (no deadline).' }
+}
+
+/** Tick a step off, or untick it. Flips status only — nothing is deleted. */
+export async function setStepDone(taskId: number, done: boolean): Promise<ActionResult> {
+  if (!Number.isInteger(taskId)) return { ok: false, message: 'Unknown task.' }
+  if (!supabaseConfigured) return { ok: false, message: 'Supabase isn’t connected yet.' }
+  const { error } = await supabase
+    .from('records')
+    .update({ status: done ? 'done' : 'open' })
+    .eq('id', taskId)
+    .eq('category', 'task') // never let a task id flip some other kind of row
+  if (error) return { ok: false, message: error.message }
+  revalidatePath('/', 'layout')
+  return { ok: true, message: done ? 'Done ✓' : 'Reopened.' }
+}
+
 export async function saveFunnelNumbers(
   id: string,
   date: string,

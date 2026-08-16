@@ -371,6 +371,26 @@ code {
 .entry-ok { font-size: 12.5px; color: #2E5A40; margin: 10px 0 0; }
 .entry-err { font-size: 12.5px; color: #8A3E2D; margin: 10px 0 0; }
 
+/* ---- next steps (the mini PM band) ---- */
+.steps { list-style: none; margin: 0; padding: 0; }
+.step { display: flex; align-items: center; gap: 11px; padding: 9px 2px; border-bottom: 1px solid var(--line); }
+.step:last-child { border-bottom: none; }
+.step .t { flex: 1; min-width: 0; font-size: 14px; color: var(--ink); }
+.step .d { flex-shrink: 0; font-size: 12px; color: var(--dim); }
+.step.late .d { color: #8A3E2D; font-weight: 700; }
+.step.done .t { text-decoration: line-through; color: var(--ink-faint); }
+.step.done .d { color: var(--ink-faint); }
+.stepchk {
+  flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid var(--line-2); background: var(--card); cursor: pointer;
+  display: grid; place-items: center; font-size: 12px; line-height: 1; color: #FFFDF9; padding: 0;
+}
+.stepchk:hover { border-color: var(--sage); }
+.stepchk.on { background: var(--sage); border-color: var(--sage); }
+.stepchk:disabled { opacity: .5; cursor: default; }
+.pc-steps { font-size: 12px; color: var(--ink-soft); margin: 8px 0 0; }
+.pc-steps .late { color: #8A3E2D; font-weight: 700; }
+
 /* ---- the demo switch (Settings) ---- */
 .toggle-row { display: flex; align-items: center; gap: 14px; }
 .switch {

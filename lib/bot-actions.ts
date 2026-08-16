@@ -4,6 +4,7 @@ import type { Rec } from './records'
 import { rm } from './records'
 import { runAutopilot, proposeAndNotify } from './actions'
 import { matchProject } from './ad-clients'
+import { matchableProjects } from './settings'
 
 // 🔒 Don't edit — this keeps your robot safe.
 // The Jarvis bot's WRITE hands (V2). Where lib/bot-tools.ts only READS, these
@@ -55,6 +56,12 @@ export const BOT_ACTION_TOOLS = [
         title: { type: 'string', description: 'What the task is.' },
         due_date: { type: 'string', description: 'Optional YYYY-MM-DD deadline.' },
         owner: { type: 'string', description: 'Optional person responsible.' },
+        project: {
+          type: 'string',
+          description:
+            'Optional project/client this step belongs to ("Dr Tariq", "Claude Malaysia", "Firstin5"). ' +
+            'It then shows on that project\'s page and in its morning brief. Leave empty if none named.',
+        },
       },
       required: ['title'],
     },
@@ -159,7 +166,7 @@ export async function runBotAction(name: string, input: any, ctx: BotActionCtx):
       if (!Number.isFinite(amount) || amount <= 0) return JSON.stringify({ status: 'error', message: 'I need a positive amount to log.' })
       // Tag it to a client when the owner named one. An unmatched or ambiguous
       // name files untagged rather than landing on the wrong client's P&L.
-      const tagged = input?.project ? matchProject(String(input.project)) : null
+      const tagged = input?.project ? matchProject(String(input.project), await matchableProjects(rows)) : null
       const project = tagged && 'project' in tagged ? tagged.project : undefined
       const payload = {
         kind: 'receipt', amount, merchant,
@@ -195,17 +202,23 @@ export async function runBotAction(name: string, input: any, ctx: BotActionCtx):
     if (name === 'add_task') {
       const title = String(input?.title || '').trim()
       if (!title) return JSON.stringify({ status: 'error', message: 'What is the task?' })
+      // Tie it to a project when one was named — ad client or work project
+      // alike. Unmatched stays untagged rather than guessing whose plate it is.
+      const tagged = input?.project ? matchProject(String(input.project), await matchableProjects(ctx.rows)) : null
+      const project = tagged && 'project' in tagged ? tagged.project : undefined
       const done = await runAutopilot('add-task', {
         op: 'insert', category: 'task', title, status: 'open',
         due_date: input?.due_date || null,
-        meta: { owner: input?.owner || undefined },
+        meta: { owner: input?.owner || undefined, project: project?.id },
         idempotencyKey: randomUUID(),
       })
       if (!done) return JSON.stringify({ status: 'noop', message: 'Already added.' })
       return JSON.stringify({
         status: 'added', zone: 'green', record_id: done.row.id, task: title,
-        due_date: input?.due_date || null, undo: `/undo-${done.row.id}`,
-        tell_user: 'Added it (autopilot, reversible). Offer the /undo id.',
+        due_date: input?.due_date || null,
+        project: project?.name ?? null,
+        undo: `/undo-${done.row.id}`,
+        tell_user: 'Added it (autopilot, reversible). Offer the /undo id.' + (project ? ` Tagged to ${project.name}.` : ''),
       })
     }
 

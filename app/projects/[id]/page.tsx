@@ -9,6 +9,9 @@ import Spark from '@/app/_components/Spark'
 import AdTable from '@/app/_components/AdTable'
 import RefreshButton from '@/app/_components/RefreshButton'
 import FunnelEntryForm from '@/app/_components/FunnelEntryForm'
+import NextSteps from '@/app/_components/NextSteps'
+import { findWorkProject, stepsFor, type WorkProject } from '@/lib/work-projects'
+import type { Rec } from '@/lib/records'
 import { money, num, pct, times, whenShort, dateLong, daysUntil, DASH } from '@/lib/format'
 
 export const dynamic = 'force-dynamic'
@@ -29,11 +32,20 @@ const WINDOW_DAYS = 30
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const project = getProject(id)
+  // Not an ad client? It may be a WORK project — Dr Tariq's malware fix has a
+  // deadline and next steps but no ad account, and it deserves a page too.
+  if (!project) {
+    const rows = await getRecords()
+    const work = findWorkProject(rows, id)
+    if (!work) notFound()
+    return <WorkProjectPage work={work} rows={rows} />
+  }
   // A demo project doesn't exist while the demo switch is off — 404, rather than
   // a live-looking page for a client that isn't yours reachable by URL.
-  if (!project || (project.demo && !(await demoEnabled()))) notFound()
+  if (project.demo && !(await demoEnabled())) notFound()
 
   const [s, allRecords] = await Promise.all([projectScorecard(project, WINDOW_DAYS), getRecords()])
+  const steps = stepsFor(allRecords, project.id)
 
   // Receipts filed against THIS client — by photo caption, by a typed expense,
   // or by hand. Without this the tagging has no payoff: you'd send a receipt to
@@ -95,6 +107,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           )}
         </div>
       )}
+
+      {/* ─────────────────────────────── NEXT STEPS (the mini PM) */}
+      <NextSteps projectId={project.id} open={steps.open} done={steps.done} today={todayISO()} />
 
       {/* ─────────────────────────────── ADS */}
       <p className="rowlabel">Ads — from Meta</p>
@@ -442,6 +457,101 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         {project.demo ? '' : `Ad numbers sync from this client's Meta ad account every morning at 8am. `}
         Anything showing {DASH} is waiting on a source, not on a result.
       </p>
+    </>
+  )
+}
+
+// ============================================================
+// A WORK PROJECT — no ad account, no funnel; a deadline, a phase, next steps,
+// and whatever receipts have been filed against it. Dr Tariq's malware fix and
+// the Firstin5 build live here; the ads scorecard above is for ad clients.
+// ============================================================
+function WorkProjectPage({ work, rows }: { work: WorkProject; rows: Rec[] }) {
+  const today = todayISO()
+  const steps = stepsFor(rows, work.slug, today)
+  const overdueProject = !!work.due && work.due < today && !['done', 'completed', 'closed'].includes(work.status.toLowerCase())
+  const dueDays = daysUntil(work.due)
+
+  const costs = rows
+    .filter((r) => r.category === 'cash_out' && r.meta?.project === work.slug)
+    .sort((a, b) => (b.due_date ?? b.created_at).localeCompare(a.due_date ?? a.created_at))
+  const costsTotal = costs.reduce((sum, r) => sum + Number(r.amount || 0), 0)
+
+  return (
+    <>
+      <p className="crumb">
+        <Link href="/">Projects</Link> / {work.name}
+      </p>
+      <div className="phead">
+        <div>
+          <h1 className="ph">{work.name}</h1>
+          <p className="cap">
+            {work.client ? `${work.client} · ` : ''}
+            {work.phase ?? 'work project'}
+            {work.due ? ` · target ${dateLong(work.due)}` : ''}
+          </p>
+        </div>
+        <span className={`pill ${overdueProject ? 'overdue' : work.status.toLowerCase()}`}>
+          {overdueProject ? 'overdue' : work.status}
+        </span>
+      </div>
+
+      {work.due && (
+        <div className="grid">
+          <Metric
+            label="Target date"
+            value={dateLong(work.due)}
+            sub={
+              dueDays === null
+                ? undefined
+                : dueDays < 0
+                  ? `${-dueDays} day${dueDays === -1 ? '' : 's'} past target`
+                  : dueDays === 0
+                    ? 'due today'
+                    : `${dueDays} day${dueDays === 1 ? '' : 's'} left`
+            }
+            tone={overdueProject ? 'bad' : dueDays !== null && dueDays <= 2 ? 'warn' : undefined}
+          />
+          <Metric label="Open steps" value={num(steps.open.length)} sub={steps.open[0] ? `next: ${steps.open[0].title.slice(0, 40)}` : undefined} />
+          <Metric label="Done" value={num(steps.done.length)} />
+          <Metric label="Expenses filed" value={money(costsTotal)} sub={costs.length ? `${costs.length} receipt(s)` : undefined} source="tag receipts with this project's name" />
+        </div>
+      )}
+
+      {work.notes ? <div className="banner info">{work.notes}</div> : null}
+
+      <NextSteps projectId={work.slug} open={steps.open} done={steps.done} today={today} />
+
+      {costs.length > 0 && (
+        <div className="band">
+          <div className="band-head">
+            <h2>Project expenses</h2>
+            <span>
+              {costs.length} receipt(s) · {money(costsTotal)}
+            </span>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>What</th>
+                <th>Merchant</th>
+                <th>Date</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {costs.map((r) => (
+                <tr key={r.id}>
+                  <td data-label="What">{r.title}</td>
+                  <td data-label="Merchant">{m(r, 'merchant')}</td>
+                  <td data-label="Date">{r.due_date ?? r.created_at.slice(0, 10)}</td>
+                  <td data-label="Amount">{money(Number(r.amount))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </>
   )
 }

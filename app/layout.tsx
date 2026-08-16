@@ -3,7 +3,8 @@ import type { Metadata, Viewport } from 'next'
 import Nav from './_components/Nav'
 import BottomNav from './_components/BottomNav'
 import ConnStatus from './_components/ConnStatus'
-import { getPendingCount } from '@/lib/records'
+import { getPendingCount, getRecords } from '@/lib/records'
+import { workProjectsFrom } from '@/lib/work-projects'
 import { activeProjects } from '@/lib/settings'
 
 export const metadata: Metadata = {
@@ -21,10 +22,16 @@ export const viewport: Viewport = {
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  // The nav is a client component and the project list depends on a database
-  // switch, so the server resolves it once here and hands it down.
-  const [pending, projects] = await Promise.all([getPendingCount(), activeProjects()])
-  const navProjects = projects.map(p => ({ id: p.id, label: p.client ?? p.name }))
+  // The nav is a client component and the project list depends on the database
+  // (the demo switch, and the work projects live in `records`), so the server
+  // resolves both here and hands them down. Ad clients first, then work.
+  const [pending, projects, rows] = await Promise.all([getPendingCount(), activeProjects(), getRecords()])
+  const navProjects = [
+    ...projects.map(p => ({ id: p.id, label: p.client ?? p.name })),
+    ...workProjectsFrom(rows)
+      .filter(w => !['done', 'completed', 'closed'].includes(w.status.toLowerCase()))
+      .map(w => ({ id: w.slug, label: w.client ?? w.name })),
+  ]
   return (
     <html lang="en">
       <body>

@@ -12,12 +12,20 @@ import { money, num, times, whenShort, dateLong, daysUntil, DASH } from '@/lib/f
 // zeros — "ads go live in 4 days" is the true status of Kingsley's account, and
 // "RM 0 · 0 leads · CPL RM 0" is not.
 
+export type CardSteps = {
+  open: number
+  overdue: number
+  next: { title: string; due: string | null; overdue: boolean } | null
+}
+
 export default function ProjectCard({
   project,
   card,
+  steps,
 }: {
   project: Project
   card: Scorecard
+  steps?: CardSteps
 }) {
   const cur = project.currency || 'RM'
   const stage = project.stage ?? (card.hasDelivery ? 'active' : 'pre-launch')
@@ -100,6 +108,23 @@ export default function ProjectCard({
             </>
           )}
         </div>
+      )}
+
+      {/* What's on the plate for this client — the PM layer's one-liner. */}
+      {steps && steps.open > 0 && (
+        <p className="pc-steps">
+          📌 {steps.open} next step{steps.open === 1 ? '' : 's'}
+          {steps.overdue > 0 ? <span className="late"> · {steps.overdue} overdue</span> : null}
+          {steps.next ? (
+            <>
+              {' · next: '}
+              {steps.next.title.length > 44 ? steps.next.title.slice(0, 44) + '…' : steps.next.title}
+              {steps.next.due ? (
+                <span className={steps.next.overdue ? 'late' : undefined}> ({steps.next.due})</span>
+              ) : null}
+            </>
+          ) : null}
+        </p>
       )}
 
       {/* The funnel half, shown compactly — blanks stay blank. */}

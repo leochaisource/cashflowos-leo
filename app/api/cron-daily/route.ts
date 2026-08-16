@@ -4,6 +4,8 @@ import { sendMessage } from '@/lib/telegram'
 import { getRecords, getFunnel, rm, todayISO, type Rec } from '@/lib/records'
 import { propose, proposeAndNotify, runAutopilot } from '@/lib/actions'
 import { SCHEDULED, type ProposalDraft } from '@/agents/registry'
+import { activeProjects } from '@/lib/settings'
+import { workProjectsFrom, stepsBriefLines } from '@/lib/work-projects'
 
 // 🔒 Don't edit — this keeps your robot safe.
 // THE ONE daily cron (Vercel Hobby allows 2; we ship 1, reserve the other).
@@ -65,7 +67,17 @@ export async function GET(req: Request) {
     proposed = (data ?? []) as any[]
   }
 
-  const brief = buildBrief(f, { cashIn, cashOut, owed }, proposed)
+  // THE PLATE — every project's open next steps, ad clients and work projects
+  // alike, overdue first. This is what makes the morning brief a to-do brief
+  // and not just a scoreboard.
+  const ads = await activeProjects()
+  const plateProjects = [
+    ...ads.map((p) => ({ id: p.id, name: p.client ?? p.name, due: null as string | null })),
+    ...workProjectsFrom(rows).map((w) => ({ id: w.slug, name: w.name, due: w.due })),
+  ]
+  const plate = stepsBriefLines(rows, plateProjects, today)
+
+  const brief = buildBrief(f, { cashIn, cashOut, owed }, proposed, plate)
 
   // ② Optional Jarvis-Oyen narrative — a warm chief-of-staff paragraph. Only when a
   //    key is set; its absence NEVER blocks the mandated brief above.
@@ -141,7 +153,10 @@ function buildBrief(
   f: ReturnType<typeof getFunnel>,
   money: { cashIn: number; cashOut: number; owed: number },
   proposed: { agent_key: string; payload: any }[],
+  plate: string[] = [],
 ): string {
+  // Task titles are typed by humans and this message is parse_mode=HTML.
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const p = (i: number) => (f.pct[i] != null ? `${f.pct[i]}%` : '—')
   const funnelLine =
     `👀 ${f.views} Views → ${p(0)} → ` +
@@ -174,11 +189,23 @@ function buildBrief(
     if (proposed.length > 5) ask += `\n…and ${proposed.length - 5} more`
   }
 
+  // Overdue lines float to the top so the first thing read is the most late.
+  const plateBlock = plate.length
+    ? `\n\n<b>On your plate</b>\n` +
+      plate
+        .map((l) => l.replace(/^- /, ''))
+        .sort((a, b) => Number(b.includes('OVERDUE')) - Number(a.includes('OVERDUE')))
+        .slice(0, 10)
+        .map((l) => `• ${esc(l).replace(/OVERDUE by (\d+)d/g, '<b>OVERDUE by $1d</b>')}`)
+        .join('\n')
+    : ''
+
   return (
-    `☀️ <b>CashFlowOS — morning brief</b>\n\n` +
+    `☀️ <b>Firstin5 — morning brief</b>\n\n` +
     `<b>The river</b>\n${funnelLine}\n\n` +
-    `<b>The money</b>\n${moneyLine}\n\n` +
-    `<b>Needs you</b>\n${ask}`
+    `<b>The money</b>\n${moneyLine}` +
+    plateBlock +
+    `\n\n<b>Needs you</b>\n${ask}`
   )
 }
 

@@ -171,6 +171,24 @@ async function deliveryBlockFor(): Promise<string[]> {
 }
 const deliveryBlock = await deliveryBlockFor()
 
+// ---- the owner's next steps for this client (mirrors cron-ads) -------------
+const { data: taskRows } = await s
+  .from('records')
+  .select('title, due_date, status')
+  .eq('category', 'task')
+  .eq('meta->>project', client.id)
+const todayStr = new Date().toISOString().slice(0, 10)
+const openSteps = (taskRows ?? []).filter((t) => !['done', 'completed', 'closed', 'reversed'].includes((t.status || '').toLowerCase()))
+const stepsBlock = openSteps.length
+  ? [
+      '',
+      "OWNER'S NEXT STEPS for this client (their own to-do list, with deadlines — fold the urgent ones into the 3 actions; never invent a deadline that isn't here):",
+      ...openSteps
+        .slice(0, 6)
+        .map((t) => `- ${t.title}${t.due_date ? ` (due ${t.due_date}${t.due_date < todayStr ? ' — OVERDUE' : ''})` : ' (no deadline set)'}`),
+    ]
+  : []
+
 // ---- build + write ---------------------------------------------------------
 const market = competitorSection(ads, [], client.countries.join('+'), {}, client.relevanceTerms, client.excludeTerms)
 const facts = stripLoneSurrogates([
@@ -182,6 +200,7 @@ const facts = stripLoneSurrogates([
   ...(preLaunch ? [] : month.slice(0, 8).map((c) => `- ${c.name}: ${money(c.spend)}, ${c.leads} leads, CPL ${c.cpl ? money(c.cpl) : 'n/a'}`)),
   ...deliveryBlock,
   ...leadsBlock,
+  ...stepsBlock,
   '',
   market.text,
 ].filter((l) => l !== '').join('\n'))
