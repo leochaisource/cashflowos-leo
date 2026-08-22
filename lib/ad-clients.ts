@@ -277,22 +277,49 @@ export const AD_CLIENTS: AdClient[] = [
 // Adyntel spend) and the dashboard shows it as "no delivery recorded".
 AD_CLIENTS.push({
   id: 'starcity-global',
-  name: 'Starcity Global',
+  name: 'Starcity Global — Wing Heong HK',
   client: 'Starcity Global',
   stage: 'pre-launch',
   adAccountEnv: 'STARCITY_META_AD_ACCOUNT_ID',
   tokenEnv: 'STARCITY_META_ACCESS_TOKEN',
   chatIdEnv: 'OWNER_CHAT_ID',
-  // 👉 Empty ON PURPOSE: competitor keywords cost Adyntel credits, and we don't
-  // know this client's niche terms yet. Fill these in when the account is
-  // connected and the offer is confirmed; until then the brief runs Meta-only.
-  keywords: [],
-  countries: ['MY'],
-  keywordsPerRun: 0,
-  currency: 'RM',
-  // UNVERIFIED — like Kingsley's was before launch. Once ads run, check which
-  // action_type Meta actually reports (see the Kingsley note above) and correct.
-  leadActionTypes: PIXEL_LEAD,
+  // The offer, read off the account's own creatives (2026-08-16): Wing Heong
+  // (永香) Malaysian bak kwa / 肉乾 sold INTO HONG KONG, Cantonese copy,
+  // CNY + mooncake seasonal pushes, Messenger/WhatsApp funnels. So the market
+  // watch is HK, and the keyword set is Chinese-first. Mid-Autumn (Sep-Oct) is
+  // the next season — 月餅 is in deliberately.
+  // 'bak kwa' in English returned ZERO ads in HK (verified 2026-08-16) — the
+  // market searches in Chinese. 美珍香 is Bee Cheng Hiang, the category giant
+  // and the direct competitor watch.
+  keywords: ['肉乾', '美珍香', '月餅', '馬來西亞手信', '豬肉乾', '肉鬆'],
+  countries: ['HK'],
+  keywordsPerRun: 2, // 2 credits/day, full list every 3 days
+  currency: 'RM', // the AD ACCOUNT bills in MYR (verified) even though the market is HK
+  // The funnels here are message-based (Messenger/WhatsApp), not lead forms:
+  // a "lead" is a conversation started. UNVERIFIED against delivery — this
+  // account has never spent (see briefContext) — confirm the action_type once
+  // ads actually run.
+  leadActionTypes: ['onsite_conversion.messaging_conversation_started_7d', 'onsite_conversion.total_messaging_connection'],
+  relevanceTerms: [
+    // subject: food / gifting, in the words HK ads actually use
+    ['肉乾', '肉干', 'bak kwa', '豬肉', '猪肉', '肉鬆', '肉松', '月餅', '月饼', '手信', '年貨', '年货',
+     '零食', '小食', '美食', 'snack', 'jerky', 'dried meat', 'mooncake', '禮盒', '礼盒', '送禮', '送礼'],
+    // offer: something is actually being sold or ordered
+    ['優惠', '优惠', '折扣', '促銷', '促销', '限時', '限时', '免運', '免运', '包郵', '包邮', '訂購', '订购',
+     '網購', '网购', '門市', '门市', '送貨', '送货', '下單', '下单', '選購', '选购', 'whatsapp', 'order', 'shop', 'buy', '買', '买'],
+  ],
+  // Pet terms are load-bearing here: in HK ad space, 肉乾/肉鬆 searches return
+  // as much PET JERKY as human food (LitoMon, HeroMama, Pets Life — all cat/dog
+  // treats). Verified on the first live pull, 2026-08-16.
+  excludeTerms: ['保險', '保险', 'insurance', '移民', 'immigration', '地產', '地产', 'property', 'forex', 'crypto', '貸款', '贷款',
+    '貓', '猫', '狗', '寵物', '宠物', '飼料', '饲料', '凍乾', '冻干', 'cat', 'dog', 'pet'],
+  briefContext:
+    'RE-LAUNCH PREPARATION. This ad account (Starcity AI, bills in MYR) holds 21 campaigns from ' +
+    '2021-2022 for Wing Heong (永香) bak kwa marketed to Hong Kong — Cantonese copy, CNY and mooncake ' +
+    'seasonal angles, Messenger/WhatsApp funnels — but has ZERO lifetime delivery: nothing has ever ' +
+    'spent from it. Treat it as pre-launch, not paused. Do not analyse own performance. ' +
+    'Mid-Autumn Festival (late September 2026) is the nearest seasonal window; mooncake and gifting ' +
+    'ads in HK will ramp from August, so competitor movement now is the launch signal to watch.',
   sources: {},
 })
 

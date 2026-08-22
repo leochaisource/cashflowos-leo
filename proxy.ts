@@ -27,6 +27,8 @@ export function proxy(req: NextRequest) {
 //   • /api/cron-daily         — the daily cron (has its own fail-closed Bearer guard)
 //   • /api/cron-ads           — the 8am ads brief (same fail-closed Bearer guard)
 //   • /api/sync-ads           — the Meta→dashboard sync (same fail-closed Bearer guard)
+//   • /api/calendar           — the ICS feed Google Calendar subscribes to; calendar
+//     fetchers can't log in or send headers, so it carries its own URL token
 //   • /manifest.webmanifest   — the REAL PWA manifest (app/manifest.ts serves HERE);
 //     /manifest.json          — belt-and-braces extra so install never silently breaks
 //   • /icons/*, /favicon.ico, /icon.png, /_next/* — static assets the install/render
@@ -36,6 +38,6 @@ export function proxy(req: NextRequest) {
 // A single missed exclusion here = a locked webhook on class day, so this list is tested.
 export const config = {
   matcher: [
-    '/((?!login|api/login|api/telegram|api/cron-daily|api/cron-ads|api/sync-ads|manifest\\.webmanifest|manifest\\.json|icons|icon\\.png|_next|favicon\\.ico).*)',
+    '/((?!login|api/login|api/telegram|api/cron-daily|api/cron-ads|api/sync-ads|api/calendar|manifest\\.webmanifest|manifest\\.json|icons|icon\\.png|_next|favicon\\.ico).*)',
   ],
 }

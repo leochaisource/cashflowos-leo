@@ -1,0 +1,29 @@
+feat(starcity+calendar): connect Starcity to HK market watch, and an ICS deadline feed
+
+STARCITY, CONNECTED AND READ HONESTLY. The account (Starcity AI, bills MYR)
+holds 21 campaigns from 2021-22 — Wing Heong (永香) bak kwa sold into Hong Kong,
+Cantonese copy, CNY/mooncake angles, Messenger funnels — and has ZERO lifetime
+delivery. briefContext says so, so the model prepares a relaunch instead of
+analysing performance that never existed. Lead definition is
+messaging-conversation-started (their funnels are chat, not forms), flagged
+unverified until real delivery exists.
+
+THE HK MARKET WATCH runs in Chinese because the market does: 'bak kwa' in
+English returned zero ads in HK (verified live), so the keyword set is 肉乾 /
+美珍香 (Bee Cheng Hiang, the category giant) / 月餅 / 馬來西亞手信 / 豬肉乾 /
+肉鬆, rotating 2/day. Two traps found on the first pull and coded in: HK's
+肉乾/肉鬆 ad space is heavily PET TREATS (cat/dog exclusions added), and the
+live seasonal war is mooncakes — Kee Wah, Hang Heung, La Lune, A-1's Pokémon
+collab — which is exactly the gifting window a bak kwa relaunch would ride.
+Baseline: 143 ads from 84 HK advertisers stored.
+
+GOOGLE CALENDAR, WITHOUT OAUTH. /api/calendar serves an ICS feed of every open
+dated next step plus each work project's target date. Google subscribes to the
+URL; ticked-off steps drop out on its next refresh. A dedicated low-privilege
+CALENDAR_FEED_TOKEN rides in the URL (calendar fetchers can't send headers) —
+deliberately not CRON_SECRET, which guards endpoints that spend money. Fails
+closed when unset. The honest trade, documented in the route: Google refreshes
+subscribed calendars on its own schedule, hours not minutes — fine for
+day-grained deadlines, wrong tool for anything finer.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
