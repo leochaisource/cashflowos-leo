@@ -14,7 +14,7 @@ import { leadsSummary } from '../lib/leads-sheet.ts'
 import { delivery, perDay } from '../lib/delivery.ts'
 
 const SEND = process.argv.includes('--send')
-const ID = process.argv.find((a) => a.startsWith('--client='))?.split('=')[1] ?? 'dianna-nlp'
+const ID = process.argv.find((a) => a.startsWith('--client='))?.split('=')[1] ?? 'claude-malaysia'
 const client = AD_CLIENTS.find((c) => c.id === ID)
 if (!client) { console.error(`unknown client "${ID}" — known: ${AD_CLIENTS.map((c) => c.id).join(', ')}`); process.exit(1) }
 

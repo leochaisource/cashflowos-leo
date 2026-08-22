@@ -11,7 +11,7 @@ import { syncProjectAds } from '@/lib/ad-sync'
 // everyone. It hits a third-party API on your account, so it is not open.
 //
 //   GET /api/sync-ads                      → every configured project
-//   GET /api/sync-ads?client=dianna-nlp    → one project
+//   GET /api/sync-ads?client=claude-malaysia    → one project
 //   GET /api/sync-ads?days=30              → a longer backfill (default 7)
 
 export const dynamic = 'force-dynamic'

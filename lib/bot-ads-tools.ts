@@ -25,7 +25,7 @@ const WINDOW = 30
 
 // ---------------------------------------------------------------- resolving
 /**
- * Match however the owner says it: "kingsley", "claude malaysia", "dianna",
+ * Match however the owner says it: "claude malaysia", "starcity", "lotus",
  * "the workshop one". Matches id, project name and client name.
  */
 function resolve(q: string | undefined, pool: Project[]): { project?: Project; candidates?: Project[] } {
@@ -63,7 +63,7 @@ export const BOT_ADS_TOOLS = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        project: { type: 'string', description: 'Project or client name, e.g. "Claude Malaysia" or "Dianna". Omit to be asked.' },
+        project: { type: 'string', description: 'Project or client name, e.g. "Claude Malaysia" or "Starcity". Omit to be asked.' },
         days: { type: 'number', description: `Window in days. Default ${WINDOW}.` },
       },
       required: [],

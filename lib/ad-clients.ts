@@ -178,33 +178,15 @@ const PIXEL_LEAD = [
   'lead',
 ]
 
+// Dianna ('dianna-nlp') was REMOVED from this registry on 2026-08-23 — the
+// engagement ended. Removing the entry is the archive: her `ad_daily`,
+// `competitor_ads` and `records` history stays in Supabase untouched, filed
+// under 'dianna-nlp', and nothing reads it while no registry entry carries that
+// id. To bring her back, restore the entry from git history and everything
+// reappears intact. Her env vars (META_AD_ACCOUNT_ID / META_ACCESS_TOKEN) are
+// now unused; revoke the token in Business Manager rather than merely deleting
+// the vars.
 export const AD_CLIENTS: AdClient[] = [
-  {
-    id: 'dianna-nlp',
-    name: 'Dianna — Recalibration Masterclass',
-    adAccountEnv: 'META_AD_ACCOUNT_ID',
-    tokenEnv: 'META_ACCESS_TOKEN',
-    keywords: ['NLP practitioner', 'transformational coaching', 'mindset webinar'],
-    countries: ['MY'],
-    keywordsPerRun: 0, // only 3 keywords — cheap enough to run them all daily
-    currency: 'RM',
-    leadActionTypes: NATIVE_LEAD,
-    chatIdEnv: 'OWNER_CHAT_ID',
-    client: 'Dianna',
-    stage: 'active',
-    // 👉 Fill these in when you have them — every one of them unlocks a tile.
-    // coursePrice: 0,
-    // targetCPL: 0,
-    sources: {
-      // 👉 Name a source here once it's wired; until then the tile stays blank.
-      // leads: 'GHL landing page',
-      // attended: 'Master leads sheet · Attended',
-    },
-    relevanceTerms: [
-      ['nlp', 'coaching', 'coach', 'hypnosis', 'hypnotherapy', 'mindset', 'transformational', 'timeline therapy', 'subconscious'],
-      ['practitioner', 'certification', 'certified', 'training', 'course', 'workshop', 'masterclass', 'webinar', 'programme', 'program', 'bootcamp', 'class', 'seminar', 'intake', 'enrol', 'enroll'],
-    ],
-  },
   {
     // Renamed from 'kingsley-ai' on 2026-08-08. The id is a foreign key in three
     // tables (ad_daily.project, competitor_ads.client, project_funnel.project),
