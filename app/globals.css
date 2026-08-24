@@ -106,10 +106,10 @@ code {
 .tbl tr:last-child td { border-bottom: none; }
 
 .pill { display: inline-block; font-size: 12px; padding: 2px 9px; border-radius: var(--r-8); font-weight: 600; background: var(--paper-2); color: var(--ink-soft); }
-/* top-of-funnel / in-progress (blue) */
-.pill.open, .pill.new, .pill.contacted, .pill.waiting, .pill.active, .pill.scheduled { background: rgba(90,140,190,.16); color: #2C5E8A; }
-/* attention / pending → 🟡 honey */
-.pill.pending, .pill.draft, .pill.proposed, .pill.appointment, .pill.paused { background: rgba(182,128,42,.18); color: #6E521A; }
+/* top-of-funnel / in-progress (blue) — `monitoring` = built and being watched */
+.pill.open, .pill.new, .pill.contacted, .pill.waiting, .pill.active, .pill.scheduled, .pill.monitoring { background: rgba(90,140,190,.16); color: #2C5E8A; }
+/* attention / pending → 🟡 honey — `negotiation` = not yours yet */
+.pill.pending, .pill.draft, .pill.proposed, .pill.appointment, .pill.paused, .pill.negotiation { background: rgba(182,128,42,.18); color: #6E521A; }
 /* done / good → 🟢 sage */
 .pill.won, .pill.done, .pill.paid, .pill.closed, .pill.filed, .pill.posted, .pill.executed, .pill.approved { background: rgba(75,122,90,.16); color: #2E5A40; }
 /* problem / overdue → 🔴 rust */
