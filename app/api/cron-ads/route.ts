@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
-import { AD_CLIENTS, keywordsForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, type AdClient } from '@/lib/ad-clients'
+import { AD_CLIENTS, keywordsForToday, watchPageForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, type AdClient } from '@/lib/ad-clients'
 import { focusProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
 import { leadsSummary } from '@/lib/leads-sheet'
@@ -157,6 +157,31 @@ async function adyntelSearch(
   }
 
   return { ads: Array.from(byId.values()), calls, complete, echo }
+}
+
+/**
+ * Everything ONE PAGE is running, by page id — Adyntel's /facebook endpoint.
+ * This is the only way to watch a named brand: a keyword search for the
+ * page's name returns whoever shares the words, not the page. One credit.
+ */
+async function adyntelPage(pageId: string): Promise<{ ads: NormalisedAd[]; calls: number }> {
+  const api_key = process.env.ADYNTEL_API_KEY?.trim()
+  const email = process.env.ADYNTEL_EMAIL?.trim()
+  if (!api_key || !email) return { ads: [], calls: 0 }
+  const res = await fetch('https://api.adyntel.com/facebook', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key, email, facebook_url: `https://www.facebook.com/${pageId}` }),
+    signal: AbortSignal.timeout(60000),
+  })
+  if (res.status === 402) throw new OutOfCredits('Adyntel is out of credits — top up at app.adyntel.com')
+  if (!res.ok) throw new Error(`Adyntel ${res.status} on page ${pageId}`)
+  const byId = new Map<string, NormalisedAd>()
+  for (const raw of flattenAds(await res.json())) {
+    const ad = normaliseAd(raw)
+    if (ad.ad_archive_id && !byId.has(ad.ad_archive_id)) byId.set(ad.ad_archive_id, ad)
+  }
+  return { ads: Array.from(byId.values()), calls: 1 }
 }
 
 // ------------------------------------------------- competitor_ads (Supabase)
@@ -356,6 +381,8 @@ async function runClient(client: AdClient, records: Rec[]) {
   const prior = await loadPrior(client.id)
   const todaysKeywords = keywordsForToday(client)
   let competitors: NormalisedAd[] = []
+  // Ads from today's watched brand page — shown whatever the relevance filter thinks.
+  const watchedIds = new Set<string>()
   let stored = 0
   let credits = 0
   let partial: string[] = []
@@ -387,6 +414,24 @@ async function runClient(client: AdClient, records: Rec[]) {
         ;(keywordsByAd.get(ad.ad_archive_id) ?? keywordsByAd.set(ad.ad_archive_id, new Set()).get(ad.ad_archive_id)!).add(keyword)
       }
     }
+    // ③ Brand watch — one whole page per run, tagged "page:<name>" so the
+    // brief can tell a watched brand's ad from a keyword hit.
+    const watched = watchPageForToday(client)
+    if (watched) {
+      try {
+        const r = await adyntelPage(watched.pageId)
+        credits += r.calls
+        for (const ad of r.ads) {
+          if (!byId.has(ad.ad_archive_id)) byId.set(ad.ad_archive_id, ad)
+          watchedIds.add(ad.ad_archive_id)
+          ;(keywordsByAd.get(ad.ad_archive_id) ?? keywordsByAd.set(ad.ad_archive_id, new Set()).get(ad.ad_archive_id)!).add(`page:${watched.name}`)
+        }
+        notes.push(`Brand watch today: ${watched.name} — ${r.ads.length} live ad(s) pulled in full.`)
+      } catch (e) {
+        if (e instanceof OutOfCredits) throw e
+        notes.push(`Brand watch failed for ${watched.name}: ${(e as Error).message}`)
+      }
+    }
     competitors = Array.from(byId.values())
     const saved = await saveAds(client.id, competitors, keywordsByAd, prior)
     stored = saved.stored
@@ -416,7 +461,7 @@ async function runClient(client: AdClient, records: Rec[]) {
     }
   }
 
-  const market = competitorSection(competitors, prior, client.countries.join('+'), {}, client.relevanceTerms, client.excludeTerms)
+  const market = competitorSection(competitors, prior, client.countries.join('+'), {}, client.relevanceTerms, client.excludeTerms, watchedIds)
   if (client.keywordsPerRun && client.keywordsPerRun < client.keywords.length)
     notes.push(
       `Watching ${todaysKeywords.length} of ${client.keywords.length} keywords today (rotating): ${todaysKeywords.join(', ')}`,

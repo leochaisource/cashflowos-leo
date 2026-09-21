@@ -20,3 +20,6 @@ next-env.d.ts
 
 # large third-party media + captured API responses (not source)
 /data/competitor-creatives
+
+# one-off paste helper for Vercel env vars — secrets, never commit
+.env.vercel-paste

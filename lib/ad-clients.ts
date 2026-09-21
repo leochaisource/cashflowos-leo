@@ -109,6 +109,17 @@ export type AdClient = {
   adyntelMaxPages?: number
 
   /**
+   * BRAND WATCH. Facebook pages to pull IN FULL, by page id, one per run in
+   * rotation. Adyntel's /facebook endpoint returns everything a page is
+   * running (verified 2026-09-21: Hustle Malaysia's 10 live ads in one call).
+   * A keyword search cannot do this — searching a page's NAME returns other
+   * advertisers who share the words (the "Hustle Malaysia" search came back
+   * with Toyota Malaysia and a sauna shop, and not one Hustle ad).
+   * One credit per page per run; the brief tags these ads "page:<name>".
+   */
+  watchPages?: { name: string; pageId: string }[]
+
+  /**
    * Extra search parameters passed straight through to Adyntel.
    *
    * VERIFIED IGNORED, 2026-08-08. The API echoes back active_status,
@@ -222,8 +233,17 @@ export const AD_CLIENTS: AdClient[] = [
     ],
     countries: ['MY', 'SG'],
     keywordsPerRun: 4, // 4 × 2 countries = 8 credits/day, full cycle every 3 days
+    // Page ids come from the stored competitor_ads rows (page_id column).
+    watchPages: [
+      { name: 'Hustle Malaysia', pageId: '791929197338366' }, // "Certified Claude AI Professional" — the direct competitor
+      { name: 'BELLS Tech', pageId: '385890621834316' }, // SG, SkillsFuture-subsidy angle
+      { name: 'Vibe Coding 实战工作坊', pageId: '1049464534913369' }, // Chinese-language hands-on workshop, 137d+
+    ],
     currency: 'RM',
-    leadActionTypes: PIXEL_LEAD,
+    // The old account fired fb_pixel_lead; Kingsley's own account fires the pixel
+    // CUSTOM event for the webinar registration (verified 21 Sep 2026: 157 in 30d).
+    // leadsOf() takes the max across types, so listing both is safe on either.
+    leadActionTypes: [...PIXEL_LEAD, 'offsite_conversion.fb_pixel_custom'],
     chatIdEnv: 'OWNER_CHAT_ID',
     // Set CLAUDE_MALAYSIA_GROUP_CHAT_ID in Vercel to the group's id and this
     // client's morning brief goes there instead of a private chat. Unset, it
@@ -253,16 +273,18 @@ export const AD_CLIENTS: AdClient[] = [
     ],
     // 'claude malaysia' excludes the client's OWN page — it was being quoted back
     // to them as a competitor. Exclusions read the advertiser name, so this works.
-    excludeTerms: ['real estate', 'property', 'properties', 'condo', 'condominium', 'insurance', 'langsir', 'curtain', 'renovation', 'skincare', 'forex', 'claude malaysia'],
+    excludeTerms: ['real estate', 'property', 'properties', 'condo', 'condominium', 'insurance', 'langsir', 'curtain', 'renovation', 'skincare', 'forex', 'claude malaysia', 'closerking', 'kingsley low'],
     briefContext:
-      'LIVE. Lead tracking is VERIFIED — the landing-page opt-in fires offsite_conversion.fb_pixel_lead, ' +
-      'and Meta reports the same conversion under three names, which the brief de-duplicates. The offer is ' +
-      'an AI workshop for Malaysian and Singaporean business owners and SMEs, including HRD Corp claimable ' +
-      'training. ACCOUNT MOVE (mid-September 2026): ads now run from Kingsley\'s own ad account; the account ' +
-      'connected here (SF Media Ad Account 2) stopped spending on 13 Sep and its last 30 days — RM 4.2k, ' +
-      '1,649 leads at ~RM 2.50 — are the tail of that. Until the new account is connected, own-performance ' +
-      'shows the old one only: say "the connected account" rather than "the ads", and never call the ' +
-      'campaign paused.',
+      'LIVE on Kingsley\'s OWN ad account ("Kingsley Low Monday Funnels", connected 21 Sep 2026). The previous ' +
+      'account ran the 1-day-workshop opt-in campaign 2 Aug–13 Sep at ~RM 2.50 a lead and is now paused; its rows ' +
+      'are still in the data, so a 30-day window straddles both accounts until mid-October — say which account a ' +
+      'number comes from when it matters. The NEW funnel is different and its numbers are not comparable with the ' +
+      'old CPL: "[SF] CM1D Webinar Campaign" (live 15 Sep) drives webinar registrations, and the lead is the pixel ' +
+      'CUSTOM event (offsite_conversion.fb_pixel_custom) — ~RM 7.60 each in its first week; "[SF] CM1D Direct Ticket ' +
+      'Campaign" (live 17 Sep) sells the RM397 ticket straight from the ad — judge it by initiate_checkout, ' +
+      'add_payment_info and purchases, never by CPL, and say plainly when purchases are not in the data. CM1D = ' +
+      'Claude Malaysia 1 Day. The morning question is whether the webinar route and the direct-ticket route are ' +
+      'each earning their spend.',
   },
 ]
 
@@ -296,6 +318,12 @@ AD_CLIENTS.push({
   keywords: ['馬來西亞樓', '第二家園', '馬來西亞置業', '吉隆坡樓盤', '大馬樓', '馬來西亞第二家園', 'Malaysia property'],
   countries: ['HK'],
   keywordsPerRun: 2, // 2 credits/day, full list every 3 days
+  watchPages: [
+    { name: '優選良屋', pageId: '770012512868363' }, // MM2H-consult hook, spending now
+    { name: 'Ecoworks MM2H', pageId: '1088270961045556' }, // 90d+ MM2H WhatsApp funnel
+    { name: 'Malaysia Top Property', pageId: '108536222207315' }, // KLCC hotel suite, 0% DP / 15% ROI claims
+    { name: 'Summer Koh', pageId: '425840764829395' }, // Bukit Bintang, Wyndham-managed, free MM2H
+  ],
   currency: 'RM', // the ad account bills in MYR even though the market is HK
   // VERIFIED against the Sept campaign: the seminar registration fires the
   // Pixel's CUSTOM event (offsite_conversion.fb_pixel_custom — 44 of 45 came
@@ -362,6 +390,12 @@ AD_CLIENTS.push({
   keywords: ['財務自由課程', 'investing course Malaysia', '股票投資課程', 'financial freedom webinar', 'passive income masterclass', 'money management class'],
   countries: ['MY'],
   keywordsPerRun: 2,
+  watchPages: [
+    { name: 'PressPlay Academy', pageId: '387824567984964' }, // 存股 dividend investing, 247d+
+    { name: 'The Khairi Aizat', pageId: '637786352748015' }, // Malay debt-free classes, 15 ads
+    { name: 'Beyond Insights', pageId: '161380287227521' }, // Kathlyn Toh, the established brand
+    { name: 'WEKAH 名家商学院', pageId: '115221704898970' }, // Sdn Bhd restructuring class
+  ],
   currency: 'RM',
   leadActionTypes: PIXEL_LEAD, // unverified — no account yet
   relevanceTerms: [
@@ -529,9 +563,18 @@ export function keywordsForToday(c: AdClient, date = new Date()): string[] {
   return Array.from({ length: c.keywordsPerRun }, (_, i) => c.keywords[(offset + i) % n])
 }
 
+/** Today's watched page — one per run, cycling through the list. */
+export function watchPageForToday(c: AdClient, date = new Date()): { name: string; pageId: string } | null {
+  const list = c.watchPages ?? []
+  if (!list.length) return null
+  const start = new Date(date.getFullYear(), 0, 0)
+  const dayOfYear = Math.floor((date.getTime() - start.getTime()) / 86400000)
+  return list[dayOfYear % list.length]
+}
+
 /** Adyntel credits this client will spend on one run. */
 export function creditsPerRun(c: AdClient): number {
-  return keywordsForToday(c).length * c.countries.length
+  return keywordsForToday(c).length * c.countries.length + (c.watchPages?.length ? 1 : 0)
 }
 
 /**
@@ -573,7 +616,10 @@ export const LIVE_PROMPT = (name: string) =>
   'they have been waiting. Real names from the data, never invented ones. If someone has been waiting ' +
   'longer than the others, put them first and say so.\n' +
   'Then three to five lines on specific competitor ads - name the advertiser, quote the actual hook or ' +
-  'headline, and say the format and how long it has run; ' +
+  'headline, and say the format and how long it has run. Run length is the ONLY results signal the Ad ' +
+  'Library gives (spend and reach are never available): an ad still running after 60+ days is one the ' +
+  'advertiser keeps paying for, several live variations of one idea means they are scaling it, and a ' +
+  'brand-new ad proves nothing yet - read them that way and say so; ' +
   'then exactly 3 numbered actions, each one sentence and specific enough to do today. ' +
   "If an OWNER'S NEXT STEPS list is present, the actions MUST start from it: anything OVERDUE or due " +
   'today/tomorrow comes first, quoted with its real deadline; only after those may you add ad-side ' +
@@ -592,7 +638,9 @@ export const PRE_LAUNCH_PROMPT = (name: string) =>
   'Then write these three sections, using "-" for bullets, no markdown headers, no preamble:\n' +
   'WHAT THE MARKET IS DOING: three to five lines, each naming a real advertiser, quoting their actual hook or ' +
   'headline, and stating format and run length. Group by the angle being used (price, certification, testimonial, ' +
-  'pain-first, authority) rather than listing ads at random.\n' +
+  'pain-first, authority) rather than listing ads at random. Run length is the ONLY results signal available ' +
+  '(spend and reach never are): 60+ days live means the advertiser keeps paying for it, several live ' +
+  'variations of one idea means they are scaling it, a brand-new ad proves nothing yet.\n' +
   'ADS TO BUILD: exactly 3 concrete ad concepts this client could produce this week. For each give a headline they ' +
   'could actually run, the format (image/video/carousel), the angle, and say plainly whether it COPIES a structure ' +
   'that several competitors are using or COUNTERS a gap none of them are covering. Write the headline as finished ' +

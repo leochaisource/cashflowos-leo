@@ -3,6 +3,7 @@
 //   node --env-file-if-exists=.env scripts/adyntel-seed-client.ts --client=lotus-clinic
 //   node --env-file-if-exists=.env scripts/adyntel-seed-client.ts --client=lotus-clinic --replace
 //   ... --pages=2      (deeper, costs one credit per page per keyword)
+//   ... --watch        (also pull every watchPages brand in full — one credit each)
 //
 // Runs EVERY keyword the client has, not just today's rotation — a new client
 // starts with an empty market and the morning brief's "new since last fetch"
@@ -18,6 +19,7 @@ const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.sp
 const ID = arg('client')
 const PAGES = Math.min(Math.max(Number(arg('pages')) || 1, 1), 5)
 const REPLACE = process.argv.includes('--replace')
+const WATCH = process.argv.includes('--watch')
 
 const client = AD_CLIENTS.find((c) => c.id === ID)
 if (!client) {
@@ -84,6 +86,39 @@ for (const [keyword, country] of jobs) {
   } catch (e) {
     console.error(`  "${keyword}" (${country}) FAILED: ${(e as Error).message}`)
     if ((e as Error).message.includes('out of credits')) break
+  }
+}
+
+// Brand watch: everything a named page is running, via /facebook. A keyword
+// search for the page's name does NOT do this — it returns other advertisers
+// who share the words.
+if (WATCH) {
+  for (const p of client.watchPages ?? []) {
+    try {
+      const res = await fetch('https://api.adyntel.com/facebook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key, email, facebook_url: `https://www.facebook.com/${p.pageId}` }),
+        signal: AbortSignal.timeout(90000),
+      })
+      if (res.status === 402) throw new Error('Adyntel is out of credits — top up at app.adyntel.com')
+      if (!res.ok) throw new Error(`Adyntel ${res.status} on page ${p.name}`)
+      credits += 1
+      let n = 0
+      for (const raw of flattenAds(await res.json())) {
+        const ad = normaliseAd(raw)
+        if (!ad.ad_archive_id) continue
+        n++
+        if (!byId.has(ad.ad_archive_id)) byId.set(ad.ad_archive_id, ad)
+        const set = keywordsByAd.get(ad.ad_archive_id) ?? new Set<string>()
+        set.add(`page:${p.name}`)
+        keywordsByAd.set(ad.ad_archive_id, set)
+      }
+      console.log(`  page ${p.name}: ${n} live ads`)
+    } catch (e) {
+      console.error(`  page ${p.name} FAILED: ${(e as Error).message}`)
+      if ((e as Error).message.includes('out of credits')) break
+    }
   }
 }
 

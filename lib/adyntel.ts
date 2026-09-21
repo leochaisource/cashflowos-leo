@@ -398,6 +398,8 @@ export function competitorSection(
   localMedia: Record<string, string[]> = {},
   relevanceTerms?: string[][],
   excludeTerms?: string[],
+  /** ad_archive_ids pulled from a watched brand page — never filtered as off-topic. */
+  alwaysRelevant: Set<string> = new Set(),
 ): { text: string; stats: CompetitorStats } {
   const priorById = new Map(prior.map((p) => [p.ad_archive_id, p]))
   const priorConcepts = new Set(prior.map(priorConceptKey))
@@ -412,8 +414,9 @@ export function competitorSection(
   // creative, where Meta assembles the text per impression and the Ad Library
   // never sees it. It still counts in the totals, but there is nothing to quote,
   // so it must not occupy a slot in the concept lists.
-  const quotable = (a: NormalisedAd) => !!(a.title || a.body_text) && isRelevant(a, relevanceTerms, excludeTerms)
-  const offTopic = ads.filter((a) => (a.title || a.body_text) && !isRelevant(a, relevanceTerms, excludeTerms)).length
+  const onTopic = (a: NormalisedAd) => alwaysRelevant.has(a.ad_archive_id) || isRelevant(a, relevanceTerms, excludeTerms)
+  const quotable = (a: NormalisedAd) => !!(a.title || a.body_text) && onTopic(a)
+  const offTopic = ads.filter((a) => (a.title || a.body_text) && !onTopic(a)).length
   const activeConcepts = groupConcepts(active.filter(quotable))
   const freshConcepts = groupConcepts(fresh.filter(quotable))
   const newConcepts = freshConcepts.filter((c) => !priorConcepts.has(c.key))
