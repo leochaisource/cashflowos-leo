@@ -392,7 +392,16 @@ async function runClient(client: AdClient, records: Rec[]) {
   // side of the account is seeded. So every project searches for real
   // competitors; only if that fails does a demo project fall back to the ads
   // already stored against it (which keeps the brief whole when credits run out).
-  try {
+  //
+  // COMPETITOR RESEARCH IS FOR THE FOCUS LIST ONLY (ranked 1–3). Anyone else
+  // spends no Adyntel credits: a demo project reuses what is already stored,
+  // a real client gets a one-line note instead of a market section.
+  const focus = typeof client.rank === 'number'
+  if (!focus) {
+    notes.push('Competitor research runs only for the focus list (ranked 1–3) — no Adyntel credits spent on this client.')
+    if (isDemo) competitors = await demoCompetitors(client)
+  }
+  if (focus) try {
     const jobs = todaysKeywords.flatMap((k) => client.countries.map((c) => [k, c] as const))
     const maxPages = client.adyntelMaxPages ?? 1
     const batches = await Promise.all(
@@ -462,7 +471,7 @@ async function runClient(client: AdClient, records: Rec[]) {
   }
 
   const market = competitorSection(competitors, prior, client.countries.join('+'), {}, client.relevanceTerms, client.excludeTerms, watchedIds)
-  if (client.keywordsPerRun && client.keywordsPerRun < client.keywords.length)
+  if (focus && client.keywordsPerRun && client.keywordsPerRun < client.keywords.length)
     notes.push(
       `Watching ${todaysKeywords.length} of ${client.keywords.length} keywords today (rotating): ${todaysKeywords.join(', ')}`,
     )

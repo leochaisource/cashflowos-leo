@@ -180,6 +180,10 @@ export type AdClient = {
    * tracked, synced and visible, just not briefed. Three briefs you read beat
    * seven you skim. A ranked project with no ad account yet is briefed anyway —
    * competitor intelligence is exactly what a pre-launch client needs.
+   *
+   * Adyntel competitor research is ALSO focus-only (decided 2026-09-21): an
+   * unranked client spends no credits — no keyword searches, no brand watch —
+   * and the seed script refuses it without --force.
    */
   rank?: number
 }
@@ -574,6 +578,7 @@ export function watchPageForToday(c: AdClient, date = new Date()): { name: strin
 
 /** Adyntel credits this client will spend on one run. */
 export function creditsPerRun(c: AdClient): number {
+  if (typeof c.rank !== 'number') return 0 // competitor research is focus-only
   return keywordsForToday(c).length * c.countries.length + (c.watchPages?.length ? 1 : 0)
 }
 

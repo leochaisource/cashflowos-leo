@@ -27,6 +27,13 @@ if (!client) {
   process.exit(1)
 }
 
+// Competitor research is reserved for the focus list (ranked clients).
+// Seeding anyone else is a deliberate act, so it needs --force.
+if (typeof client.rank !== 'number' && !process.argv.includes('--force')) {
+  console.error(client.name + ' is not on the focus list (no rank) — competitor research is focus-only. Pass --force to seed it anyway.')
+  process.exit(1)
+}
+
 const db = createClient(
   (process.env.SUPABASE_URL ?? '').trim().replace(/\/+$/, ''),
   (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim(),
