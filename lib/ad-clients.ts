@@ -36,14 +36,16 @@ export type AdClient = {
   keywords: string[] // what "the competition" means for this client
   countries: string[] // Adyntel country codes
   /**
-   * Adyntel bills one credit per keyword per country per run. With 11 keywords
-   * across 2 countries that is 22 credits every morning, ~660/month, for one
-   * client. Rotating a slice each day keeps full coverage on a short cycle at a
-   * fraction of the cost: every keyword is still checked every few days, and
+   * SEARCHES PER RUN. Adyntel bills one credit per search, and a search is one
+   * keyword in one country — so 11 keywords across 2 countries are 22 searches,
+   * 22 credits every morning if run in full. The rotation walks that keyword ×
+   * country list a slice per day (changed 2026-09-22: it used to slice keywords
+   * and then multiply by countries, which is how a "4 per run" client cost 8).
+   * Every pair is still reached on a cycle of ceil(pairs ÷ perRun) days, and
    * "new since last fetch" stays correct because it diffs against the database,
    * not against yesterday alone.
    *
-   * 0 = no rotation, run every keyword every day.
+   * Daily credits = this number (+1 when watchPages is set). 0 = no rotation.
    */
   keywordsPerRun: number
   currency: string
@@ -236,7 +238,7 @@ export const AD_CLIENTS: AdClient[] = [
       'Claude workshop',
     ],
     countries: ['MY', 'SG'],
-    keywordsPerRun: 4, // 4 × 2 countries = 8 credits/day, full cycle every 3 days
+    keywordsPerRun: 2, // 2 searches + 1 watched page = 3 credits/day (Leo's cap); 22 keyword×country pairs → full cycle every 11 days
     // Page ids come from the stored competitor_ads rows (page_id column).
     watchPages: [
       { name: 'Hustle Malaysia', pageId: '791929197338366' }, // "Certified Claude AI Professional" — the direct competitor
@@ -558,13 +560,24 @@ export function matchProject<T extends Matchable = Project>(
  * Which keywords run today. Rotates by day-of-year so the whole list is covered
  * on a fixed cycle and the same slice never repeats two days running.
  */
-export function keywordsForToday(c: AdClient, date = new Date()): string[] {
-  const n = c.keywords.length
-  if (!c.keywordsPerRun || c.keywordsPerRun >= n) return c.keywords
+/**
+ * Today's slice of the keyword × country list — each entry is one Adyntel
+ * search, one credit. The cycle advances with the day of the year, so the same
+ * slice never repeats two days running and every pair comes round.
+ */
+export function searchesForToday(c: AdClient, date = new Date()): (readonly [string, string])[] {
+  const pairs = c.keywords.flatMap((k) => c.countries.map((cc) => [k, cc] as const))
+  const n = pairs.length
+  if (!c.keywordsPerRun || c.keywordsPerRun >= n) return pairs
   const start = new Date(date.getFullYear(), 0, 0)
   const dayOfYear = Math.floor((date.getTime() - start.getTime()) / 86400000)
   const offset = (dayOfYear * c.keywordsPerRun) % n
-  return Array.from({ length: c.keywordsPerRun }, (_, i) => c.keywords[(offset + i) % n])
+  return Array.from({ length: c.keywordsPerRun }, (_, i) => pairs[(offset + i) % n])
+}
+
+/** The distinct keywords in today's slice (for the brief's "watching" line and the JSON). */
+export function keywordsForToday(c: AdClient, date = new Date()): string[] {
+  return [...new Set(searchesForToday(c, date).map(([k]) => k))]
 }
 
 /** Today's watched page — one per run, cycling through the list. */
@@ -579,7 +592,7 @@ export function watchPageForToday(c: AdClient, date = new Date()): { name: strin
 /** Adyntel credits this client will spend on one run. */
 export function creditsPerRun(c: AdClient): number {
   if (typeof c.rank !== 'number') return 0 // competitor research is focus-only
-  return keywordsForToday(c).length * c.countries.length + (c.watchPages?.length ? 1 : 0)
+  return searchesForToday(c).length + (c.watchPages?.length ? 1 : 0)
 }
 
 /**

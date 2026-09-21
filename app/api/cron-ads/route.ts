@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
-import { AD_CLIENTS, keywordsForToday, watchPageForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, type AdClient } from '@/lib/ad-clients'
+import { AD_CLIENTS, keywordsForToday, searchesForToday, watchPageForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, type AdClient } from '@/lib/ad-clients'
 import { focusProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
 import { leadsSummary } from '@/lib/leads-sheet'
@@ -379,6 +379,7 @@ async function runClient(client: AdClient, records: Rec[]) {
 
   // ② The market — individual ads, not a headcount.
   const prior = await loadPrior(client.id)
+  const todaysSearches = searchesForToday(client)
   const todaysKeywords = keywordsForToday(client)
   let competitors: NormalisedAd[] = []
   // Ads from today's watched brand page — shown whatever the relevance filter thinks.
@@ -402,7 +403,7 @@ async function runClient(client: AdClient, records: Rec[]) {
     if (isDemo) competitors = await demoCompetitors(client)
   }
   if (focus) try {
-    const jobs = todaysKeywords.flatMap((k) => client.countries.map((c) => [k, c] as const))
+    const jobs = todaysSearches // keyword × country pairs: one credit each
     const maxPages = client.adyntelMaxPages ?? 1
     const batches = await Promise.all(
       jobs.map(([k, c]) =>
@@ -471,9 +472,10 @@ async function runClient(client: AdClient, records: Rec[]) {
   }
 
   const market = competitorSection(competitors, prior, client.countries.join('+'), {}, client.relevanceTerms, client.excludeTerms, watchedIds)
-  if (focus && client.keywordsPerRun && client.keywordsPerRun < client.keywords.length)
+  const allSearches = client.keywords.length * client.countries.length
+  if (focus && todaysSearches.length < allSearches)
     notes.push(
-      `Watching ${todaysKeywords.length} of ${client.keywords.length} keywords today (rotating): ${todaysKeywords.join(', ')}`,
+      `Watching ${todaysSearches.length} of ${allSearches} keyword×country searches today (rotating): ${todaysSearches.map(([k, cc]) => `${k} (${cc})`).join(', ')}`,
     )
 
   // ②b The client's own book of leads. This is the half of the funnel Meta
