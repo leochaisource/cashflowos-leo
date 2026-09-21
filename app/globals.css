@@ -309,6 +309,7 @@ code {
 .pcard:hover { border-color: var(--clay); box-shadow: 0 6px 22px rgba(33,28,22,.07); }
 .pc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .pc-name { font-size: 16px; font-weight: 700; margin: 0; color: var(--ink); }
+.pc-rank { display: inline-block; font-size: 11px; font-weight: 700; color: var(--clay-deep); background: var(--clay-tint); border-radius: var(--r-pill); padding: 1px 7px; margin-right: 7px; vertical-align: 2px; }
 .pc-client { font-size: 12.5px; color: var(--dim); margin: 3px 0 0; }
 .pc-nums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
 .pc-nums .l { font-size: 11px; color: var(--ink-faint); margin: 0 0 3px; white-space: nowrap; }

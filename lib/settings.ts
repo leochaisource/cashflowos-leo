@@ -86,6 +86,22 @@ export async function activeProjects(): Promise<Project[]> {
   return on ? PROJECTS : PROJECTS.filter((p) => !p.demo)
 }
 
+/** How many ranked projects the 8am brief covers. */
+export const FOCUS_MAX = 3
+
+/**
+ * The focus list: ranked projects in rank order, capped at FOCUS_MAX. This is
+ * what the scheduled ads brief iterates and what the home page leads with.
+ * Demo projects can be ranked too, but only count while the demo switch is on.
+ */
+export async function focusProjects(): Promise<Project[]> {
+  const on = await demoEnabled()
+  return filterProjects(on)
+    .filter((p) => typeof p.rank === 'number')
+    .sort((a, b) => (a.rank as number) - (b.rank as number))
+    .slice(0, FOCUS_MAX)
+}
+
 /** Same filter, when the caller already knows the flag. */
 export const filterProjects = (on: boolean): Project[] => (on ? PROJECTS : PROJECTS.filter((p) => !p.demo))
 

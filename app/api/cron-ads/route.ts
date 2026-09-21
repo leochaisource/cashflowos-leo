@@ -3,7 +3,7 @@ import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 import { AD_CLIENTS, keywordsForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, type AdClient } from '@/lib/ad-clients'
-import { activeProjects } from '@/lib/settings'
+import { focusProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
 import { leadsSummary } from '@/lib/leads-sheet'
 import { demoCampaigns, demoCompetitors, demoLeadsBlock } from '@/lib/demo'
@@ -340,8 +340,15 @@ async function runClient(client: AdClient, records: Rec[]) {
       break
     }
     if (window === 'yesterday') {
-      window = 'no delivery'
-      notes.push('No Meta spend in the last 30 days — nothing has been delivering on this ad account.')
+      if (!isConfigured(client)) {
+        window = 'not connected'
+        notes.push(
+          `⛔ Meta is NOT connected for this client — ${client.adAccountEnv} / ${client.tokenEnv} are missing in this deployment. Own-performance is unavailable, not zero. Add them in Vercel and redeploy.`,
+        )
+      } else {
+        window = 'no delivery'
+        notes.push('No Meta spend in the last 30 days — nothing has been delivering on this ad account.')
+      }
     }
   }
 
@@ -482,7 +489,8 @@ async function runClient(client: AdClient, records: Rec[]) {
   // An account that has never delivered is a different report, not a broken one:
   // there is nothing to optimise, so the whole brief becomes competitor
   // intelligence and what to BUILD from it.
-  const preLaunch = window === 'no delivery'
+  const notConnected = window === 'not connected'
+  const preLaunch = window === 'no delivery' || notConnected
 
   // ①c DELIVERY — yesterday against the trailing 3 days, from the ad_daily rows
   // the sync just refreshed. This is where CPM and CTR come from: they were
@@ -519,7 +527,11 @@ async function runClient(client: AdClient, records: Rec[]) {
   const factsRaw = [
     `CLIENT: ${client.name}`,
     client.briefContext ? `SITUATION: ${client.briefContext}` : '',
-    preLaunch
+    notConnected
+      ? 'OWN PERFORMANCE: NOT AVAILABLE — the ad account is not connected to this system yet (credentials ' +
+        'missing). Do NOT describe performance, and do NOT say there is none or that nothing is running; say ' +
+        'the account is not connected and move on to the market.'
+      : preLaunch
       ? 'OWN PERFORMANCE: none. This account has no delivery in any window, so there are no numbers to analyse.'
       : `WINDOW = ${window.toUpperCase()}: spent ${money(spent)}, ${leads} leads across ${movers.length} campaigns.`,
     ...(preLaunch
@@ -646,8 +658,13 @@ export async function GET(req: Request) {
   // briefed at all, so they stop spending Adyntel credits between presentations.
   // Asking for one by name still runs it, so a demo brief can be previewed
   // without turning the whole thing back on.
-  const available = only ? AD_CLIENTS : await activeProjects()
-  const queue = available.filter((c) => (only ? c.id === only : true))
+  // THE SCHEDULED RUN COVERS THE FOCUS LIST ONLY — the ranked top projects
+  // (lib/settings.ts, FOCUS_MAX). Everything else stays on the dashboard and
+  // keeps syncing, but is not briefed: three briefs you read beat seven you
+  // skim. Asking for one by name still runs it, ranked or not, so any client
+  // can be previewed on demand; the demo switch still hides demo clients from
+  // the scheduled run.
+  const queue = only ? AD_CLIENTS.filter((c) => c.id === only) : await focusProjects()
 
   // One records read shared by every client in the run — next steps live there.
   const records = await getRecords()
@@ -655,7 +672,10 @@ export async function GET(req: Request) {
   const results: unknown[] = []
   const skipped: string[] = []
   const runnable = queue.filter((c) => {
-    if (isConfigured(c)) return true
+    // A FOCUS project with no ad account connected is briefed anyway — the
+    // brief becomes competitor intelligence, which is exactly what a client
+    // you're about to sign needs. Only unranked, unconfigured clients are skipped.
+    if (isConfigured(c) || typeof c.rank === 'number') return true
     skipped.push(`${c.id} (missing ${c.adAccountEnv} or ${c.tokenEnv})`)
     return false
   })

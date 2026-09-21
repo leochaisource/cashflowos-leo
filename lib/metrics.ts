@@ -261,14 +261,18 @@ export function scorecard(
   const spend = ads.reduce((s, a) => s + a.spend, 0)
   const leads = ads.reduce((s, a) => s + a.leads, 0)
 
-  // Status is stamped at sync time, so this is "live right now", not "spent recently".
-  const statuses = new Set(adRows.map((r) => `${r.ad_id}:${r.effective_status ?? ''}`))
+  // "Active" = Meta says ACTIVE on the ad's MOST RECENT row, and that row is
+  // no older than 3 days. Status is stamped at sync time on the rows written
+  // that day, so an ad that stopped a week ago still carries ACTIVE on its old
+  // rows — and an ad with no delivery for days is not "active" in any sense the
+  // owner means, whatever its switch says. Both mistakes inflated the count.
+  const latest = new Map<string, { date: string; status: string | null }>()
+  for (const r of adRows) {
+    const cur = latest.get(r.ad_id)
+    if (!cur || r.date > cur.date) latest.set(r.ad_id, { date: r.date, status: r.effective_status })
+  }
   const activeAds = adRows.length
-    ? new Set(
-        Array.from(statuses)
-          .filter((s) => s.endsWith(':ACTIVE'))
-          .map((s) => s.split(':')[0]),
-      ).size
+    ? [...latest.values()].filter((s) => s.status === 'ACTIVE' && s.date >= dayISO(3)).length
     : null
 
   // Daily spend line — every day in the window, including the zero days, so a

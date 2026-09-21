@@ -162,6 +162,15 @@ export type AdClient = {
    * empty project rather than a broken one.
    */
   demo?: boolean
+
+  /**
+   * THE FOCUS LIST. Ranked projects (1 = first) are the ones the 8am brief
+   * reports and the ones the home page leads with; everything else is still
+   * tracked, synced and visible, just not briefed. Three briefs you read beat
+   * seven you skim. A ranked project with no ad account yet is briefed anyway —
+   * competitor intelligence is exactly what a pre-launch client needs.
+   */
+  rank?: number
 }
 
 /** Same objects, named for the dashboard's vocabulary. A client IS a project here. */
@@ -194,6 +203,7 @@ export const AD_CLIENTS: AdClient[] = [
     // The env var NAMES keep the old prefix on purpose: renaming those would
     // mean re-entering the token in Vercel for no gain.
     id: 'claude-malaysia',
+    rank: 1,
     name: 'Claude Malaysia Ads',
     adAccountEnv: 'KINGSLEY_META_AD_ACCOUNT_ID',
     tokenEnv: 'KINGSLEY_META_ACCESS_TOKEN',
@@ -241,14 +251,18 @@ export const AD_CLIENTS: AdClient[] = [
       // app whose copy says "AI tech empowered" outranks every real competitor.
       ['workshop', 'bootcamp', 'masterclass', 'training', 'course', 'courses', 'class', 'classes', 'seminar', 'webinar', 'programme', 'program', 'cohort', 'certification', 'certified', 'hrd', 'hrdc', 'hrdf', 'learn', 'upskill', 'reskill', 'academy', 'curriculum'],
     ],
-    excludeTerms: ['real estate', 'property', 'properties', 'condo', 'condominium', 'insurance', 'langsir', 'curtain', 'renovation', 'skincare', 'forex'],
+    // 'claude malaysia' excludes the client's OWN page — it was being quoted back
+    // to them as a competitor. Exclusions read the advertiser name, so this works.
+    excludeTerms: ['real estate', 'property', 'properties', 'condo', 'condominium', 'insurance', 'langsir', 'curtain', 'renovation', 'skincare', 'forex', 'claude malaysia'],
     briefContext:
-      'LIVE since 2 August 2026, after a pre-launch period. Early days: a few hundred ringgit spent ' +
-      'so far, so treat swings in CPL as small-sample noise rather than trends, and do not recommend ' +
-      'killing an ad on one bad day. Lead tracking is VERIFIED — the landing-page opt-in fires ' +
-      'offsite_conversion.fb_pixel_lead, and Meta reports the same conversion under three names, ' +
-      'which the brief already de-duplicates. The offer is an AI workshop for Malaysian and ' +
-      'Singaporean business owners and SMEs, including HRD Corp claimable training.',
+      'LIVE. Lead tracking is VERIFIED — the landing-page opt-in fires offsite_conversion.fb_pixel_lead, ' +
+      'and Meta reports the same conversion under three names, which the brief de-duplicates. The offer is ' +
+      'an AI workshop for Malaysian and Singaporean business owners and SMEs, including HRD Corp claimable ' +
+      'training. ACCOUNT MOVE (mid-September 2026): ads now run from Kingsley\'s own ad account; the account ' +
+      'connected here (SF Media Ad Account 2) stopped spending on 13 Sep and its last 30 days — RM 4.2k, ' +
+      '1,649 leads at ~RM 2.50 — are the tail of that. Until the new account is connected, own-performance ' +
+      'shows the old one only: say "the connected account" rather than "the ads", and never call the ' +
+      'campaign paused.',
   },
 ]
 
@@ -259,49 +273,109 @@ export const AD_CLIENTS: AdClient[] = [
 // Adyntel spend) and the dashboard shows it as "no delivery recorded".
 AD_CLIENTS.push({
   id: 'starcity-global',
-  name: 'Starcity Global — Wing Heong HK',
+  rank: 2,
+  name: 'Starcity Global — HK Property',
   client: 'Starcity Global',
-  stage: 'pre-launch',
+  stage: 'active',
   adAccountEnv: 'STARCITY_META_AD_ACCOUNT_ID',
   tokenEnv: 'STARCITY_META_ACCESS_TOKEN',
   chatIdEnv: 'OWNER_CHAT_ID',
-  // The offer, read off the account's own creatives (2026-08-16): Wing Heong
-  // (永香) Malaysian bak kwa / 肉乾 sold INTO HONG KONG, Cantonese copy,
-  // CNY + mooncake seasonal pushes, Messenger/WhatsApp funnels. So the market
-  // watch is HK, and the keyword set is Chinese-first. Mid-Autumn (Sep-Oct) is
-  // the next season — 月餅 is in deliberately.
-  // 'bak kwa' in English returned ZERO ads in HK (verified 2026-08-16) — the
-  // market searches in Chinese. 美珍香 is Bee Cheng Hiang, the category giant
-  // and the direct competitor watch.
-  keywords: ['肉乾', '美珍香', '月餅', '馬來西亞手信', '豬肉乾', '肉鬆'],
+  // WHAT THIS ACTUALLY IS — corrected 2026-09-21. The account's 2021-22 relics
+  // were Wing Heong bak kwa; the LIVE business is 星匯國際 × Florence 火姐
+  // selling Malaysian property (KL / Johor) to Hong Kong buyers through free
+  // in-person HK seminars ("HK Seminar 12 & 13 Sept": RM 8.1k, 45
+  // registrations, 25 Aug–12 Sep). The market watch is HK overseas-property
+  // advertising, in Chinese, because that is how it is sold.
+  // First pull (2026-09-21) taught the vocabulary: '大馬物業投資' returned 11 ads /
+  // 10 on-topic; '吉隆坡樓盤', '新山樓盤', '海外置業講座' returned 2–4 each, so they
+  // are out. 'MM2H' returned 28 immigration-agency ads — the adjacent competitor
+  // for the same HK buyer's money, kept, with visa/移居 words added to the
+  // relevance offer group so they pass.
+  // Verified 2026-09-21: '馬來西亞物業' returns 0 ads in HK and 'MM2H' / '大馬物業投資'
+  // return travel and Greater-Bay noise; '馬來西亞樓' and '第二家園' carry the market.
+  keywords: ['馬來西亞樓', '第二家園', '馬來西亞置業', '吉隆坡樓盤', '大馬樓', '馬來西亞第二家園', 'Malaysia property'],
   countries: ['HK'],
   keywordsPerRun: 2, // 2 credits/day, full list every 3 days
-  currency: 'RM', // the AD ACCOUNT bills in MYR (verified) even though the market is HK
-  // The funnels here are message-based (Messenger/WhatsApp), not lead forms:
-  // a "lead" is a conversation started. UNVERIFIED against delivery — this
-  // account has never spent (see briefContext) — confirm the action_type once
-  // ads actually run.
-  leadActionTypes: ['onsite_conversion.messaging_conversation_started_7d', 'onsite_conversion.total_messaging_connection'],
+  currency: 'RM', // the ad account bills in MYR even though the market is HK
+  // VERIFIED against the Sept campaign: the seminar registration fires the
+  // Pixel's CUSTOM event (offsite_conversion.fb_pixel_custom — 44 of 45 came
+  // from the Leads campaign). No named custom conversion exists on the account
+  // and no standard lead event fires, so this is the only honest "lead" here.
+  // Messaging conversations were 2 in a month — not the funnel.
+  leadActionTypes: ['offsite_conversion.fb_pixel_custom'],
+  targetCPL: 150, // RM per registration; the Sept run came in at ~RM 181
   relevanceTerms: [
-    // subject: food / gifting, in the words HK ads actually use
-    ['肉乾', '肉干', 'bak kwa', '豬肉', '猪肉', '肉鬆', '肉松', '月餅', '月饼', '手信', '年貨', '年货',
-     '零食', '小食', '美食', 'snack', 'jerky', 'dried meat', 'mooncake', '禮盒', '礼盒', '送禮', '送礼'],
-    // offer: something is actually being sold or ordered
-    ['優惠', '优惠', '折扣', '促銷', '促销', '限時', '限时', '免運', '免运', '包郵', '包邮', '訂購', '订购',
-     '網購', '网购', '門市', '门市', '送貨', '送货', '下單', '下单', '選購', '选购', 'whatsapp', 'order', 'shop', 'buy', '買', '买'],
+    // subject: overseas property at all — Malaysia is the direct set, other
+    // countries the indirect one competing for the same HK buyer's money
+    // Generic 樓盤/物業 are deliberately NOT here: they let every HK domestic
+    // agency through, and Kowloon flats are not this client's market.
+    // Group 1: a MALAYSIAN PROPERTY signal — compounds, place names, the visa.
+    // A bare '馬來西亞' is not one: in HK it labels furniture origin, SIM cards
+    // and package tours, which is exactly what leaked through before.
+    ['馬來西亞樓', '馬來西亞物業', '马来西亚物业', '馬來西亞置業', '马来西亚置业', '馬來西亞房產', '马来西亚房产',
+     '馬來西亞 房產', '马来西亚 房产', '馬來西亞 物業', '大馬樓', '大馬物業', '大馬置業', '大馬房產', '大馬第2家園',
+     '吉隆坡', '新山', '柔佛', '檳城', '槟城', '雙子塔', '双子塔', 'kuala lumpur', 'klcc', 'johor', 'penang', 'mont kiara',
+     'bukit bintang', 'iskandar', 'mm2h', '第二家園', '第二家园', 'malaysia property', 'malaysian property',
+     'property in malaysia', 'malaysia real estate',
+     // Adjacent overseas-property sellers compete for the same HK wallet.
+     '海外物業', '海外物业', '海外置業', '海外置业', '海外樓', '海外樓盤', '海外房產',
+     '日本樓', '英國樓', '泰國樓', '澳洲樓', '杜拜樓', 'dubai property', 'thailand property', 'japan property', 'uk property'],
+    // Group 2: it is SELLING property / a seat, not just mentioning a place.
+    ['樓盤', '楼盘', '物業', '物业', '房產', '房产', '房地產', '房地产', '公寓', '住宅', 'condo', 'condominium', 'apartment',
+     'suite', 'suites', 'residence', 'residences', 'freehold', '永久產權', '永久产权', '置業', '置业', '買樓', '买楼', '買房', '买房',
+     '購屋', '购屋', '投資', '投资', '租金', 'rental', 'roi', '回報', '回报', '首期', 'downpayment', 'down payment',
+     '講座', '讲座', 'seminar', '分享會', '分享会', '研討會', '研讨会', '發展商', '開發商', '开发商', 'developer', 'property'],
   ],
-  // Pet terms are load-bearing here: in HK ad space, 肉乾/肉鬆 searches return
-  // as much PET JERKY as human food (LitoMon, HeroMama, Pets Life — all cat/dog
-  // treats). Verified on the first live pull, 2026-08-16.
-  excludeTerms: ['保險', '保险', 'insurance', '移民', 'immigration', '地產', '地产', 'property', 'forex', 'crypto', '貸款', '贷款',
-    '貓', '猫', '狗', '寵物', '宠物', '飼料', '饲料', '凍乾', '冻干', 'cat', 'dog', 'pet'],
+  // Greater-Bay retirement flats borrow '第二家園' too; page names carry the rest.
+  // No bare '保險' here: CJK terms match as substrings, and 保险库 (a vault, a
+  // KL condo selling point) contains 保险. Name the insurance PRODUCT instead.
+  excludeTerms: ['保險公司', '保险公司', '人壽', '人寿', '儲蓄保險', '储蓄保险', 'insurance', 'forex', 'crypto', '貸款', '贷款',
+    '肉乾', '月餅', '寵物', '宠物', '星匯', 'starcity',
+    '中山', '珠海', '惠州', '佛山', '傢俬', '傢私', '家具', 'furniture', 'sim', 'wifi', '旅行社', '定制', '機票', '机票', '痛症', 'beauty'],
   briefContext:
-    'RE-LAUNCH PREPARATION. This ad account (Starcity AI, bills in MYR) holds 21 campaigns from ' +
-    '2021-2022 for Wing Heong (永香) bak kwa marketed to Hong Kong — Cantonese copy, CNY and mooncake ' +
-    'seasonal angles, Messenger/WhatsApp funnels — but has ZERO lifetime delivery: nothing has ever ' +
-    'spent from it. Treat it as pre-launch, not paused. Do not analyse own performance. ' +
-    'Mid-Autumn Festival (late September 2026) is the nearest seasonal window; mooncake and gifting ' +
-    'ads in HK will ramp from August, so competitor movement now is the launch signal to watch.',
+    'LIVE, BETWEEN CAMPAIGNS. 星匯國際 (Starcity Global) × Florence 火姐 — 26 years in overseas property — ' +
+    'sells Malaysian property (KL, Johor) to Hong Kong buyers via free in-person HK seminars. The 12–13 Sept ' +
+    'seminar campaign ran 25 Aug–12 Sep: ~RM 8,100, 45 registrations (~RM 181 each), 123k impressions. ' +
+    'Angles used: "AI 揀樓 實戰Demo" (data-driven picking), five-gate screening (五關), 8% ROI / 15-year ' +
+    'retirement plan, HK-prices-too-high pain, a four-expert panel. Landing: class.starcityglobal.com/offline. ' +
+    'Nothing is delivering right now, which is expected between seminars — do not call it paused or a ' +
+    'problem; the useful question is what to run for the NEXT seminar. Registrations are the lead; a ' +
+    'registration that attends is the real outcome, and attendance is not in the data.',
+  sources: {},
+})
+
+// ---------------------------------------------------------------- Mr Money
+// Rank 3, still in negotiation (2026-09-21): no ad account, no sheet. On the
+// focus list anyway so the brief runs as competitor intelligence — what the
+// market is doing is exactly what you want in hand walking into the deal.
+// NICHE IS ASSUMED (financial education / investing courses, Malaysia): the
+// keywords are a first guess, to correct the moment the offer is confirmed.
+AD_CLIENTS.push({
+  id: 'mr-money-academy',
+  rank: 3,
+  name: 'Mr Money Academy',
+  client: 'Mr Money Academy',
+  stage: 'pre-launch',
+  adAccountEnv: 'MRMONEY_META_AD_ACCOUNT_ID',
+  tokenEnv: 'MRMONEY_META_ACCESS_TOKEN',
+  chatIdEnv: 'OWNER_CHAT_ID',
+  keywords: ['財務自由課程', 'investing course Malaysia', '股票投資課程', 'financial freedom webinar', 'passive income masterclass', 'money management class'],
+  countries: ['MY'],
+  keywordsPerRun: 2,
+  currency: 'RM',
+  leadActionTypes: PIXEL_LEAD, // unverified — no account yet
+  relevanceTerms: [
+    ['invest', 'investing', 'investment', '投資', '投资', 'stock', 'stocks', '股票', 'trading', 'trader', '財務', '财务', 'finance', 'financial',
+     'money', 'wealth', '理財', '理财', 'passive income', 'dividend', '被動收入', '被动收入', 'cashflow', 'cash flow', 'retire', '退休'],
+    ['course', 'class', 'webinar', 'masterclass', 'workshop', 'seminar', 'bootcamp', 'programme', 'program', 'academy',
+     '課程', '课程', '講座', '讲座', '班', 'register', 'free', '免費', '免费', 'learn', 'mentor', 'coaching'],
+  ],
+  excludeTerms: ['insurance', '保險', '保险', 'loan', '貸款', '贷款', 'property', 'real estate', '地產', '地产', 'mr money'],
+  briefContext:
+    'IN NEGOTIATION — not yet a client, no ad account connected. Treat as pre-launch: no own performance to ' +
+    'analyse. The offer is ASSUMED to be financial education (investing / money-management courses) for ' +
+    'Malaysians; if the market you see contradicts that, say so plainly rather than forcing it. The job of ' +
+    'this brief is to arm the negotiation: what the category is running, at what angle, and where the gap is.',
   sources: {},
 })
 

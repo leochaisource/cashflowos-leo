@@ -45,7 +45,10 @@ export default function ProjectCard({
     <Link href={`/projects/${project.id}`} className="pcard">
       <div className="pc-head">
         <div>
-          <p className="pc-name">{project.name}</p>
+          <p className="pc-name">
+            {typeof project.rank === 'number' ? <span className="pc-rank">#{project.rank}</span> : null}
+            {project.name}
+          </p>
           <p className="pc-client">{project.client ?? 'Client not set'}</p>
         </div>
         <span className={`pill ${stage === 'active' ? 'active' : stage === 'done' ? 'done' : 'paused'}`}>

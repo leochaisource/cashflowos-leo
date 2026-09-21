@@ -27,7 +27,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // resolves both here and hands them down. Ad clients first, then work.
   const [pending, projects, rows] = await Promise.all([getPendingCount(), activeProjects(), getRecords()])
   const navProjects = [
-    ...projects.map(p => ({ id: p.id, label: p.client ?? p.name })),
+    ...projects
+      .slice()
+      .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99))
+      .map(p => ({ id: p.id, label: (typeof p.rank === 'number' ? `${p.rank}. ` : '') + (p.client ?? p.name) })),
     ...workProjectsFrom(rows)
       .filter(w => !['done', 'completed', 'closed'].includes(w.status.toLowerCase()))
       .map(w => ({ id: w.slug, label: w.client ?? w.name })),

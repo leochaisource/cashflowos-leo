@@ -35,7 +35,8 @@ async function proposedCount(): Promise<number> {
 
 export default async function Home() {
   // Which projects exist right now depends on the demo switch (lib/settings.ts).
-  const projects = await activeProjects()
+  // Ranked projects first — the focus list the morning brief covers — then the rest.
+  const projects = (await activeProjects()).slice().sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99))
   const [cards, waiting, rows] = await Promise.all([
     scorecards(projects, WINDOW_DAYS),
     proposedCount(),
@@ -43,6 +44,8 @@ export default async function Home() {
   ])
 
   const all = projects.map((p) => ({ project: p, card: cards.get(p.id)! }))
+  const focus = all.filter((x) => typeof x.project.rank === 'number')
+  const others = all.filter((x) => typeof x.project.rank !== 'number')
   const live = all.filter((x) => x.card.hasDelivery)
 
   // The agency line. Blended CPL is spend ÷ leads across every project that
@@ -71,12 +74,26 @@ export default async function Home() {
         <Stat label="🙋 Needs your YES" value={waiting} yes={waiting > 0} href="/approvals" />
       </div>
 
-      <p className="rowlabel">The ad clients</p>
-      <div className="pgrid">
-        {all.map(({ project, card }) => (
-          <ProjectCard key={project.id} project={project} card={card} steps={stepsSummary(rows, project.id, today)} />
-        ))}
-      </div>
+      {focus.length > 0 && (
+        <>
+          <p className="rowlabel">Focus — the {focus.length} the morning brief covers</p>
+          <div className="pgrid">
+            {focus.map(({ project, card }) => (
+              <ProjectCard key={project.id} project={project} card={card} steps={stepsSummary(rows, project.id, today)} />
+            ))}
+          </div>
+        </>
+      )}
+      {others.length > 0 && (
+        <>
+          <p className="rowlabel">{focus.length ? 'Other ad clients' : 'The ad clients'}</p>
+          <div className="pgrid">
+            {others.map(({ project, card }) => (
+              <ProjectCard key={project.id} project={project} card={card} steps={stepsSummary(rows, project.id, today)} />
+            ))}
+          </div>
+        </>
+      )}
 
       {/* The rest of the plate: every work project, what stage it's at, and the
           next step with its deadline. Click through to add/tick steps. */}
