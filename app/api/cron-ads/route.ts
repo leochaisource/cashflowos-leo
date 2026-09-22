@@ -4,6 +4,7 @@ import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 import { AD_CLIENTS, keywordsForToday, searchesForToday, watchPageForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, FUNNEL_BLOCK_NOTE, type AdClient } from '@/lib/ad-clients'
 import { ghlPerformance, renderPerformance, ghlConfigured } from '@/lib/ghl'
+import { landingPageViews } from '@/lib/meta'
 import { loadAdRows } from '@/lib/metrics'
 import { focusProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
@@ -409,7 +410,16 @@ async function runClient(client: AdClient, records: Rec[]) {
           rows
             .filter((r) => r.date >= from && r.date <= to && (campaign === '*' || r.campaign_name === campaign))
             .reduce((s, r) => s + r.spend, 0)
-        perf = await ghlPerformance(client, reportDay, spendByCampaign)
+        // Landing page views come from Meta (GHL does not expose funnel
+        // analytics to a Private Integration Token). A failure here must cost
+        // the conversion rate only, never the whole block.
+        let views = new Map<string, number>()
+        try {
+          views = await landingPageViews(client, 'yesterday')
+        } catch (e) {
+          notes.push(`Landing page views unavailable: ${(e as Error).message}`)
+        }
+        perf = await ghlPerformance(client, reportDay, spendByCampaign, (c) => views.get(c) ?? null)
         if (perf) {
           perfText = renderPerformance(perf)
           notes.push(...perf.problems)
@@ -756,7 +766,12 @@ async function runClient(client: AdClient, records: Rec[]) {
   const text = body + noteBlock
 
   const chunks = chunk(text)
-  const clientChunks = noteBlock ? chunk(body) : chunks
+  // THE CLIENT GROUP GETS THE NUMBERS AND NOTHING ELSE (owner's instruction,
+  // 2026-09-23). The competitor analysis is working material for the operator —
+  // it names the client's rivals and argues about their creative, which is not
+  // a conversation to have in the client's own group. The operator still gets
+  // the full brief plus the warning notes.
+  const clientChunks = perfText ? chunk(esc(perfText)) : noteBlock ? chunk(body) : chunks
   const to = recipients(client)
   // Track delivery per destination. A group the bot was removed from, or a
   // mistyped id, must show up in the run result — otherwise the brief goes

@@ -33,6 +33,10 @@ export type GhlFunnelRow = {
   /** GHL form submissions over the same day. null = GHL could not be read. */
   leads: number | null
   cpl: number | null
+  /** People the ads put on the landing page. null = Meta reported none. */
+  landingViews: number | null
+  /** Opt-ins ÷ landing page views. null unless both are real. */
+  convRate: number | null
 }
 
 export type GhlPerformance = {
@@ -212,6 +216,7 @@ export async function ghlPerformance(
   client: AdClient,
   dateISO: string,
   spendByCampaign: (campaign: string, from: string, to: string) => number,
+  viewsByCampaign: (campaign: string) => number | null = () => null,
 ): Promise<GhlPerformance | null> {
   const cfg = client.ghl
   if (!cfg || !ghlConfigured(client)) return null
@@ -230,12 +235,17 @@ export async function ghlPerformance(
     } catch (e) {
       problems.push(`${f.label} leads unreadable (${(e as Error).message}) — shown as unknown, not zero.`)
     }
+    const landingViews = viewsByCampaign(f.campaign)
     funnels.push({
       label: f.label,
       campaign: f.campaign,
       spend,
       leads,
       cpl: leads && leads > 0 ? spend / leads : null,
+      landingViews,
+      // Both halves must be real: a rate built on a missing denominator is a
+      // made-up number, and this one goes to the client.
+      convRate: leads !== null && landingViews !== null && landingViews > 0 ? leads / landingViews : null,
     })
   }
 
@@ -289,6 +299,11 @@ export function renderPerformance(p: GhlPerformance): string {
       `Amount spent: ${rm(f.spend)}`,
       `Leads: ${f.leads === null ? 'unavailable' : f.leads}`,
       `CPL: ${f.cpl === null ? (f.leads === 0 ? 'no leads yet' : 'unavailable') : rm(f.cpl)}`,
+      `Landing page conversion rate: ${
+        f.convRate === null
+          ? 'unavailable'
+          : `${(f.convRate * 100).toFixed(1)}% (${f.leads}/${f.landingViews} views)`
+      }`,
     )
   }
   out.push('', `Direct purchases: ${p.purchasesToday === null ? 'unavailable' : p.purchasesToday}`)
