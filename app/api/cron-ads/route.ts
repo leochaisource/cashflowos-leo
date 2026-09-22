@@ -3,8 +3,17 @@ import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 import { AD_CLIENTS, keywordsForToday, searchesForToday, watchPageForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, FUNNEL_BLOCK_NOTE, type AdClient } from '@/lib/ad-clients'
-import { ghlPerformance, renderPerformance, ghlConfigured } from '@/lib/ghl'
-import { landingPageViews } from '@/lib/meta'
+import {
+  ghlPerformance,
+  renderPerformance,
+  ghlConfigured,
+  formSubmissionRows,
+  saleRows,
+  dayBounds,
+  type LeadRow,
+  type SaleRow,
+} from '@/lib/ghl'
+import { archiveRun, archiveRegistry } from '@/lib/archive'
 import { loadAdRows } from '@/lib/metrics'
 import { focusProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
@@ -396,6 +405,9 @@ async function runClient(client: AdClient, records: Rec[]) {
   // the top always matches the numbers underneath.
   let perf: Awaited<ReturnType<typeof ghlPerformance>> = null
   let perfText = ''
+  // The individual opt-ins and sales behind the counts, kept for the archive.
+  let leadRows: LeadRow[] = []
+  let saleRowsForDay: SaleRow[] = []
   if (client.ghl) {
     if (!ghlConfigured(client)) {
       notes.push(
@@ -410,16 +422,28 @@ async function runClient(client: AdClient, records: Rec[]) {
           rows
             .filter((r) => r.date >= from && r.date <= to && (campaign === '*' || r.campaign_name === campaign))
             .reduce((s, r) => s + r.spend, 0)
-        // Landing page views come from Meta (GHL does not expose funnel
-        // analytics to a Private Integration Token). A failure here must cost
-        // the conversion rate only, never the whole block.
-        let views = new Map<string, number>()
+        perf = await ghlPerformance(client, reportDay, spendByCampaign)
+
+        // The rows themselves, for the archive. Sales are re-read from the last
+        // class onward rather than just the report day: the upsert is
+        // idempotent, and re-reading is what repairs a day the cron missed.
         try {
-          views = await landingPageViews(client, 'yesterday')
+          const g = client.ghl
+          const tz = g.timeZone ?? 'Asia/Kuala_Lumpur'
+          const { start, end } = dayBounds(reportDay, tz)
+          const token = process.env[g.tokenEnv]!.trim()
+          const loc = process.env[g.locationEnv]!.trim()
+          for (const f of g.funnels) leadRows.push(...(await formSubmissionRows(loc, token, f.formId, start, end)))
+          saleRowsForDay = await saleRows(
+            loc,
+            token,
+            dayBounds(g.salesSince, tz).start,
+            end,
+            g.excludeOrderSources ?? [],
+          )
         } catch (e) {
-          notes.push(`Landing page views unavailable: ${(e as Error).message}`)
+          notes.push(`Archive detail unavailable: ${(e as Error).message}`)
         }
-        perf = await ghlPerformance(client, reportDay, spendByCampaign, (c) => views.get(c) ?? null)
         if (perf) {
           perfText = renderPerformance(perf)
           notes.push(...perf.problems)
@@ -799,6 +823,38 @@ async function runClient(client: AdClient, records: Rec[]) {
   if (failed.length)
     console.error(`[CFO] ${client.id}: brief undelivered to ${failed.map((f) => `${f.chat} (${f.error})`).join(', ')}`)
 
+  // ④ Write the morning down. This happens AFTER delivery on purpose: the brief
+  // is the product, the archive is the record of it, and a storage fault must
+  // never be the reason a client did not get their numbers.
+  const archiveNotes = await archiveRun({
+    client,
+    date: perf?.date ?? new Date(Date.now() - 864e5).toISOString().slice(0, 10),
+    perf,
+    performanceText: perfText,
+    reportText: report,
+    recipients: [...to.operator, ...to.client],
+    delivered,
+    failed,
+    notes,
+    leads: leadRows,
+    sales: saleRowsForDay,
+    adyntel: focus
+      ? {
+          searches: todaysSearches.map(([keyword, country]) => ({ keyword, country })),
+          watchPage: watchPageForToday(client)?.name ?? null,
+          credits,
+          adsSeen: competitors.length,
+          adsStored: stored,
+          advertisers: new Set(competitors.map((a) => a.page_name)).size,
+          concepts: Number(market.stats.concepts ?? 0),
+          newConcepts: Number(market.stats.new_concepts ?? 0),
+          newVariations: Number(market.stats.new_variations ?? 0),
+          partial,
+        }
+      : null,
+  })
+  notes.push(...archiveNotes)
+
   return {
     client: client.id,
     sent: delivered.length,
@@ -846,6 +902,11 @@ export async function GET(req: Request) {
   // One records read shared by every client in the run — next steps live there.
   const records = await getRecords()
 
+  // Mirror the registry so the projects can be queried in Supabase next to the
+  // data that describes them. Every client, not just the focus list — the point
+  // is a complete picture, and it costs one upsert.
+  const registryNote = await archiveRegistry(AD_CLIENTS)
+
   const results: unknown[] = []
   const skipped: string[] = []
   const runnable = queue.filter((c) => {
@@ -877,5 +938,11 @@ export async function GET(req: Request) {
     results.push(...settled)
   }
 
-  return Response.json({ ok: true, clients: results.length, skipped, results })
+  return Response.json({
+    ok: true,
+    clients: results.length,
+    skipped,
+    ...(registryNote ? { registry: registryNote } : {}),
+    results,
+  })
 }

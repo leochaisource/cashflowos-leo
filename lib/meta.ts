@@ -123,33 +123,6 @@ export async function campaignInsights(client: AdClient, datePreset: string): Pr
 }
 
 // ---------------------------------------------------------------- ads, per day
-/**
- * Landing page views per campaign — the denominator for a landing page
- * conversion rate.
- *
- * GoHighLevel's own funnel analytics are NOT reachable with a Private
- * Integration Token (`/funnels/analytics` answers 401 "not yet supported by the
- * IAM Service"), so the views come from Meta instead. For an ads report that is
- * the better number anyway: it counts the people the ADS put on the page, not
- * every visitor from every source, so the rate answers "how well does this page
- * convert the traffic we are paying for".
- */
-export async function landingPageViews(client: AdClient, datePreset: string): Promise<Map<string, number>> {
-  const c = creds(client)
-  if (!c) return new Map()
-  const url =
-    `${GRAPH}/act_${c.acct}/insights?level=campaign&date_preset=${datePreset}` +
-    '&fields=campaign_name,actions&limit=200'
-  const rows = await getAll(url, c.token)
-  const out = new Map<string, number>()
-  for (const d of rows) {
-    const acts = (d.actions ?? []) as { action_type: string; value: string }[]
-    const lpv = acts.find((a) => a.action_type === 'landing_page_view')
-    if (lpv) out.set(String(d.campaign_name ?? ''), Number(lpv.value) || 0)
-  }
-  return out
-}
-
 export type AdDay = {
   date: string // YYYY-MM-DD
   ad_id: string

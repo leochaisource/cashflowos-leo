@@ -33,11 +33,16 @@ export type GhlFunnelRow = {
   /** GHL form submissions over the same day. null = GHL could not be read. */
   leads: number | null
   cpl: number | null
-  /** People the ads put on the landing page. null = Meta reported none. */
-  landingViews: number | null
-  /** Opt-ins ÷ landing page views. null unless both are real. */
-  convRate: number | null
 }
+
+// NO LANDING PAGE CONVERSION RATE HERE, deliberately (decided 2026-09-23).
+// It needs opt-ins over PAGE VIEWS, and GoHighLevel does not expose funnel page
+// analytics: the REST route answers 401 "not yet supported by the IAM Service"
+// to a Private Integration Token, and the MCP server ships no funnel tools at
+// all. Meta's landing_page_view was tried as a stand-in and rejected — it is
+// Meta's own pixel-side estimate of its own traffic, so dividing GHL opt-ins by
+// it mixes two different populations and flatters or punishes the page at
+// random. A misleading rate in front of a client is worse than no rate.
 
 export type GhlPerformance = {
   /** The day these figures cover, ISO, in the ad account's timezone. */
@@ -122,6 +127,70 @@ export async function formSubmissions(
   return total
 }
 
+export type LeadRow = {
+  submissionId: string
+  contactId: string | null
+  formId: string
+  formName: string | null
+  name: string | null
+  email: string | null
+  phone: string | null
+  submittedAt: string
+  payload: unknown
+}
+
+/**
+ * The submissions themselves, not just the count — the list the archive keeps
+ * so a name can be looked up months later without asking the CRM.
+ *
+ * Paged, because unlike the count this cannot be answered by `meta.total`.
+ */
+export async function formSubmissionRows(
+  locationId: string,
+  token: string,
+  formId: string,
+  start: string,
+  end: string,
+): Promise<LeadRow[]> {
+  type Sub = {
+    id?: string
+    _id?: string
+    contactId?: string
+    formId?: string
+    formName?: string
+    name?: string
+    email?: string
+    phone?: string
+    createdAt?: string
+  }
+  const out: LeadRow[] = []
+  for (let page = 1; page <= 10; page++) {
+    const url =
+      `${API}/forms/submissions?locationId=${encodeURIComponent(locationId)}` +
+      `&formId=${encodeURIComponent(formId)}&startAt=${encodeURIComponent(start)}` +
+      `&endAt=${encodeURIComponent(end)}&limit=100&page=${page}`
+    const j = await getJSON(url, token)
+    const subs = (j.submissions as Sub[] | undefined) ?? []
+    for (const s of subs) {
+      const id = s.id ?? s._id
+      if (!id || !s.createdAt) continue
+      out.push({
+        submissionId: String(id),
+        contactId: s.contactId ?? null,
+        formId,
+        formName: s.formName ?? null,
+        name: s.name ?? null,
+        email: s.email ?? null,
+        phone: s.phone ?? null,
+        submittedAt: s.createdAt,
+        payload: s,
+      })
+    }
+    if (subs.length < 100) break
+  }
+  return out
+}
+
 /**
  * Seats are counted from TRANSACTIONS, not from the orders list.
  *
@@ -131,7 +200,17 @@ export async function formSubmissions(
  * transaction carries the order id in `entityId`, so the transactions are the
  * spine and each order is read individually for its quantity.
  */
-type Txn = { entityId?: string; entitySourceName?: string; status?: string; createdAt: string; amount?: number }
+type Txn = {
+  entityId?: string
+  entitySourceName?: string
+  status?: string
+  createdAt: string
+  amount?: number
+  currency?: string
+  contactId?: string
+  contactName?: string
+  contactEmail?: string
+}
 
 /**
  * SEATS sold, not transactions.
@@ -145,13 +224,37 @@ type Txn = { entityId?: string; entitySourceName?: string; status?: string; crea
  * spending more, not another seat, and counting it inflates both the head count
  * and the cost per sale.
  */
-export async function seatsSold(
+export type SaleRow = {
+  transactionId: string
+  orderId: string | null
+  contactId: string | null
+  contactName: string | null
+  contactEmail: string | null
+  amount: number | null
+  currency: string | null
+  seats: number
+  sourceName: string | null
+  /** An upsell to an existing buyer — revenue, but not another seat. */
+  isUpsell: boolean
+  status: string | null
+  paidAt: string
+  payload: unknown
+}
+
+/**
+ * Every paid transaction in the window, with its seat count resolved.
+ *
+ * Kept separate from seatsSold() because the ARCHIVE wants the rows and the
+ * brief only wants the total — and upsells belong in the archive (they are real
+ * revenue) while being excluded from the head count.
+ */
+export async function saleRows(
   locationId: string,
   token: string,
   fromISO: string,
   untilISO: string,
   excludeSources: string[],
-): Promise<number> {
+): Promise<SaleRow[]> {
   // GHL's date-only startAt/endAt are UTC, so the request is deliberately
   // widened by a day at each end and the exact window is applied here against
   // each order's real timestamp. Without that, a Malaysian day loses its first
@@ -174,15 +277,13 @@ export async function seatsSold(
   const wanted = txns.filter((t) => {
     // Paid only: a pending or failed checkout is not a seat in the room.
     if (t.status !== 'succeeded') return false
-    const src = (t.entitySourceName ?? '').toLowerCase()
-    if (excludeSources.some((x) => src.includes(x.toLowerCase()))) return false
     const at = new Date(t.createdAt).getTime()
     return at >= from && at <= until
   })
 
-  let total = 0
+  const out: SaleRow[] = []
   for (const t of wanted) {
-    let qty = 1
+    let seats = 1
     if (t.entityId) {
       try {
         const d = await getJSON(
@@ -197,15 +298,42 @@ export async function seatsSold(
           qty?: number
         }[])
         const summed = items.reduce((s, i) => s + (i.qty ?? 1), 0)
-        if (summed > 0) qty = summed
+        if (summed > 0) seats = summed
       } catch {
         // One unreadable order must not blank the whole count — it is at least
         // one seat, and the brief still needs a number it can stand behind.
       }
     }
-    total += qty
+    const src = t.entitySourceName ?? null
+    out.push({
+      transactionId: String(t.entityId ? `${t.entityId}:${t.createdAt}` : t.createdAt),
+      orderId: t.entityId ?? null,
+      contactId: t.contactId ?? null,
+      contactName: t.contactName ?? null,
+      contactEmail: t.contactEmail ?? null,
+      amount: typeof t.amount === 'number' ? t.amount : null,
+      currency: t.currency ?? null,
+      seats,
+      sourceName: src,
+      isUpsell: excludeSources.some((x) => (src ?? '').toLowerCase().includes(x.toLowerCase())),
+      status: t.status ?? null,
+      paidAt: t.createdAt,
+      payload: t,
+    })
   }
-  return total
+  return out
+}
+
+/** Seats that fill the room: paid, upsells excluded. */
+export async function seatsSold(
+  locationId: string,
+  token: string,
+  fromISO: string,
+  untilISO: string,
+  excludeSources: string[],
+): Promise<number> {
+  const rows = await saleRows(locationId, token, fromISO, untilISO, excludeSources)
+  return rows.filter((r) => !r.isUpsell).reduce((s, r) => s + r.seats, 0)
 }
 
 /**
@@ -216,7 +344,6 @@ export async function ghlPerformance(
   client: AdClient,
   dateISO: string,
   spendByCampaign: (campaign: string, from: string, to: string) => number,
-  viewsByCampaign: (campaign: string) => number | null = () => null,
 ): Promise<GhlPerformance | null> {
   const cfg = client.ghl
   if (!cfg || !ghlConfigured(client)) return null
@@ -235,17 +362,12 @@ export async function ghlPerformance(
     } catch (e) {
       problems.push(`${f.label} leads unreadable (${(e as Error).message}) — shown as unknown, not zero.`)
     }
-    const landingViews = viewsByCampaign(f.campaign)
     funnels.push({
       label: f.label,
       campaign: f.campaign,
       spend,
       leads,
       cpl: leads && leads > 0 ? spend / leads : null,
-      landingViews,
-      // Both halves must be real: a rate built on a missing denominator is a
-      // made-up number, and this one goes to the client.
-      convRate: leads !== null && landingViews !== null && landingViews > 0 ? leads / landingViews : null,
     })
   }
 
@@ -299,11 +421,6 @@ export function renderPerformance(p: GhlPerformance): string {
       `Amount spent: ${rm(f.spend)}`,
       `Leads: ${f.leads === null ? 'unavailable' : f.leads}`,
       `CPL: ${f.cpl === null ? (f.leads === 0 ? 'no leads yet' : 'unavailable') : rm(f.cpl)}`,
-      `Landing page conversion rate: ${
-        f.convRate === null
-          ? 'unavailable'
-          : `${(f.convRate * 100).toFixed(1)}% (${f.leads}/${f.landingViews} views)`
-      }`,
     )
   }
   out.push('', `Direct purchases: ${p.purchasesToday === null ? 'unavailable' : p.purchasesToday}`)
