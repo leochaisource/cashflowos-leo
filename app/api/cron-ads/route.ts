@@ -681,10 +681,16 @@ async function runClient(client: AdClient, records: Rec[]) {
     (sheet?.ok
       ? `\n🧲 <b>${sheet.yesterday}</b> opt-in(s) yesterday · <b>${sheet.signups}</b> paid (${money(sheet.revenue)}) · <b>${sheet.followUps.length}</b> to follow up`
       : '')
+  // A brief whose model call failed used to fall back to the entire raw facts
+  // block — every competitor ad, every data-quality line. That is a debug dump,
+  // and this message goes to a client group. Where a performance block exists it
+  // already carries the numbers that matter, so the fallback is the block plus
+  // an honest line about the missing analysis.
+  if (!report && perfText) notes.push('The written analysis is missing from this brief — the figures above are complete.')
   const text = [
     perfText ? esc(perfText) : header,
     '',
-    report ? esc(report) : esc(facts),
+    report ? esc(report) : perfText ? '' : esc(facts),
     notes.length ? '\n⚠️ ' + notes.map(esc).join('\n⚠️ ') : '',
   ]
     .filter(Boolean)
@@ -693,11 +699,43 @@ async function runClient(client: AdClient, records: Rec[]) {
   // Telegram rejects anything over 4096 characters outright — the whole brief
   // would vanish with only a server-side log. Split on blank lines so a long
   // report arrives as two readable messages instead of none.
-  const chunks: string[] = []
+  const LIMIT = 3800
+  // Splitting only on blank lines assumed no single paragraph could exceed the
+  // limit. The competitor block does, and Telegram rejects an oversized message
+  // outright — so one long paragraph silently cost the ENTIRE brief, every
+  // recipient, with nothing but a server log to show for it. Long paragraphs are
+  // now broken on line boundaries first, and only hard-sliced as a last resort.
+  const pieces: string[] = []
   for (const para of text.split('\n\n')) {
+    if (para.length <= LIMIT) {
+      pieces.push(para)
+      continue
+    }
+    let buf = ''
+    for (const line of para.split('\n')) {
+      if (buf && buf.length + line.length + 1 > LIMIT) {
+        pieces.push(buf)
+        buf = line
+      } else buf = buf ? buf + '\n' + line : line
+    }
+    if (buf) pieces.push(buf)
+  }
+  const chunks: string[] = []
+  for (const piece of pieces) {
+    // A single line longer than the limit (rare, but a long ad body can do it).
+    // Slice it, backing off any trailing partial HTML entity so the escaped text
+    // never splits inside an "&amp;" and trips Telegram's parser instead.
+    let rest = piece
+    while (rest.length > LIMIT) {
+      let cut = rest.slice(0, LIMIT)
+      const amp = cut.lastIndexOf('&')
+      if (amp > LIMIT - 10 && !cut.slice(amp).includes(';')) cut = cut.slice(0, amp)
+      chunks.push(cut)
+      rest = rest.slice(cut.length)
+    }
     const last = chunks[chunks.length - 1]
-    if (last !== undefined && last.length + para.length + 2 < 3900) chunks[chunks.length - 1] = last + '\n\n' + para
-    else chunks.push(para)
+    if (last !== undefined && last.length + rest.length + 2 < LIMIT) chunks[chunks.length - 1] = last + '\n\n' + rest
+    else if (rest) chunks.push(rest)
   }
   const to = recipients(client)
   // Track delivery per destination. A group the bot was removed from, or a
