@@ -54,20 +54,33 @@ const fmt = (cur: string, n: number) => cur + n.toLocaleString('en-MY', { maximu
  * Deduped, owner first, so the same id listed twice sends once. Ids may be
  * negative — that's what a group id looks like.
  */
-function recipients(client: AdClient): string[] {
+/**
+ * Two audiences, deliberately separated.
+ *
+ * OPERATOR = the owner and the internal team. They get the warning notes:
+ * Adyntel credit burn, a missing schema migration, an API billing failure.
+ * CLIENT = the per-client group shared with the client themselves. They get the
+ * same brief WITHOUT those notes — "your credit balance is too low to access
+ * the Anthropic API" is a message about our plumbing, and it does not belong in
+ * front of the client whose campaign this is.
+ *
+ * A chat that appears in both lists is treated as operator, so the owner never
+ * loses a warning by also being in the group.
+ */
+function recipients(client: AdClient): { operator: string[]; client: string[] } {
   const ids = (s: string | undefined) =>
     (s || '')
       .split(',')
       .map((x) => x.trim())
       .filter((x) => /^-?\d+$/.test(x))
 
-  return Array.from(
-    new Set([
-      ...ids(process.env[client.chatIdEnv]),
-      ...ids(process.env.TELEGRAM_TEAM_CHAT_IDS),
-      ...(client.briefChatIdEnvs ?? []).flatMap((name) => ids(process.env[name])),
-    ]),
+  const operator = Array.from(
+    new Set([...ids(process.env[client.chatIdEnv]), ...ids(process.env.TELEGRAM_TEAM_CHAT_IDS)]),
   )
+  const shared = Array.from(
+    new Set((client.briefChatIdEnvs ?? []).flatMap((name) => ids(process.env[name]))),
+  ).filter((id) => !operator.includes(id))
+  return { operator, client: shared }
 }
 
 // ---------------------------------------------------------------- Adyntel
@@ -289,6 +302,51 @@ async function saveAds(
     stored: retry.data?.length ?? 0,
     note: 'Stored without advertiser follower count/category — run supabase/competitor-ads-enrich.sql once to enable them.',
   }
+}
+
+/**
+ * Split a brief into Telegram-sized messages.
+ *
+ * Telegram rejects anything over 4096 characters OUTRIGHT, so an oversized
+ * message does not arrive truncated — it does not arrive at all, for every
+ * recipient, leaving only a server log. Blank lines first, then line
+ * boundaries, and a hard slice only as a last resort.
+ */
+const LIMIT = 3800
+function chunk(text: string): string[] {
+  const pieces: string[] = []
+  for (const para of text.split('\n\n')) {
+    if (para.length <= LIMIT) {
+      pieces.push(para)
+      continue
+    }
+    let buf = ''
+    for (const line of para.split('\n')) {
+      if (buf && buf.length + line.length + 1 > LIMIT) {
+        pieces.push(buf)
+        buf = line
+      } else buf = buf ? buf + '\n' + line : line
+    }
+    if (buf) pieces.push(buf)
+  }
+  const out: string[] = []
+  for (const piece of pieces) {
+    // A single line can still be too long (a long ad body will do it). Slice it,
+    // backing off any trailing partial HTML entity so the escaped text never
+    // splits inside an "&amp;" and trips Telegram's parser instead.
+    let rest = piece
+    while (rest.length > LIMIT) {
+      let cut = rest.slice(0, LIMIT)
+      const amp = cut.lastIndexOf('&')
+      if (amp > LIMIT - 10 && !cut.slice(amp).includes(';')) cut = cut.slice(0, amp)
+      out.push(cut)
+      rest = rest.slice(cut.length)
+    }
+    const last = out[out.length - 1]
+    if (last !== undefined && last.length + rest.length + 2 < LIMIT) out[out.length - 1] = last + '\n\n' + rest
+    else if (rest) out.push(rest)
+  }
+  return out
 }
 
 // ------------------------------------------------------------- one client
@@ -687,56 +745,18 @@ async function runClient(client: AdClient, records: Rec[]) {
   // already carries the numbers that matter, so the fallback is the block plus
   // an honest line about the missing analysis.
   if (!report && perfText) notes.push('The written analysis is missing from this brief — the figures above are complete.')
-  const text = [
+  const body = [
     perfText ? esc(perfText) : header,
     '',
     report ? esc(report) : perfText ? '' : esc(facts),
-    notes.length ? '\n⚠️ ' + notes.map(esc).join('\n⚠️ ') : '',
   ]
     .filter(Boolean)
     .join('\n')
+  const noteBlock = notes.length ? '\n⚠️ ' + notes.map(esc).join('\n⚠️ ') : ''
+  const text = body + noteBlock
 
-  // Telegram rejects anything over 4096 characters outright — the whole brief
-  // would vanish with only a server-side log. Split on blank lines so a long
-  // report arrives as two readable messages instead of none.
-  const LIMIT = 3800
-  // Splitting only on blank lines assumed no single paragraph could exceed the
-  // limit. The competitor block does, and Telegram rejects an oversized message
-  // outright — so one long paragraph silently cost the ENTIRE brief, every
-  // recipient, with nothing but a server log to show for it. Long paragraphs are
-  // now broken on line boundaries first, and only hard-sliced as a last resort.
-  const pieces: string[] = []
-  for (const para of text.split('\n\n')) {
-    if (para.length <= LIMIT) {
-      pieces.push(para)
-      continue
-    }
-    let buf = ''
-    for (const line of para.split('\n')) {
-      if (buf && buf.length + line.length + 1 > LIMIT) {
-        pieces.push(buf)
-        buf = line
-      } else buf = buf ? buf + '\n' + line : line
-    }
-    if (buf) pieces.push(buf)
-  }
-  const chunks: string[] = []
-  for (const piece of pieces) {
-    // A single line longer than the limit (rare, but a long ad body can do it).
-    // Slice it, backing off any trailing partial HTML entity so the escaped text
-    // never splits inside an "&amp;" and trips Telegram's parser instead.
-    let rest = piece
-    while (rest.length > LIMIT) {
-      let cut = rest.slice(0, LIMIT)
-      const amp = cut.lastIndexOf('&')
-      if (amp > LIMIT - 10 && !cut.slice(amp).includes(';')) cut = cut.slice(0, amp)
-      chunks.push(cut)
-      rest = rest.slice(cut.length)
-    }
-    const last = chunks[chunks.length - 1]
-    if (last !== undefined && last.length + rest.length + 2 < LIMIT) chunks[chunks.length - 1] = last + '\n\n' + rest
-    else if (rest) chunks.push(rest)
-  }
+  const chunks = chunk(text)
+  const clientChunks = noteBlock ? chunk(body) : chunks
   const to = recipients(client)
   // Track delivery per destination. A group the bot was removed from, or a
   // mistyped id, must show up in the run result — otherwise the brief goes
@@ -744,17 +764,22 @@ async function runClient(client: AdClient, records: Rec[]) {
   // here, with Adyntel).
   const delivered: string[] = []
   const failed: { chat: string; error: string }[] = []
-  for (const chat of to) {
-    let ok = true
-    for (const chunk of chunks) {
-      const r = await sendMessage(chat, chunk)
-      if (!r.ok) {
-        ok = false
-        failed.push({ chat, error: r.error ?? 'unknown' })
-        break // don't send the rest of a brief nobody is receiving
+  for (const [chats, parts] of [
+    [to.operator, chunks],
+    [to.client, clientChunks],
+  ] as const) {
+    for (const chat of chats) {
+      let ok = true
+      for (const part of parts) {
+        const r = await sendMessage(chat, part)
+        if (!r.ok) {
+          ok = false
+          failed.push({ chat, error: r.error ?? 'unknown' })
+          break // don't send the rest of a brief nobody is receiving
+        }
       }
+      if (ok) delivered.push(chat)
     }
-    if (ok) delivered.push(chat)
   }
   if (failed.length)
     console.error(`[CFO] ${client.id}: brief undelivered to ${failed.map((f) => `${f.chat} (${f.error})`).join(', ')}`)
@@ -762,7 +787,8 @@ async function runClient(client: AdClient, records: Rec[]) {
   return {
     client: client.id,
     sent: delivered.length,
-    recipients: to,
+    recipients: [...to.operator, ...to.client],
+    client_groups: to.client,
     delivered,
     failed,
     messages: chunks.length,
