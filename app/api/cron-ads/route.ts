@@ -2,7 +2,9 @@ import Anthropic from '@anthropic-ai/sdk'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
-import { AD_CLIENTS, keywordsForToday, searchesForToday, watchPageForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, type AdClient } from '@/lib/ad-clients'
+import { AD_CLIENTS, keywordsForToday, searchesForToday, watchPageForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, FUNNEL_BLOCK_NOTE, type AdClient } from '@/lib/ad-clients'
+import { ghlPerformance, renderPerformance, ghlConfigured } from '@/lib/ghl'
+import { loadAdRows } from '@/lib/metrics'
 import { focusProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
 import { leadsSummary } from '@/lib/leads-sheet'
@@ -327,6 +329,39 @@ async function runClient(client: AdClient, records: Rec[]) {
     }
   }
 
+  // ①a THE PERFORMANCE BLOCK — spend from Meta, leads and sales from GHL.
+  //
+  // It covers YESTERDAY, complete. The brief goes out at 8am; "today" at 8am is
+  // two hours of spend and almost no opt-ins, which reads as a collapse every
+  // single morning. The header carries the date of the data, so the number at
+  // the top always matches the numbers underneath.
+  let perf: Awaited<ReturnType<typeof ghlPerformance>> = null
+  let perfText = ''
+  if (client.ghl) {
+    if (!ghlConfigured(client)) {
+      notes.push(
+        `⛔ GoHighLevel is NOT connected — ${client.ghl.locationEnv} / ${client.ghl.tokenEnv} are missing in this ` +
+          'deployment, so opt-ins and sales are unavailable (not zero). Add them in Vercel and redeploy.',
+      )
+    } else {
+      try {
+        const reportDay = new Date(Date.now() - 864e5).toISOString().slice(0, 10)
+        const rows = await loadAdRows([client.id], client.ghl.spendSince)
+        const spendByCampaign = (campaign: string, from: string, to: string) =>
+          rows
+            .filter((r) => r.date >= from && r.date <= to && (campaign === '*' || r.campaign_name === campaign))
+            .reduce((s, r) => s + r.spend, 0)
+        perf = await ghlPerformance(client, reportDay, spendByCampaign)
+        if (perf) {
+          perfText = renderPerformance(perf)
+          notes.push(...perf.problems)
+        }
+      } catch (e) {
+        notes.push(`Performance block failed: ${(e as Error).message}`)
+      }
+    }
+  }
+
   const weekByName = new Map(week.map((c) => [c.name, c]))
   const movers = yesterday
     .filter((c) => c.spend > 0)
@@ -600,6 +635,13 @@ async function runClient(client: AdClient, records: Rec[]) {
             (c.frequency ? `, frequency ${c.frequency.toFixed(2)}` : '') +
             (c.cplDelta ? ` (${c.cplDelta > 0 ? '+' : ''}${c.cplDelta}% CPL vs 7-day avg ${money(c.avgCpl)})` : ''),
         )),
+    ...(perf
+      ? [
+          '',
+          'PERFORMANCE BLOCK ALREADY SENT (verbatim, above your text — do not restate it):',
+          perfText,
+        ]
+      : []),
     ...deliveryBlock,
     ...leadsBlock,
     ...stepsBlock,
@@ -620,7 +662,7 @@ async function runClient(client: AdClient, records: Rec[]) {
       const res = await anthropic.messages.create({
         model: 'claude-opus-5',
         max_tokens: 3000,
-        system: preLaunch ? PRE_LAUNCH_PROMPT(client.name) : LIVE_PROMPT(client.name),
+        system: (preLaunch ? PRE_LAUNCH_PROMPT(client.name) : LIVE_PROMPT(client.name)) + (perf ? FUNNEL_BLOCK_NOTE : ''),
         messages: [{ role: 'user', content: facts }],
       })
       report = res.content
@@ -640,7 +682,7 @@ async function runClient(client: AdClient, records: Rec[]) {
       ? `\n🧲 <b>${sheet.yesterday}</b> opt-in(s) yesterday · <b>${sheet.signups}</b> paid (${money(sheet.revenue)}) · <b>${sheet.followUps.length}</b> to follow up`
       : '')
   const text = [
-    header,
+    perfText ? esc(perfText) : header,
     '',
     report ? esc(report) : esc(facts),
     notes.length ? '\n⚠️ ' + notes.map(esc).join('\n⚠️ ') : '',

@@ -122,6 +122,32 @@ export type AdClient = {
   watchPages?: { name: string; pageId: string }[]
 
   /**
+   * THE FUNNEL-BY-FUNNEL PERFORMANCE BLOCK that opens the 8am brief.
+   *
+   * Meta knows the spend; GoHighLevel knows the opt-ins and the money. Neither
+   * can produce a CPL on its own, so each funnel names the Meta CAMPAIGN that
+   * pays for it and the GHL FORM that receives its leads, and the brief divides
+   * one by the other. Without this, a client just gets Meta's own attributed
+   * "leads", which counts pixel fires rather than people in the CRM.
+   *
+   * salesSince and spendSince are MANUAL and must be moved after each class —
+   * they are the two dates the cumulative block counts from.
+   */
+  ghl?: {
+    locationEnv: string
+    tokenEnv: string
+    /** Must match the AD ACCOUNT's timezone, or leads and spend describe different days. */
+    timeZone?: string
+    funnels: { label: string; campaign: string; formId: string; formName: string }[]
+    /** Purchases are counted from this date — the day of the last class. UPDATE AFTER EACH CLASS. */
+    salesSince: string
+    /** Total spend is counted from this date — the campaign start. UPDATE EACH LAUNCH. */
+    spendSince: string
+    /** Order source names that are upsells to existing buyers, not new seats. */
+    excludeOrderSources?: string[]
+  }
+
+  /**
    * Extra search parameters passed straight through to Adyntel.
    *
    * VERIFIED IGNORED, 2026-08-08. The API echoes back active_status,
@@ -240,6 +266,28 @@ export const AD_CLIENTS: AdClient[] = [
     countries: ['MY', 'SG'],
     keywordsPerRun: 2, // 2 searches + 1 watched page = 3 credits/day (Leo's cap); 22 keyword×country pairs → full cycle every 11 days
     // Page ids come from the stored competitor_ads rows (page_id column).
+    ghl: {
+      locationEnv: 'GHL_CLAUDE_MALAYSIA_LOCATION_ID',
+      tokenEnv: 'GHL_CLAUDE_MALAYSIA_TOKEN',
+      timeZone: 'Asia/Kuala_Lumpur',
+      funnels: [
+        {
+          label: 'Webinar Funnel',
+          campaign: '[SF] CM1D Webinar Campaign',
+          formId: '9r56tePxQyvNJQf9BT1v',
+          formName: 'Claude Webinar - Optin Form',
+        },
+        {
+          label: 'Direct Ticket Funnel',
+          campaign: '[SF] CM1D Direct Ticket Campaign',
+          formId: 'T0w36ch9wZGLtd6DSb0X',
+          formName: 'Claude 1 Day Workshop - Opt in Form',
+        },
+      ],
+      salesSince: '2026-09-13', // the last 1-day class — MOVE THIS after the next one
+      spendSince: '2026-09-16', // CM1D campaign start — MOVE THIS at the next launch
+      excludeOrderSources: ['VIP Ticket Upgrade'], // an upsell to a buyer, not another seat
+    },
     watchPages: [
       { name: 'Hustle Malaysia', pageId: '791929197338366' }, // "Certified Claude AI Professional" — the direct competitor
       { name: 'BELLS Tech', pageId: '385890621834316' }, // SG, SkillsFuture-subsidy angle
@@ -616,6 +664,17 @@ export const HONESTY =
   'Say instead: "may be strategically important based on observable public signals, but private conversion ' +
   'performance is unavailable." ' +
   'Never invent numbers that are not in the data. If data is missing, say which part is missing.'
+
+/**
+ * Appended when a code-rendered performance block already sits above the
+ * model's text. Numbers that go to a client group are not retyped by a language
+ * model — they are computed once and printed verbatim.
+ */
+export const FUNNEL_BLOCK_NOTE =
+  'A performance block has ALREADY been written above your text, with spend, leads, CPL, purchases and ' +
+  'cost per sale for each funnel. Do NOT repeat those figures, do not recalculate them, and do not open ' +
+  'with a summary of them. Start straight at the competitor section. You may refer to a figure in passing ' +
+  'when an action depends on it (for example naming which funnel to cut), but never restate the block. '
 
 export const LIVE_PROMPT = (name: string) =>
   `You write an 8am ads briefing for ${name}, a Malaysian business. ` +
