@@ -4,6 +4,7 @@
 //   node --env-file-if-exists=.env scripts/adyntel-rescore.ts --client=starcity-global
 //   ... --why=優選良屋        which terms matched / which exclusion fired, per ad, for one advertiser
 //   ... --off                 list the OFF-topic advertisers with a copy snippet each (the teaching material)
+//   ... --write               store each verdict in competitor_ads.on_topic (what the archive filters on)
 //
 // THE LOOP THIS EXISTS FOR: the first pull for a new market is a guess at the
 // vocabulary. Tune terms, re-score here, repeat until the off-topic list is
@@ -24,6 +25,7 @@ const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.sp
 const clientId = arg('client')
 const why = arg('why')
 const showOff = process.argv.includes('--off')
+const WRITE = process.argv.includes('--write')
 
 const client = AD_CLIENTS.find((c) => c.id === clientId)
 if (!client) {
@@ -32,12 +34,33 @@ if (!client) {
 }
 const db = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
-const { data, error } = await db
-  .from('competitor_ads')
-  .select('competitor, keywords, run_days, is_active, cta_text, display_format, raw_payload')
-  .eq('client', client.id)
-if (error) throw error
-const rows = (data ?? []).map((r) => ({ r, a: normaliseAd(r.raw_payload as Record<string, unknown>) }))
+// Paged: PostgREST caps a response at 1,000 rows, and a client that has been
+// watched for a month holds more than that. A single select used to score the
+// first thousand and silently ignore the rest.
+type Stored = {
+  id: string
+  ad_archive_id: string
+  competitor: string
+  keywords: string[] | null
+  run_days: number | null
+  is_active: boolean
+  cta_text: string | null
+  display_format: string | null
+  raw_payload: unknown
+}
+const data: Stored[] = []
+for (let from = 0; ; from += 1000) {
+  const { data: page, error } = await db
+    .from('competitor_ads')
+    .select('id, ad_archive_id, competitor, keywords, run_days, is_active, cta_text, display_format, raw_payload')
+    .eq('client', client.id)
+    .order('id')
+    .range(from, from + 999)
+  if (error) throw error
+  data.push(...((page ?? []) as Stored[]))
+  if (!page || page.length < 1000) break
+}
+const rows = data.map((r) => ({ r, a: normaliseAd(r.raw_payload as Record<string, unknown>) }))
 
 // Same matcher as isRelevant(), exposed so --why can name the culprit.
 const hayOf = (a: NormalisedAd) =>
@@ -49,7 +72,10 @@ const hits = (h: string, terms: string[]) =>
   })
 
 const clean = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim()
-const on = rows.filter((x) => isRelevant(x.a, client.relevanceTerms, client.excludeTerms))
+// Same rule as the cron's saveAds(): anything ever pulled by brand watch (a
+// page: keyword) is on-topic, whatever its copy says.
+const watched = (x: (typeof rows)[number]) => (x.r.keywords ?? []).some((k) => k.startsWith('page:'))
+const on = rows.filter((x) => watched(x) || isRelevant(x.a, client.relevanceTerms, client.excludeTerms))
 const off = rows.filter((x) => !on.includes(x))
 console.log(`${client.name}: stored ${rows.length} · on-topic ${on.length} (${rows.length ? Math.round((on.length / rows.length) * 100) : 0}%) · off-topic ${off.length}`)
 
@@ -85,4 +111,26 @@ if (why) {
     console.log(`  ${on.includes(x) ? '✓' : '✗'} ${x.r.competitor} · ${x.r.run_days ?? '?'}d · ${groups.join(' · ')} · excluded by: ${ex.join(',') || 'nothing'}`)
     console.log(`      ${clean(x.a.body_text).slice(0, 200)}`)
   }
+}
+
+if (WRITE) {
+  // Two bulk updates per chunk (one for true, one for false) rather than an
+  // upsert: an upsert would need every NOT NULL column in the payload.
+  const onIds = new Set(on.map((x) => x.r.id))
+  const trueIds = rows.filter((x) => onIds.has(x.r.id)).map((x) => x.r.id)
+  const falseIds = rows.filter((x) => !onIds.has(x.r.id)).map((x) => x.r.id)
+  let written = 0
+  for (const [value, ids] of [[true, trueIds], [false, falseIds]] as const) {
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500)
+      const { error } = await db.from('competitor_ads').update({ on_topic: value }).in('id', chunk)
+      if (error) {
+        console.error(`\n✗ write failed: ${error.message}`)
+        if (/on_topic/.test(error.message)) console.error('  → run supabase/competitor-archive.sql once in the SQL editor first.')
+        process.exit(1)
+      }
+      written += chunk.length
+    }
+  }
+  console.log(`\n✓ wrote on_topic for ${written} ad(s): ${trueIds.length} on-topic, ${falseIds.length} noise`)
 }

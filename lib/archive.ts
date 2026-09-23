@@ -2,7 +2,16 @@ import 'server-only'
 import { supabase, supabaseConfigured } from './supabase'
 import { isConfigured, type AdClient } from './ad-clients'
 import { ghlConfigured, type GhlPerformance, type LeadRow, type SaleRow } from './ghl'
-import { funnelDailyRows, briefDailyRow, ghlLeadRows, ghlSaleRows, registryRow } from './archive-rows'
+import {
+  funnelDailyRows,
+  briefDailyRow,
+  ghlLeadRows,
+  ghlSaleRows,
+  registryRow,
+  adyntelRunRow,
+  ADYNTEL_RUN_OPTIONAL,
+  type AdyntelRunInput,
+} from './archive-rows'
 
 // THE ARCHIVE — write side. Schema and reasoning live in supabase/archive.sql.
 //
@@ -43,6 +52,32 @@ const upsert = async (table: string, rows: Record<string, unknown>[], onConflict
   if (error) throw new Error(error.message)
 }
 
+/**
+ * Upsert, and if a column from a LATER migration is missing, write the row
+ * without it and say which file to run.
+ *
+ * Without this, adding a column to a table the cron already writes turns every
+ * deploy-before-migration into a lost row — the generic guard would blame the
+ * wrong SQL file and drop the whole morning's accounting over one new field.
+ */
+async function upsertWithFallback(
+  table: string,
+  rows: Record<string, unknown>[],
+  onConflict: string,
+  optional: readonly string[],
+  migration: string,
+): Promise<string | null> {
+  if (!rows.length) return null
+  const first = await supabase.from(table).upsert(rows, { onConflict })
+  if (!first.error) return null
+  const missing = optional.filter((c) => first.error!.message.includes(c))
+  if (!missing.length) throw new Error(first.error.message)
+  const trimmed = rows.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => !optional.includes(k))))
+  const retry = await supabase.from(table).upsert(trimmed, { onConflict })
+  if (retry.error) throw new Error(retry.error.message)
+  return `Archive: ${table} stored without ${optional.join(', ')} — run ${migration} once in the SQL editor.`
+}
+
 export type ArchiveInput = {
   client: AdClient
   /** The day the figures cover — NOT the send date. */
@@ -56,18 +91,7 @@ export type ArchiveInput = {
   notes: string[]
   leads: LeadRow[]
   sales: SaleRow[]
-  adyntel: {
-    searches: { keyword: string; country: string }[]
-    watchPage: string | null
-    credits: number
-    adsSeen: number
-    adsStored: number
-    advertisers: number
-    concepts: number
-    newConcepts: number
-    newVariations: number
-    partial: string[]
-  } | null
+  adyntel: AdyntelRunInput | null
 }
 
 /**
@@ -90,41 +114,33 @@ export async function archiveRun(input: ArchiveInput): Promise<string[]> {
       ),
     )
 
-  // ── the brief itself, verbatim
-  if (perf || input.performanceText)
-    add(
-      await guard('the brief', () =>
-        upsert('brief_daily', [briefDailyRow(client, date, perf, input)], 'project,date'),
-      ),
-    )
+  // ── the brief itself, verbatim — for EVERY briefed client.
+  // This used to be written only when a GoHighLevel performance block existed,
+  // which meant a competitor-only brief (Starcity, Mr Money) left no record at
+  // all. The row is the record of the morning: report_text may be null when the
+  // model was unavailable, and delivered/failed still matter then.
+  add(
+    await guard('the brief', () =>
+      upsert('brief_daily', [briefDailyRow(client, date, perf, input)], 'project,date'),
+    ),
+  )
 
-  // ── what the competitor research cost and found
+  // ── what the competitor research cost, found, and concluded
   if (input.adyntel) {
     const a = input.adyntel
+    let note: string | null = null
     add(
-      await guard('the Adyntel run', () =>
-        upsert(
+      await guard('the Adyntel run', async () => {
+        note = await upsertWithFallback(
           'adyntel_runs',
-          [
-            {
-              project: client.id,
-              date,
-              searches: a.searches,
-              watch_page: a.watchPage,
-              credits: a.credits,
-              ads_seen: a.adsSeen,
-              ads_stored: a.adsStored,
-              advertisers: a.advertisers,
-              concepts: a.concepts,
-              new_concepts: a.newConcepts,
-              new_variations: a.newVariations,
-              partial: a.partial,
-            },
-          ],
+          [adyntelRunRow(client, date, a)],
           'project,date',
-        ),
-      ),
+          ADYNTEL_RUN_OPTIONAL,
+          'supabase/competitor-archive.sql',
+        )
+      }),
     )
+    add(note)
   }
 
   // ── every individual opt-in

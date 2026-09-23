@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
-import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
+import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, isRelevant, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
+import { persistThumbnails } from '@/lib/creatives'
 import { AD_CLIENTS, keywordsForToday, searchesForToday, watchPageForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, FUNNEL_BLOCK_NOTE, type AdClient } from '@/lib/ad-clients'
 import {
   ghlPerformance,
@@ -239,15 +240,17 @@ async function loadPrior(clientId: string): Promise<PriorRow[]> {
  * and that ranking signal was being overwritten every morning.
  */
 async function saveAds(
-  clientId: string,
+  client: AdClient,
   ads: NormalisedAd[],
   keywordsByAd: Map<string, Set<string>>,
   prior: PriorRow[],
+  watchedIds: Set<string>,
 ): Promise<{ stored: number; note?: string }> {
   if (!supabaseConfigured || !ads.length) return { stored: 0 }
+  const clientId = client.id
   const priorKeywords = new Map(prior.map((p) => [p.ad_archive_id, p.keywords ?? []]))
   const iso = (u: number | null) => (u === null ? null : new Date(u * 1000).toISOString())
-  const rows = ads.map((a) => {
+  const rows: Record<string, unknown>[] = ads.map((a) => {
     const media = mediaUrls(a) // reads cards[] too — carousels used to save with no media at all
     const keywords = new Set([
       ...(priorKeywords.get(a.ad_archive_id) ?? []),
@@ -282,6 +285,17 @@ async function saveAds(
     page_like_count: a.page_like_count,
     page_categories: a.page_categories,
     page_profile_uri: a.page_profile_uri,
+    // The relevance verdict, scored once here so the archive can filter "on
+    // topic vs noise" in SQL instead of re-deriving it from raw_payload on every
+    // page view. A watched brand's ads are on-topic by definition: the point of
+    // watching a brand is to see everything it runs. "Watched" means EVER pulled
+    // by brand watch (a page: keyword survives the merge above), not just today
+    // — otherwise an ad brand-watched on Monday and keyword-found on Tuesday
+    // would flip to noise. scripts/adyntel-rescore.ts applies the same rule.
+    on_topic:
+      watchedIds.has(a.ad_archive_id) ||
+      [...keywords].some((k) => k.startsWith('page:')) ||
+      isRelevant(a, client.relevanceTerms, client.excludeTerms),
     raw_payload: a.raw_payload,
     updated_at: new Date().toISOString(),
     }
@@ -289,29 +303,41 @@ async function saveAds(
   const write = (payload: Record<string, unknown>[]) =>
     supabase.from('competitor_ads').upsert(payload, { onConflict: 'client,competitor,ad_archive_id' }).select('id')
 
-  const { data, error } = await write(rows)
-  if (!error) return { stored: data?.length ?? 0 }
-
-  // The three advertiser-context columns are added by
-  // supabase/competitor-ads-enrich.sql. If that hasn't been run, PostgREST
+  // Columns added by LATER migrations. If one has not been run, PostgREST
   // rejects the WHOLE batch over one unknown column — and a missing follower
-  // count is not worth losing a day of competitor tracking for. Drop them and
-  // write everything else, then say so out loud.
-  const missingColumn = /page_like_count|page_categories|page_profile_uri|schema cache/i.test(error.message)
-  if (!missingColumn) {
-    console.error('[CFO] competitor_ads upsert failed:', error.message)
-    return { stored: 0, note: `Competitor ads not stored: ${error.message}` }
+  // count or relevance flag is not worth losing a day of competitor tracking
+  // for. Drop what's missing, write everything else, and say which file to run.
+  const OPTIONAL: Record<string, string> = {
+    page_like_count: 'supabase/competitor-ads-enrich.sql',
+    page_categories: 'supabase/competitor-ads-enrich.sql',
+    page_profile_uri: 'supabase/competitor-ads-enrich.sql',
+    on_topic: 'supabase/competitor-archive.sql',
   }
-  const trimmed = rows.map(({ page_like_count, page_categories, page_profile_uri, ...rest }) => rest)
-  const retry = await write(trimmed)
-  if (retry.error) {
-    console.error('[CFO] competitor_ads upsert failed:', retry.error.message)
-    return { stored: 0, note: `Competitor ads not stored: ${retry.error.message}` }
+  const dropped = new Set<string>()
+  let payload = rows
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const { data, error } = await write(payload)
+    if (!error) {
+      const files = [...new Set([...dropped].map((c) => OPTIONAL[c]))]
+      return {
+        stored: data?.length ?? 0,
+        note: files.length
+          ? `Competitor ads stored without ${[...dropped].join(', ')} — run ${files.join(' and ')} once to enable them.`
+          : undefined,
+      }
+    }
+    const named = Object.keys(OPTIONAL).filter((c) => !dropped.has(c) && error.message.includes(c))
+    if (!named.length) {
+      console.error('[CFO] competitor_ads upsert failed:', error.message)
+      return { stored: 0, note: `Competitor ads not stored: ${error.message}` }
+    }
+    for (const c of named) dropped.add(c)
+    // The enrich columns arrive together — one missing means all three are.
+    if (named.some((c) => c.startsWith('page_')))
+      for (const c of ['page_like_count', 'page_categories', 'page_profile_uri']) dropped.add(c)
+    payload = rows.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => !dropped.has(k))))
   }
-  return {
-    stored: retry.data?.length ?? 0,
-    note: 'Stored without advertiser follower count/category — run supabase/competitor-ads-enrich.sql once to enable them.',
-  }
+  return { stored: 0, note: 'Competitor ads not stored: gave up after dropping every optional column.' }
 }
 
 /**
@@ -570,9 +596,40 @@ async function runClient(client: AdClient, records: Rec[]) {
       }
     }
     competitors = Array.from(byId.values())
-    const saved = await saveAds(client.id, competitors, keywordsByAd, prior)
+    const saved = await saveAds(client, competitors, keywordsByAd, prior, watchedIds)
     stored = saved.stored
     if (saved.note) notes.push(saved.note)
+
+    // Keep the creatives of what is NEW and on-topic while their URLs still
+    // work — Meta's CDN links expire within weeks, and a library of blank cards
+    // is not an archive. Only new ones (older ads are the backfill script's
+    // job) and only on-topic ones (noise is not worth the storage). Capped per
+    // run; never allowed to cost the brief.
+    try {
+      const known = new Set(prior.map((p) => p.ad_archive_id))
+      const candidates = competitors
+        .filter((a) => !known.has(a.ad_archive_id))
+        .filter((a) => watchedIds.has(a.ad_archive_id) || isRelevant(a, client.relevanceTerms, client.excludeTerms))
+        .map((a) => {
+          const m = mediaUrls(a)
+          return { ad_archive_id: a.ad_archive_id, urls: [...m.thumbs, ...m.images] }
+        })
+      if (candidates.length) {
+        const t = await persistThumbnails(supabase, client.id, candidates)
+        if (t.bucketMissing)
+          notes.push('Creatives not saved — the competitor-creatives bucket is missing; run supabase/competitor-archive.sql once.')
+        else if (t.saved || t.failed || t.expired)
+          notes.push(
+            `Creatives: ${t.saved} new thumbnail(s) saved` +
+              (t.expired ? `, ${t.expired} already expired` : '') +
+              (t.failed ? `, ${t.failed} failed` : '') +
+              (t.skipped ? `, ${t.skipped} over today's cap` : '') +
+              '.',
+          )
+      }
+    } catch (e) {
+      notes.push(`Creatives not saved: ${(e as Error).message}`)
+    }
 
     // Say it plainly when the market read was a slice. Otherwise the brief's
     // "no longer appearing" line silently blames the market for our own cap.
@@ -850,6 +907,9 @@ async function runClient(client: AdClient, records: Rec[]) {
           newConcepts: Number(market.stats.new_concepts ?? 0),
           newVariations: Number(market.stats.new_variations ?? 0),
           partial,
+          factsText: market.text,
+          stats: market.stats,
+          seenIds: competitors.map((a) => a.ad_archive_id),
         }
       : null,
   })

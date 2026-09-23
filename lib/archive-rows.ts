@@ -1,5 +1,47 @@
 import type { AdClient } from './ad-clients'
 import type { GhlPerformance, LeadRow, SaleRow } from './ghl'
+import type { CompetitorStats } from './adyntel'
+
+/** One morning's competitor research, as the cron hands it to the archive. */
+export type AdyntelRunInput = {
+  searches: { keyword: string; country: string }[]
+  watchPage: string | null
+  credits: number
+  adsSeen: number
+  adsStored: number
+  advertisers: number
+  concepts: number
+  newConcepts: number
+  newVariations: number
+  partial: string[]
+  /** The competitor facts block the model was given, verbatim. */
+  factsText: string
+  /** competitorSection()'s whole stats object — more than the columns above carry. */
+  stats: CompetitorStats
+  /** Every ad this run returned, so "what did we find on the 19th" has an answer. */
+  seenIds: string[]
+}
+
+/** Columns added by supabase/competitor-archive.sql — dropped on retry if it has not been run. */
+export const ADYNTEL_RUN_OPTIONAL = ['facts_text', 'stats', 'seen_ids'] as const
+
+export const adyntelRunRow = (client: AdClient, date: string, a: AdyntelRunInput) => ({
+  project: client.id,
+  date,
+  searches: a.searches,
+  watch_page: a.watchPage,
+  credits: a.credits,
+  ads_seen: a.adsSeen,
+  ads_stored: a.adsStored,
+  advertisers: a.advertisers,
+  concepts: a.concepts,
+  new_concepts: a.newConcepts,
+  new_variations: a.newVariations,
+  partial: a.partial,
+  facts_text: a.factsText || null,
+  stats: a.stats,
+  seen_ids: a.seenIds,
+})
 
 // The SHAPE of every archive row, as pure functions.
 //
