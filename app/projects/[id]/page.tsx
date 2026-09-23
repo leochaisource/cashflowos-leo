@@ -10,6 +10,7 @@ import AdTable from '@/app/_components/AdTable'
 import RefreshButton from '@/app/_components/RefreshButton'
 import FunnelEntryForm from '@/app/_components/FunnelEntryForm'
 import NextSteps from '@/app/_components/NextSteps'
+import ProjectTabs from '@/app/_components/ProjectTabs'
 import { findWorkProject, stepsFor, type WorkProject } from '@/lib/work-projects'
 import type { Rec } from '@/lib/records'
 import { money, num, pct, times, whenShort, dateLong, daysUntil, DASH } from '@/lib/format'
@@ -85,6 +86,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         </div>
         <RefreshButton project={project.id} days={WINDOW_DAYS} />
       </div>
+      <ProjectTabs id={project.id} current="scorecard" />
 
       {!s.hasDelivery && (
         <div className="banner info">

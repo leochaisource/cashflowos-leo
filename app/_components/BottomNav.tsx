@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import MoreSheet, { type MoreTab } from './MoreSheet'
-import type { NavProject } from './Nav'
+import { isActivePath, type NavProject } from './Nav'
 
 // 👉 The phone bottom bar (shown ≤768px). Four thumb-size primary tabs + a
 //    "More" button that opens the slide-up sheet with everything else, so every
@@ -34,7 +34,7 @@ export default function BottomNav({ projects = [] }: { projects?: NavProject[] }
   const path = usePathname()
   const [moreOpen, setMoreOpen] = useState(false)
   const MORE = moreTabs(projects)
-  const moreActive = MORE.some(t => t.href === path)
+  const moreActive = MORE.some(t => isActivePath(path, t.href))
   return (
     <>
       <nav className="bottomnav">
@@ -42,7 +42,7 @@ export default function BottomNav({ projects = [] }: { projects?: NavProject[] }
           <Link
             key={t.href}
             href={t.href}
-            className={path === t.href ? 'active' : ''}
+            className={isActivePath(path, t.href) ? 'active' : ''}
             onClick={() => setMoreOpen(false)}
           >
             <span className="ico" aria-hidden="true">{t.ico}</span>

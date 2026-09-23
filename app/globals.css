@@ -417,3 +417,27 @@ code {
   .adtbl th.hl, .adtbl td.hl { background: none; }
   .adtbl td.hl { font-weight: 700; }
 }
+
+/* ============================================================
+   COMPETITOR RESEARCH — /projects/<id>/competitors and /log
+   Reuses the Vault grid (.vgrid/.vcard/.vthumb) and the filter
+   chips (.chips/.chip.on); only what those don't cover lives here.
+   ============================================================ */
+.vgrid.ads { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); margin-bottom: 18px; }
+.vgrid.ads .vthumb { aspect-ratio: 1; position: relative; }
+.vgrid.ads .vthumb .fresh { position: absolute; top: 8px; left: 8px; }
+.ad-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; }
+.ad-head b { font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ad-title { font-size: 13px; font-weight: 600; color: var(--ink); margin: 0 0 4px; line-height: 1.4; }
+.ad-copy { font-size: 12.5px; line-height: 1.45; color: var(--ink-soft); margin: 0 0 8px;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.ad-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0; }
+.ad-link { display: inline-block; margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--clay-deep); text-decoration: none; }
+.ad-link:hover { text-decoration: underline; }
+.pill.live  { background: rgba(75,122,90,.16);  color: #2E5A40; }
+.pill.stale { background: rgba(182,128,42,.18); color: #6E521A; }
+.pill.ended { background: var(--paper-2);       color: var(--ink-soft); }
+.chips.tight { margin-bottom: 10px; }
+.chips .lab { font-size: 12px; color: var(--dim); align-self: center; min-width: 52px; }
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 0 0 24px; }
+.pager p { margin: 0; font-size: 13px; color: var(--dim); }

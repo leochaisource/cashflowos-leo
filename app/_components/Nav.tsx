@@ -41,6 +41,18 @@ export const navGroups = (projects: NavProject[]): { label: string; tabs: { href
   ] },
 ]
 
+/**
+ * Is this nav entry the page you are on? A project entry stays lit on its
+ * sub-pages too (/projects/x/competitors), otherwise opening the competitor
+ * library would make the sidebar look like you had left the project. "/" is
+ * exact-match only, or every page would highlight Home.
+ */
+export function isActivePath(path: string | null, href: string): boolean {
+  if (!path) return false
+  if (href === '/') return path === '/'
+  return path === href || path.startsWith(href + '/')
+}
+
 // `pendingCount` is an optional seam: pass it (from a server component that
 // already knows the number) to show the clay 🙋 badge on Approvals. We never
 // fetch here — a client nav must stay free of its own server round-trips.
@@ -52,7 +64,7 @@ export default function Nav({ pendingCount, projects = [] }: { pendingCount?: nu
         <div className="nav-group" key={group.label}>
           <p className="nav-label">{group.label}</p>
           {group.tabs.map(t => (
-            <Link key={t.href} href={t.href} className={path === t.href ? 'active' : ''}>
+            <Link key={t.href} href={t.href} className={isActivePath(path, t.href) ? 'active' : ''}>
               <span>{t.label}</span>
               {t.href === '/approvals' && pendingCount ? (
                 <span className="nav-badge" aria-label={`${pendingCount} pending`}>{pendingCount}</span>

@@ -6,6 +6,8 @@ import { syncProjectAds } from './ad-sync'
 import { accountInsights } from './meta'
 import { loadSheetLeads, type SheetLead } from './leads-sheet'
 import { todayISO, type Rec } from './records'
+import { clip } from './format'
+import { searchArchivedAds, loadAdFacets, loadResearchLog, loadRunDetail, adStatus, adLibraryUrl, keywordLabel, type AdStatus } from './competitor-archive'
 
 // The bot's ADS hands.
 //
@@ -168,6 +170,69 @@ export const BOT_ADS_TOOLS = [
       properties: {
         project: { type: 'string', description: 'Project or client name.' },
         days: { type: 'number', description: 'How many days to re-pull. Default 7.' },
+      },
+      required: [],
+    },
+  },
+  // ── the competitor ARCHIVE. These read what the 8am research has already
+  // stored — they never call Adyntel and never spend a credit.
+  {
+    name: 'competitor_ads',
+    description:
+      'Look up COMPETITOR ADS from the stored research archive for a project: what a rival is running, ' +
+      'their headline and copy, CTA, format, how long each ad has run, when it was first found and last ' +
+      'seen, and a permanent Meta Ad Library link. Use for "show me Hustle Malaysia\'s ads", "what are ' +
+      'competitors running for Starcity", "any new competitor ads this week", "which rival ads have run ' +
+      'longest". Reads the ARCHIVE the morning research builds — not live, and it spends no Adyntel credits. ' +
+      'Run length is the only results signal an ad library gives: 60+ days means the advertiser keeps paying for it.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'Project or client name (e.g. "Claude Malaysia", "Starcity").' },
+        advertiser: { type: 'string', description: 'A competitor page name or part of it, e.g. "hustle". Optional.' },
+        keyword: {
+          type: 'string',
+          description: 'Only ads found by this search keyword, or "page:<brand>" for a brand-watch pull. Optional.',
+        },
+        status: {
+          type: 'string',
+          enum: ['live', 'stale', 'ended'],
+          description: 'live = active and seen in the last 14 days; stale = active on paper but not seen lately; ended.',
+        },
+        days: { type: 'number', description: 'Only ads last seen within this many days. Optional.' },
+        limit: { type: 'number', description: 'How many ads to return, 1-20. Default 8.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'competitor_advertisers',
+    description:
+      'WHO is advertising in a project\'s market, from the stored research archive: each competitor page with ' +
+      'how many of its ads are stored, how many are active, its longest-running ad, and when it was last seen. ' +
+      'Use for "who are the competitors", "who is spending most in this market", "which rivals should I watch". ' +
+      'Reads the archive; spends no Adyntel credits.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'Project or client name.' },
+        top: { type: 'number', description: 'How many advertisers, 1-25. Default 10.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'research_log',
+    description:
+      'The DAILY COMPETITOR RESEARCH history for a project: for each morning, what was searched, which brand ' +
+      'was watched, the credits spent, how many ads and new ideas were found, and what the brief concluded. ' +
+      'Use for "what did the research find this week", "what did we learn about competitors on Tuesday", ' +
+      '"how many Adyntel credits have we used". Reads the archive; spends no credits.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'Project or client name.' },
+        days: { type: 'number', description: 'How many recent mornings, 1-30. Default 7.' },
       },
       required: [],
     },
@@ -359,6 +424,92 @@ export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []):
 
     const { project, candidates } = resolve(input?.project, pool)
     if (!project) return ask(candidates ?? pool)
+
+    // ── the competitor archive (stored research; no Adyntel call, no credits)
+    if (name === 'competitor_ads') {
+      const status = ['live', 'stale', 'ended'].includes(input?.status) ? (input.status as AdStatus) : undefined
+      const recent = Number.isFinite(Number(input?.days)) ? Math.min(Math.max(Number(input.days), 1), 365) : undefined
+      const res = await searchArchivedAds(project.id, {
+        advertiser: typeof input?.advertiser === 'string' ? input.advertiser : undefined,
+        keyword: typeof input?.keyword === 'string' ? input.keyword : undefined,
+        status,
+        days: recent,
+        limit: Number(input?.limit) || 8,
+      })
+      if (res.error) return JSON.stringify({ status: 'error', message: res.error })
+      return JSON.stringify({
+        project: project.name,
+        source: 'stored research archive (not live; no credits spent)',
+        matching_ads: res.total,
+        showing: res.rows.length,
+        browse: `/projects/${project.id}/competitors`,
+        ads: res.rows.map((a) => ({
+          advertiser: a.competitor,
+          status: adStatus(a),
+          // clip(), not slice(): a sliced surrogate pair gets the model call rejected.
+          headline: a.title ? clip(a.title, 100) : null,
+          copy: a.body_text ? clip(a.body_text.replace(/\s+/g, ' ').trim(), 120) : null,
+          cta: a.cta_text,
+          format: a.display_format,
+          run_days: a.run_days,
+          first_found: a.first_seen_at?.slice(0, 10),
+          last_seen: a.last_seen_at?.slice(0, 10),
+          found_by: (a.keywords ?? []).slice(0, 3).map(keywordLabel),
+          ad_library: adLibraryUrl(a.ad_archive_id),
+        })),
+      })
+    }
+
+    if (name === 'competitor_advertisers') {
+      const top = Math.min(Math.max(Number(input?.top) || 10, 1), 25)
+      const f = await loadAdFacets(project.id)
+      if (f.migrationPending && !f.advertisers.length)
+        return JSON.stringify({
+          status: 'unavailable',
+          message: 'The advertiser summary needs supabase/competitor-archive.sql run once in the Supabase SQL editor.',
+        })
+      return JSON.stringify({
+        project: project.name,
+        source: 'stored research archive (no credits spent)',
+        advertisers_tracked: f.advertisers.length,
+        top: f.advertisers.slice(0, top).map((a) => ({
+          advertiser: a.competitor,
+          ads_stored: a.ads,
+          active: a.active,
+          on_topic: a.on_topic,
+          longest_run_days: a.longest_run,
+          first_found: a.first_seen_at?.slice(0, 10),
+          last_seen: a.last_seen_at?.slice(0, 10),
+        })),
+      })
+    }
+
+    if (name === 'research_log') {
+      const n = Math.min(Math.max(Number(input?.days) || 7, 1), 30)
+      const log = await loadResearchLog(project.id, n)
+      if (log.error) return JSON.stringify({ status: 'error', message: log.error })
+      // The latest morning in full — what the model concluded — and the rest as counts.
+      const latest = log.runs[0] ? await loadRunDetail(project.id, log.runs[0].date) : null
+      const summary = latest?.brief?.report_text ?? latest?.run?.facts_text ?? null
+      return JSON.stringify({
+        project: project.name,
+        source: 'stored research archive (no credits spent)',
+        mornings: log.runs.length,
+        credits_spent: log.runs.reduce((s, r) => s + (r.credits ?? 0), 0),
+        browse: `/projects/${project.id}/competitors/log`,
+        latest_summary: summary ? clip(summary, 900) : null,
+        runs: log.runs.map((r) => ({
+          brief_for: r.date,
+          searched: (r.searches ?? []).map((x) => `${x.keyword} (${x.country})`),
+          brand_watch: r.watch_page,
+          credits: r.credits,
+          ads_seen: r.ads_seen,
+          advertisers: r.advertisers,
+          new_ideas: r.new_concepts,
+          new_versions: r.new_variations,
+        })),
+      })
+    }
 
     if (name === 'refresh_ads') {
       const pulled = await syncProjectAds(project, Number.isFinite(Number(input?.days)) ? Number(input.days) : 7)
