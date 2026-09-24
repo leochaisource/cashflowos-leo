@@ -145,6 +145,13 @@ export type AdClient = {
     spendSince: string
     /** Order source names that are upsells to existing buyers, not new seats. */
     excludeOrderSources?: string[]
+    /**
+     * Count WhatsApp conversation windows opened on the report day. Every new
+     * lead gets an outbound WhatsApp template, but the 24-hour window in which
+     * the team can chat freely only opens when the lead REPLIES — so this is
+     * the number of new conversations the CS team actually has to work.
+     */
+    whatsappWindows?: boolean
   }
 
   /**
@@ -287,6 +294,7 @@ export const AD_CLIENTS: AdClient[] = [
       salesSince: '2026-09-13', // the last 1-day class — MOVE THIS after the next one
       spendSince: '2026-09-16', // CM1D campaign start — MOVE THIS at the next launch
       excludeOrderSources: ['VIP Ticket Upgrade'], // an upsell to a buyer, not another seat
+      whatsappWindows: true, // the Claude Malaysia line, +60 17-598 7155
     },
     watchPages: [
       { name: 'Hustle Malaysia', pageId: '791929197338366' }, // "Certified Claude AI Professional" — the direct competitor

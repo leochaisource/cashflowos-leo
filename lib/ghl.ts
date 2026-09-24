@@ -50,6 +50,10 @@ export type GhlPerformance = {
   funnels: GhlFunnelRow[]
   /** Seats sold on the report day itself. null = unreadable. */
   purchasesToday: number | null
+  /** WhatsApp conversation windows opened on the report day. null = unreadable, or not tracked. */
+  whatsappWindows: number | null
+  /** Whether this client tracks WhatsApp windows — so a failed read prints "unavailable" instead of vanishing. */
+  whatsappTracked: boolean
   /** Seats sold since `salesSince` (the last class) through the report day. */
   purchasesTotal: number | null
   salesSince: string
@@ -98,8 +102,8 @@ export function dayBounds(dateISO: string, timeZone: string): { start: string; e
   }
 }
 
-async function getJSON(url: string, token: string): Promise<Record<string, unknown>> {
-  const res = await fetch(url, { headers: headers(token), signal: AbortSignal.timeout(30000) })
+async function getJSON(url: string, token: string, version = VERSION): Promise<Record<string, unknown>> {
+  const res = await fetch(url, { headers: { ...headers(token), Version: version }, signal: AbortSignal.timeout(30000) })
   if (!res.ok) throw new Error(`GHL ${res.status} on ${new URL(url).pathname}`)
   return (await res.json()) as Record<string, unknown>
 }
@@ -125,6 +129,58 @@ export async function formSubmissions(
   const total = (j.meta as { total?: number } | undefined)?.total
   if (typeof total !== 'number') throw new Error(`GHL form ${formId}: no total in response`)
   return total
+}
+
+/**
+ * How many WhatsApp conversation windows OPENED in one day.
+ *
+ * WhatsApp gives a business 24 hours of free-form chat each time the customer
+ * messages. A lead who never replies to the outbound template never opens one,
+ * so opt-ins overstate the conversations the team can actually have. A window
+ * opens on an inbound message when that person has sent nothing in the 24 hours
+ * before it — so the export reads from a day EARLIER than the report day, or a
+ * lead who also wrote late the previous night would be miscounted as new.
+ *
+ * Counts people, not messages: one person can only open one window per day
+ * (a second would need a 24-hour gap inside the same day). Reads the
+ * conversations export (100 per page, cursor-paged); the conversations API
+ * wants its own Version header.
+ */
+export async function whatsappWindowsOpened(
+  locationId: string,
+  token: string,
+  dayStartISO: string,
+  dayEndISO: string,
+): Promise<number> {
+  const dayStart = Date.parse(dayStartISO)
+  const dayEnd = Date.parse(dayEndISO)
+  const from = new Date(dayStart - 864e5).toISOString()
+  type Msg = { contactId?: string; direction?: string; dateAdded?: string }
+  const byContact = new Map<string, number[]>()
+  let cursor: string | null = null
+  for (let page = 0; page < 100; page++) {
+    const url =
+      `${API}/conversations/messages/export?locationId=${encodeURIComponent(locationId)}&channel=WhatsApp&limit=100` +
+      `&startDate=${encodeURIComponent(from)}&endDate=${encodeURIComponent(dayEndISO)}` +
+      (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')
+    const j = await getJSON(url, token, '2021-04-15')
+    const msgs = (j.messages as Msg[] | undefined) ?? []
+    for (const m of msgs) {
+      if (m.direction !== 'inbound' || !m.contactId || !m.dateAdded) continue
+      const t = Date.parse(m.dateAdded)
+      if (!Number.isFinite(t)) continue
+      ;(byContact.get(m.contactId) ?? byContact.set(m.contactId, []).get(m.contactId)!).push(t)
+    }
+    cursor = (j.nextCursor as string | undefined) ?? null
+    if (!cursor || msgs.length < 100) break
+  }
+  let opened = 0
+  for (const times of byContact.values()) {
+    const today = times.filter((t) => t >= dayStart && t <= dayEnd)
+    // Opened today if any of today's messages had no inbound in the 24h before it.
+    if (today.some((t) => !times.some((p) => p < t && p >= t - 864e5))) opened++
+  }
+  return opened
 }
 
 export type LeadRow = {
@@ -371,6 +427,15 @@ export async function ghlPerformance(
     })
   }
 
+  let whatsappWindows: number | null = null
+  if (cfg.whatsappWindows) {
+    try {
+      whatsappWindows = await whatsappWindowsOpened(locationId, token, start, end)
+    } catch (e) {
+      problems.push(`WhatsApp conversations unreadable (${(e as Error).message}) — shown as unknown, not zero.`)
+    }
+  }
+
   let purchasesTotal: number | null = null
   let purchasesToday: number | null = null
   try {
@@ -389,6 +454,8 @@ export async function ghlPerformance(
     date: dateISO,
     funnels,
     purchasesToday,
+    whatsappWindows,
+    whatsappTracked: !!cfg.whatsappWindows,
     purchasesTotal,
     salesSince: cfg.salesSince,
     spendTotal,
@@ -423,6 +490,8 @@ export function renderPerformance(p: GhlPerformance): string {
       `CPL: ${f.cpl === null ? (f.leads === 0 ? 'no leads yet' : 'unavailable') : rm(f.cpl)}`,
     )
   }
+  if (p.whatsappWindows !== null || p.whatsappTracked)
+    out.push('', `WhatsApp conversation windows opened: ${p.whatsappWindows === null ? 'unavailable' : p.whatsappWindows}`)
   out.push('', `Direct purchases: ${p.purchasesToday === null ? 'unavailable' : p.purchasesToday}`)
   out.push(
     '',
