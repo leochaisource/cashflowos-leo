@@ -2,12 +2,14 @@ import 'server-only'
 import { supabase, supabaseConfigured } from './supabase'
 import { publicThumbUrl } from './creatives'
 import type { CompetitorStats } from './adyntel'
+import type { Landing } from './competitor-profiles'
 
 // THE COMPETITOR ARCHIVE — read side.
 //
 // Everything the 8am runs have found, for one project, as something a person
-// can browse: the ads library (/projects/<id>/competitors) and the daily
-// research log (/projects/<id>/competitors/log), plus the bot's archive tools.
+// can browse: the competitors list (/projects/<id>/competitors), the ads
+// library (/competitors/ads) and the daily research log (/competitors/log),
+// plus the bot's archive tools.
 //
 // Three rules shape every query here:
 //
@@ -118,7 +120,7 @@ export function adFilterHref(id: string, f: AdFilters, patch: Partial<AdFilters>
   if (next.run) q.set('run', next.run)
   if (next.page > 1) q.set('page', String(next.page))
   const s = q.toString()
-  return `/projects/${encodeURIComponent(id)}/competitors${s ? `?${s}` : ''}`
+  return `/projects/${encodeURIComponent(id)}/competitors/ads${s ? `?${s}` : ''}`
 }
 
 export function adStatus(a: Pick<StoredAd, 'is_active' | 'last_seen_at'>, now = Date.now()): AdStatus {
@@ -442,4 +444,149 @@ export async function searchArchivedAds(
   const res = first.error && needsMigration(first.error.message) ? await run(AD_COLS_BASE, false) : first
   if (res.error) return { rows: [], total: null, error: res.error.message }
   return { rows: (res.data ?? []) as unknown as StoredAd[], total: res.count ?? null, error: null }
+}
+
+// ---------------------------------------------------------------- the competitors list
+
+// One row per competitor (supabase/competitor-profiles.sql), built from the
+// stored ads by lib/competitor-profiles.ts. Small next to competitor_ads, but
+// it still grows every morning, so the database filters, sorts and pages it.
+
+export const PROFILES_MIGRATION_FILE = 'supabase/competitor-profiles.sql'
+export type ProfileShow = 'competitors' | 'others' | 'all'
+export type ProfileSort = 'active' | 'ads' | 'run' | 'new' | 'name'
+export type ProfileFilters = { show: ProfileShow; sort: ProfileSort; q: string | null; page: number }
+
+export type CompetitorProfile = {
+  id: number
+  competitor: string
+  page_id: string | null
+  page_url: string | null
+  landings: Landing[]
+  usp: string | null
+  offer: string | null
+  is_competitor: boolean | null
+  usp_source: string | null
+  ads: number
+  active_ads: number
+  longest_run: number | null
+  first_seen_at: string | null
+  last_seen_at: string | null
+  updated_at: string
+}
+
+export type ProfileCounts = {
+  competitors: number | null
+  others: number | null
+  advertisingNow: number | null
+  newThisWeek: number | null
+  uspPending: number | null
+}
+
+const PROFILE_COLS =
+  'id, competitor, page_id, page_url, landings, usp, offer, is_competitor, usp_source, ads, active_ads, ' +
+  'longest_run, first_seen_at, last_seen_at, updated_at'
+
+const profilesMissing = (msg: string) => /competitor_profiles|is_competitor|schema cache|does not exist/i.test(msg)
+
+export function parseProfileFilters(sp: Record<string, string | string[] | undefined>): ProfileFilters {
+  const pick = <T extends string>(v: string | null, allowed: readonly T[], dflt: T): T =>
+    v && (allowed as readonly string[]).includes(v) ? (v as T) : dflt
+  // Characters PostgREST's filter grammar gives meaning to are dropped, not escaped.
+  const q = (one(sp.q) ?? '').replace(/[%_,.()*:"\\]/g, ' ').replace(/\s+/g, ' ').trim()
+  return {
+    show: pick(one(sp.show), ['competitors', 'others', 'all'] as const, 'competitors'),
+    sort: pick(one(sp.sort), ['active', 'ads', 'run', 'new', 'name'] as const, 'active'),
+    q: q ? q.slice(0, 60) : null,
+    page: Math.max(1, Math.floor(Number(one(sp.page)) || 1)),
+  }
+}
+
+/** A link to the competitors list with some filters changed; defaults omitted, page reset unless paging. */
+export function profileFilterHref(id: string, f: ProfileFilters, patch: Partial<ProfileFilters>): string {
+  const next: ProfileFilters = { ...f, ...patch, page: patch.page ?? 1 }
+  const p = new URLSearchParams()
+  if (next.show !== 'competitors') p.set('show', next.show)
+  if (next.sort !== 'active') p.set('sort', next.sort)
+  if (next.q) p.set('q', next.q)
+  if (next.page > 1) p.set('page', String(next.page))
+  const s = p.toString()
+  return `/projects/${encodeURIComponent(id)}/competitors${s ? `?${s}` : ''}`
+}
+
+/** The ads library, filtered to one advertiser. */
+export const adsOfHref = (id: string, competitor: string) =>
+  adFilterHref(id, parseAdFilters({}), { adv: competitor })
+
+export async function loadProfiles(
+  projectId: string,
+  f: ProfileFilters,
+): Promise<{
+  rows: CompetitorProfile[]
+  total: number | null
+  counts: ProfileCounts
+  error: string | null
+  migrationPending: boolean
+}> {
+  const noCounts: ProfileCounts = { competitors: null, others: null, advertisingNow: null, newThisWeek: null, uspPending: null }
+  if (!supabaseConfigured) return { rows: [], total: null, counts: noCounts, error: 'Supabase is not configured.', migrationPending: false }
+
+  const base = (cols: string, head = false) =>
+    supabase.from('competitor_profiles').select(cols, { count: 'exact', head }).eq('project', projectId) as unknown as Q
+  // "Not judged yet" (NULL) counts as a competitor until a USP pass says otherwise.
+  const realOnly = (q: Q) => q.not('is_competitor', 'is', false) as Q
+  const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString()
+
+  let list = base(PROFILE_COLS)
+  if (f.show === 'competitors') list = realOnly(list)
+  if (f.show === 'others') list = list.is('is_competitor', false) as Q
+  if (f.q) list = list.or(`competitor.ilike.%${f.q}%,usp.ilike.%${f.q}%,offer.ilike.%${f.q}%`) as Q
+  if (f.sort === 'active') list = list.order('active_ads', { ascending: false }).order('ads', { ascending: false }) as Q
+  if (f.sort === 'ads') list = list.order('ads', { ascending: false }) as Q
+  if (f.sort === 'run') list = list.order('longest_run', { ascending: false, nullsFirst: false }) as Q
+  if (f.sort === 'new') list = list.order('first_seen_at', { ascending: false, nullsFirst: false }) as Q
+  if (f.sort === 'name') list = list.order('competitor') as Q
+  const from = (f.page - 1) * PAGE_SIZE
+  list = list.order('id').range(from, from + PAGE_SIZE - 1) as Q
+
+  const [res, comp, others, now, fresh, pending] = await Promise.all([
+    list,
+    realOnly(base('id', true)),
+    base('id', true).is('is_competitor', false),
+    realOnly(base('id', true)).gt('active_ads', 0),
+    realOnly(base('id', true)).gte('first_seen_at', weekAgo),
+    realOnly(base('id', true)).is('usp', null),
+  ])
+  if (res.error) {
+    const pendingMigration = profilesMissing(res.error.message)
+    return { rows: [], total: null, counts: noCounts, error: pendingMigration ? null : res.error.message, migrationPending: pendingMigration }
+  }
+  const n = (r: { error: unknown; count: number | null }) => (r.error ? null : r.count)
+  return {
+    rows: (res.data ?? []) as unknown as CompetitorProfile[],
+    total: res.count ?? null,
+    counts: { competitors: n(comp), others: n(others), advertisingNow: n(now), newThisWeek: n(fresh), uspPending: n(pending) },
+    error: null,
+    migrationPending: false,
+  }
+}
+
+/**
+ * Profiles for the Telegram bot: the biggest real competitors, or the ones
+ * whose name matches. Null when the table doesn't exist yet, so the caller can
+ * fall back to the ads-only advertiser list.
+ */
+export async function profilesForBot(
+  projectId: string,
+  opts: { name?: string; top?: number },
+): Promise<CompetitorProfile[] | null> {
+  if (!supabaseConfigured) return null
+  let q = supabase.from('competitor_profiles').select(PROFILE_COLS).eq('project', projectId) as unknown as Q
+  if (opts.name) q = q.ilike('competitor', `%${opts.name.replace(/[%_]/g, '')}%`) as Q
+  else q = q.not('is_competitor', 'is', false) as Q
+  const { data, error } = await q
+    .order('active_ads', { ascending: false })
+    .order('ads', { ascending: false })
+    .limit(Math.min(Math.max(opts.top ?? 10, 1), 25))
+  return error ? null : ((data ?? []) as unknown as CompetitorProfile[])
 }

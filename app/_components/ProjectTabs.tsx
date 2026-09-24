@@ -1,15 +1,16 @@
 import Link from 'next/link'
 
-// The three views of one ad-client project, as a row of chips under the page
+// The views of one ad-client project, as a row of chips under the page
 // header. Server component — plain links, no client JS.
 
-export type ProjectTab = 'scorecard' | 'ads' | 'log'
+export type ProjectTab = 'scorecard' | 'competitors' | 'ads' | 'log'
 
 export default function ProjectTabs({ id, current }: { id: string; current: ProjectTab }) {
   const base = `/projects/${encodeURIComponent(id)}`
   const tabs: { key: ProjectTab; href: string; label: string }[] = [
     { key: 'scorecard', href: base, label: 'Scorecard' },
-    { key: 'ads', href: `${base}/competitors`, label: 'Competitor ads' },
+    { key: 'competitors', href: `${base}/competitors`, label: 'Competitors' },
+    { key: 'ads', href: `${base}/competitors/ads`, label: 'Competitor ads' },
     { key: 'log', href: `${base}/competitors/log`, label: 'Research log' },
   ]
   return (

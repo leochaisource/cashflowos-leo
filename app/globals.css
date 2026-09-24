@@ -441,3 +441,27 @@ code {
 .chips .lab { font-size: 12px; color: var(--dim); align-self: center; min-width: 52px; }
 .pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 0 0 24px; }
 .pager p { margin: 0; font-size: 13px; color: var(--dim); }
+
+/* ---- the competitors list (/projects/<id>/competitors) ---- */
+.cmp-search { display: flex; gap: 8px; margin-top: 4px; max-width: 560px; }
+.cmp-search .entry-in { flex: 1; min-width: 0; }
+.cmp-tbl td { vertical-align: top; }
+.cmp-tbl .cmp-name { width: 22%; }
+.cmp-name > a:first-child { font-weight: 600; color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+.cmp-name > a:first-child:hover { color: var(--clay-deep); text-decoration: underline; }
+.cmp-sub { display: block; font-size: 12px; color: var(--dim); margin-top: 3px; font-weight: 400; }
+.cmp-tbl .cmp-land { width: 20%; font-size: 13px; }
+.cmp-land ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.cmp-land a { color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+.cmp-land a:hover { color: var(--clay-deep); text-decoration: underline; }
+.cmp-n { color: var(--dim); font-size: 12px; }
+.cmp-usp p { margin: 0; line-height: 1.5; }
+.cmp-usp .cmp-offer { margin-top: 6px; font-size: 13px; color: var(--ink-soft); }
+.cmp-pending { color: var(--dim); font-style: italic; }
+.cmp-num { white-space: nowrap; }
+@media (max-width: 768px) {
+  /* Long cells stack their label above the content instead of beside it. */
+  .cmp-tbl td.cmp-name, .cmp-tbl td.cmp-land, .cmp-tbl td.cmp-usp { flex-direction: column; justify-content: flex-start; gap: 4px; width: auto; }
+  .cmp-tbl .cmp-num { text-align: right; }
+  .cmp-search { max-width: none; }
+}

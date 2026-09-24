@@ -111,7 +111,7 @@ export default async function ResearchLogPage({
               </ul>
             ) : null}
             <p className="set-note">
-              <Link href={`/projects/${id}/competitors?run=${run.date}`}>See the ads this run returned →</Link>
+              <Link href={`/projects/${id}/competitors/ads?run=${run.date}`}>See the ads this run returned →</Link>
             </p>
           </section>
 
@@ -182,7 +182,7 @@ export default async function ResearchLogPage({
                     </span>
                   </td>
                   <td data-label="">
-                    <Link href={`/projects/${id}/competitors?run=${r.date}`}>ads →</Link>
+                    <Link href={`/projects/${id}/competitors/ads?run=${r.date}`}>ads →</Link>
                   </td>
                 </tr>
               ))}

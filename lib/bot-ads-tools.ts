@@ -7,7 +7,17 @@ import { accountInsights } from './meta'
 import { loadSheetLeads, type SheetLead } from './leads-sheet'
 import { todayISO, type Rec } from './records'
 import { clip } from './format'
-import { searchArchivedAds, loadAdFacets, loadResearchLog, loadRunDetail, adStatus, adLibraryUrl, keywordLabel, type AdStatus } from './competitor-archive'
+import {
+  searchArchivedAds,
+  loadAdFacets,
+  loadResearchLog,
+  loadRunDetail,
+  profilesForBot,
+  adStatus,
+  adLibraryUrl,
+  keywordLabel,
+  type AdStatus,
+} from './competitor-archive'
 
 // The bot's ADS hands.
 //
@@ -208,15 +218,17 @@ export const BOT_ADS_TOOLS = [
   {
     name: 'competitor_advertisers',
     description:
-      'WHO is advertising in a project\'s market, from the stored research archive: each competitor page with ' +
-      'how many of its ads are stored, how many are active, its longest-running ad, and when it was last seen. ' +
-      'Use for "who are the competitors", "who is spending most in this market", "which rivals should I watch". ' +
-      'Reads the archive; spends no Adyntel credits.',
+      'WHO is competing in a project\'s market, from the stored research archive: each competitor with its ' +
+      'Facebook page, WHERE its ads send people (website, WhatsApp, instant form), its USP and current offer, ' +
+      'how many ads are live, and its longest-running ad. Advertisers ruled out as not real competitors are ' +
+      'left out unless asked for by name. Use for "who are the competitors", "what is X selling / what\'s their ' +
+      'USP", "where do their ads go", "which rivals should I watch". Reads the archive; spends no Adyntel credits.',
     input_schema: {
       type: 'object' as const,
       properties: {
         project: { type: 'string', description: 'Project or client name.' },
         top: { type: 'number', description: 'How many advertisers, 1-25. Default 10.' },
+        name: { type: 'string', description: 'Optional: one competitor, matched loosely ("hustle").' },
       },
       required: [],
     },
@@ -442,7 +454,7 @@ export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []):
         source: 'stored research archive (not live; no credits spent)',
         matching_ads: res.total,
         showing: res.rows.length,
-        browse: `/projects/${project.id}/competitors`,
+        browse: `/projects/${project.id}/competitors/ads`,
         ads: res.rows.map((a) => ({
           advertiser: a.competitor,
           status: adStatus(a),
@@ -462,6 +474,29 @@ export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []):
 
     if (name === 'competitor_advertisers') {
       const top = Math.min(Math.max(Number(input?.top) || 10, 1), 25)
+      const who = typeof input?.name === 'string' && input.name.trim() ? input.name.trim() : undefined
+      // The profiles carry the USP and landing pages; the ads-only facet is the
+      // fallback until supabase/competitor-profiles.sql has been run.
+      const profiles = await profilesForBot(project.id, { name: who, top })
+      if (profiles)
+        return JSON.stringify({
+          project: project.name,
+          source: 'stored research archive (no credits spent)',
+          browse: `/projects/${project.id}/competitors`,
+          competitors: profiles.map((p) => ({
+            competitor: p.competitor,
+            facebook_page: p.page_url,
+            is_competitor: p.is_competitor,
+            usp: p.usp ? clip(p.usp, 300) : 'not written yet',
+            offer: p.offer ? clip(p.offer, 160) : null,
+            ads_lead_to: (p.landings ?? []).map((l) => (l.url ? `${l.label} — ${l.url}` : l.label)),
+            live_ads: p.active_ads,
+            ads_stored: p.ads,
+            longest_run_days: p.longest_run,
+            first_found: p.first_seen_at?.slice(0, 10),
+            last_seen: p.last_seen_at?.slice(0, 10),
+          })),
+        })
       const f = await loadAdFacets(project.id)
       if (f.migrationPending && !f.advertisers.length)
         return JSON.stringify({

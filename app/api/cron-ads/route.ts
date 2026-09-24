@@ -3,6 +3,7 @@ import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, isRelevant, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 import { persistThumbnails } from '@/lib/creatives'
+import { refreshProfiles } from '@/lib/competitor-profiles'
 import { AD_CLIENTS, keywordsForToday, searchesForToday, watchPageForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, FUNNEL_BLOCK_NOTE, type AdClient } from '@/lib/ad-clients'
 import {
   ghlPerformance,
@@ -629,6 +630,21 @@ async function runClient(client: AdClient, records: Rec[]) {
       }
     } catch (e) {
       notes.push(`Creatives not saved: ${(e as Error).message}`)
+    }
+
+    // The Competitors tab: bring the profiles of everyone seen this morning up
+    // to date (new advertisers get a row, known ones fresh counts and landing
+    // pages), and write a USP for up to 10 that have none. refreshProfiles
+    // never throws — a failure is a note, never a lost brief.
+    const seenToday = [...new Set(competitors.map((a) => a.page_name).filter(Boolean))]
+    if (seenToday.length) {
+      const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim()
+      const p = await refreshProfiles(supabase, client, {
+        competitors: seenToday,
+        anthropic: anthropicKey ? new Anthropic({ apiKey: anthropicKey }) : null,
+        maxUsp: 10,
+      })
+      if (p.note) notes.push(p.note)
     }
 
     // Say it plainly when the market read was a slice. Otherwise the brief's
