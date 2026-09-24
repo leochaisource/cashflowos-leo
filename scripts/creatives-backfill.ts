@@ -7,9 +7,10 @@
 //
 // URGENT THE FIRST TIME: Meta's CDN URLs are signed and expire within weeks, so
 // every day this waits, more of the existing archive's images die for good.
-// Walks newest first — the newest URLs are the likeliest still to load — and
-// stops after a run of expired URLs, because everything older than a dead link
-// is almost certainly dead too.
+// Walks the most recently SEEN first — every sighting rewrites the stored media
+// URLs, so an ad found in July but seen yesterday carries a fresh link (ordering
+// by first_seen_at missed 242 of those on the first run) — and stops after a run
+// of expired URLs, because anything seen longer ago is almost certainly dead too.
 //
 // Uses lib/creatives.ts, the same code the cron runs, so a backfilled thumbnail
 // is indistinguishable from one saved on the morning the ad was found.
@@ -38,7 +39,7 @@ const db = createClient(
 
 type Row = { ad_archive_id: string; thumbnail_urls: string[]; image_urls: string[]; local_media: unknown[] | null }
 
-// Newest first, only rows with no saved thumbnail yet, paged under the
+// Freshest URLs first, only rows with no saved thumbnail yet, paged under the
 // 1,000-row response cap.
 const pending: Row[] = []
 for (let from = 0; pending.length < LIMIT; from += 1000) {
@@ -47,7 +48,8 @@ for (let from = 0; pending.length < LIMIT; from += 1000) {
     .select('ad_archive_id, thumbnail_urls, image_urls, local_media')
     .eq('client', client.id)
     .eq('local_media', '[]')
-    .order('first_seen_at', { ascending: false })
+    .order('last_seen_at', { ascending: false })
+    .order('ad_archive_id')
     .range(from, from + 999)
   if (!ALL) q = q.eq('on_topic', true)
   const { data, error } = await q
@@ -66,7 +68,7 @@ const queue: ThumbCandidate[] = pending
   .filter((c) => c.urls.length)
 
 console.log(
-  `${client.name}: ${queue.length} ad(s) without a saved thumbnail${ALL ? '' : ' (on-topic only)'}, newest first`,
+  `${client.name}: ${queue.length} ad(s) without a saved thumbnail${ALL ? '' : ' (on-topic only)'}, most recently seen first`,
 )
 
 // In batches of 20, so a long run of dead links can stop the walk early.
