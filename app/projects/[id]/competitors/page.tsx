@@ -220,6 +220,8 @@ function ProfileRow({ id, p }: { id: string; p: CompetitorProfile }) {
         )}
       </td>
       <td data-label="USP & offer" className="cmp-usp">
+        {/* The angle is what the 8am summary says about them; the USP is the full sentence. */}
+        {p.angle ? <p className="cmp-angle">{p.angle}</p> : null}
         {p.usp ? <p>{p.usp}</p> : <p className="cmp-pending">USP not written yet.</p>}
         {p.offer ? (
           <p className="cmp-offer">

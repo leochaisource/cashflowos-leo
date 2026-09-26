@@ -7,6 +7,7 @@
 //   ... --export=path.json    dump the dossiers of advertisers with no USP yet, to write them elsewhere
 //   ... --import=path.json    store USPs from a file: [{ "project"?, "competitor", "usp", "offer", "is_competitor" }]
 //   ... --source=<label>      who wrote the imported USPs (default "claude-session")
+//   ... --angles=path.json    store angles only: [{ "project"?, "competitor", "angle" }]
 //
 // The 8am run keeps profiles current for the advertisers it sees each morning
 // and fills a few missing USPs per run; this script is for the first build and
@@ -25,6 +26,7 @@ import {
   dossierFor,
   refreshProfiles,
   saveUsps,
+  saveAngles,
   type UspResult,
 } from '../lib/competitor-profiles.ts'
 
@@ -39,6 +41,7 @@ const USP = arg('usp')
 const EXPORT = arg('export')
 const IMPORT = arg('import')
 const SOURCE = arg('source') || 'claude-session'
+const ANGLES = arg('angles')
 
 const clients = ALL
   ? AD_CLIENTS.filter((c) => typeof c.rank === 'number').sort((a, b) => (a.rank as number) - (b.rank as number))
@@ -55,6 +58,17 @@ const db = createClient(
 )
 
 // ---------------------------------------------------------------- import
+if (ANGLES) {
+  const items = JSON.parse(fs.readFileSync(ANGLES, 'utf8')) as { project?: string; competitor: string; angle: string }[]
+  for (const c of clients) {
+    const mine = items.filter((i) => !i.project || i.project === c.id)
+    if (!mine.length) continue
+    const r = await saveAngles(db, c.id, mine)
+    console.log(`${c.id}: ${r.saved} of ${mine.length} angles stored${r.error ? ` — stopped: ${r.error}` : ''}`)
+  }
+  process.exit(0)
+}
+
 if (IMPORT !== undefined) {
   const items = JSON.parse(fs.readFileSync(IMPORT, 'utf8')) as (UspResult & { project?: string })[]
   for (const c of clients) {

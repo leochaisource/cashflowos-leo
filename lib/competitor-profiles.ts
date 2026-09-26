@@ -173,7 +173,14 @@ export function dossierFor(competitor: string, ads: ProfileAd[], landings: Landi
 
 // ---------------------------------------------------------------- the USP
 
-export type UspResult = { competitor: string; usp: string; offer: string | null; is_competitor: boolean | null }
+export type UspResult = {
+  competitor: string
+  usp: string
+  offer: string | null
+  is_competitor: boolean | null
+  /** The angle in a few words — what the 8am summary shows. Optional: older imports have none. */
+  angle?: string | null
+}
 
 const USP_SCHEMA = {
   type: 'object',
@@ -186,9 +193,10 @@ const USP_SCHEMA = {
           competitor: { type: 'string' },
           usp: { type: 'string' },
           offer: { type: 'string' },
+          angle: { type: 'string' },
           is_competitor: { type: 'boolean' },
         },
-        required: ['competitor', 'usp', 'offer', 'is_competitor'],
+        required: ['competitor', 'usp', 'offer', 'angle', 'is_competitor'],
         additionalProperties: false,
       },
     },
@@ -208,6 +216,9 @@ const uspSystem = (client: AdClient) =>
   'to tell, say what they sell and "USP not stated in the ads".\n' +
   '- offer: the concrete hook in the ads, if any — a price, a free class or seat, a discount, a bonus, a deadline, ' +
   'a guarantee. Quote numbers and currencies exactly as the ads give them. Empty string if there is none.\n' +
+  '- angle: the pitch in 3 to 8 words, lower case, no full stop — the lever they pull, as a marketer would ' +
+  'name it (e.g. "official Claude partner certification", "gov\'t-subsidised short courses", "build your own ' +
+  'CRM in 2 days", "free 1-day AI clone workshop"). Not the product category alone.\n' +
   "- is_competitor: true if someone who would buy the client's offer could plausibly buy this INSTEAD — the same " +
   'kind of product or a real substitute for it. false for what the keyword search merely dragged in: software or ' +
   'hardware vendors, conferences and expos, courses on unrelated subjects or for another market. When false, end ' +
@@ -244,7 +255,13 @@ export async function writeUsps(
       const wanted = new Set(batch.map((b) => b.competitor))
       for (const p of res.parsed_output?.profiles ?? []) {
         if (!wanted.has(p.competitor) || !p.usp.trim()) continue // a renamed advertiser would orphan the row
-        results.push({ competitor: p.competitor, usp: p.usp.trim(), offer: p.offer.trim() || null, is_competitor: p.is_competitor })
+        results.push({
+          competitor: p.competitor,
+          usp: p.usp.trim(),
+          offer: p.offer.trim() || null,
+          angle: p.angle.trim() || null,
+          is_competitor: p.is_competitor,
+        })
       }
     } catch (e) {
       error = (e as Error).message
@@ -406,21 +423,47 @@ export async function saveUsps(
   groups?: Map<string, ProfileAd[]>,
 ): Promise<number> {
   let saved = 0
+  let withAngle = true // until the database says the column isn't there yet
   const now = new Date().toISOString()
   for (const r of results) {
-    const { error } = await db
-      .from('competitor_profiles')
-      .update({
-        usp: r.usp,
-        offer: r.offer,
-        is_competitor: r.is_competitor,
-        usp_source: source,
-        usp_ads: groups?.get(r.competitor)?.length ?? null,
-        usp_updated_at: now,
-      })
-      .eq('project', project)
-      .eq('competitor', r.competitor)
+    const row: Record<string, unknown> = {
+      usp: r.usp,
+      offer: r.offer,
+      is_competitor: r.is_competitor,
+      usp_source: source,
+      usp_ads: groups?.get(r.competitor)?.length ?? null,
+      usp_updated_at: now,
+    }
+    if (withAngle && r.angle !== undefined) row.angle = r.angle
+    const write = (values: Record<string, unknown>) =>
+      db.from('competitor_profiles').update(values).eq('project', project).eq('competitor', r.competitor)
+    let { error } = await write(row)
+    // Before the angle column exists, keep the USP rather than lose it.
+    if (error && /angle/.test(error.message)) {
+      withAngle = false
+      delete row.angle
+      ;({ error } = await write(row))
+    }
     if (!error) saved++
   }
   return saved
+}
+
+/** Store angles on their own — the in-session backfill for profiles written before angles existed. */
+export async function saveAngles(
+  db: SupabaseClient,
+  project: string,
+  items: { competitor: string; angle: string }[],
+): Promise<{ saved: number; error: string | null }> {
+  let saved = 0
+  for (const i of items) {
+    const { error } = await db
+      .from('competitor_profiles')
+      .update({ angle: i.angle.trim() || null })
+      .eq('project', project)
+      .eq('competitor', i.competitor)
+    if (error) return { saved, error: error.message }
+    saved++
+  }
+  return { saved, error: null }
 }

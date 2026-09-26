@@ -52,6 +52,11 @@ create table if not exists competitor_profiles (
 
 alter table competitor_profiles add column if not exists is_competitor boolean;
 
+-- The angle in a few words ("official Claude partner certification") — what the
+-- 8am summary shows next to each advertiser. The usp is the full sentence.
+-- Added 2026-09-26; NULL = not written yet (the summary falls back to the offer).
+alter table competitor_profiles add column if not exists angle text;
+
 create unique index if not exists competitor_profiles_key_idx
   on competitor_profiles (project, competitor);
 create index if not exists competitor_profiles_project_idx

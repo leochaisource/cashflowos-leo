@@ -465,6 +465,8 @@ export type CompetitorProfile = {
   landings: Landing[]
   usp: string | null
   offer: string | null
+  /** The pitch in a few words. Absent until supabase/competitor-profiles.sql adds the column. */
+  angle?: string | null
   is_competitor: boolean | null
   usp_source: string | null
   ads: number
@@ -537,20 +539,30 @@ export async function loadProfiles(
   const realOnly = (q: Q) => q.not('is_competitor', 'is', false) as Q
   const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString()
 
-  let list = base(PROFILE_COLS)
-  if (f.show === 'competitors') list = realOnly(list)
-  if (f.show === 'others') list = list.is('is_competitor', false) as Q
-  if (f.q) list = list.or(`competitor.ilike.%${f.q}%,usp.ilike.%${f.q}%,offer.ilike.%${f.q}%`) as Q
-  if (f.sort === 'active') list = list.order('active_ads', { ascending: false }).order('ads', { ascending: false }) as Q
-  if (f.sort === 'ads') list = list.order('ads', { ascending: false }) as Q
-  if (f.sort === 'run') list = list.order('longest_run', { ascending: false, nullsFirst: false }) as Q
-  if (f.sort === 'new') list = list.order('first_seen_at', { ascending: false, nullsFirst: false }) as Q
-  if (f.sort === 'name') list = list.order('competitor') as Q
   const from = (f.page - 1) * PAGE_SIZE
-  list = list.order('id').range(from, from + PAGE_SIZE - 1) as Q
+  const listQuery = (withAngle: boolean) => {
+    let list = base(withAngle ? PROFILE_COLS + ', angle' : PROFILE_COLS)
+    if (f.show === 'competitors') list = realOnly(list)
+    if (f.show === 'others') list = list.is('is_competitor', false) as Q
+    if (f.q)
+      list = list.or(
+        `competitor.ilike.%${f.q}%,usp.ilike.%${f.q}%,offer.ilike.%${f.q}%${withAngle ? `,angle.ilike.%${f.q}%` : ''}`,
+      ) as Q
+    if (f.sort === 'active') list = list.order('active_ads', { ascending: false }).order('ads', { ascending: false }) as Q
+    if (f.sort === 'ads') list = list.order('ads', { ascending: false }) as Q
+    if (f.sort === 'run') list = list.order('longest_run', { ascending: false, nullsFirst: false }) as Q
+    if (f.sort === 'new') list = list.order('first_seen_at', { ascending: false, nullsFirst: false }) as Q
+    if (f.sort === 'name') list = list.order('competitor') as Q
+    return list.order('id').range(from, from + PAGE_SIZE - 1) as Q
+  }
+  // The angle column arrived after the table (2026-09-26); read without it until it exists.
+  const withAngle = async () => {
+    const r = await listQuery(true)
+    return r.error && /angle/.test(r.error.message) ? listQuery(false) : r
+  }
 
   const [res, comp, others, now, fresh, pending] = await Promise.all([
-    list,
+    withAngle(),
     realOnly(base('id', true)),
     base('id', true).is('is_competitor', false),
     realOnly(base('id', true)).gt('active_ads', 0),
@@ -581,12 +593,16 @@ export async function profilesForBot(
   opts: { name?: string; top?: number },
 ): Promise<CompetitorProfile[] | null> {
   if (!supabaseConfigured) return null
-  let q = supabase.from('competitor_profiles').select(PROFILE_COLS).eq('project', projectId) as unknown as Q
-  if (opts.name) q = q.ilike('competitor', `%${opts.name.replace(/[%_]/g, '')}%`) as Q
-  else q = q.not('is_competitor', 'is', false) as Q
-  const { data, error } = await q
-    .order('active_ads', { ascending: false })
-    .order('ads', { ascending: false })
-    .limit(Math.min(Math.max(opts.top ?? 10, 1), 25))
+  const run = (cols: string) => {
+    let q = supabase.from('competitor_profiles').select(cols).eq('project', projectId) as unknown as Q
+    if (opts.name) q = q.ilike('competitor', `%${opts.name.replace(/[%_]/g, '')}%`) as Q
+    else q = q.not('is_competitor', 'is', false) as Q
+    return q
+      .order('active_ads', { ascending: false })
+      .order('ads', { ascending: false })
+      .limit(Math.min(Math.max(opts.top ?? 10, 1), 25))
+  }
+  let { data, error } = await run(PROFILE_COLS + ', angle')
+  if (error && /angle/.test(error.message)) ({ data, error } = await run(PROFILE_COLS))
   return error ? null : ((data ?? []) as unknown as CompetitorProfile[])
 }

@@ -487,6 +487,7 @@ export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []):
             competitor: p.competitor,
             facebook_page: p.page_url,
             is_competitor: p.is_competitor,
+            angle: p.angle ?? null,
             usp: p.usp ? clip(p.usp, 300) : 'not written yet',
             offer: p.offer ? clip(p.offer, 160) : null,
             ads_lead_to: (p.landings ?? []).map((l) => (l.url ? `${l.label} — ${l.url}` : l.label)),
