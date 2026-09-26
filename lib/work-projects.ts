@@ -112,24 +112,31 @@ export function stepsSummary(rows: Rec[], projectId: string, today = todayISO())
  * The brief's view: every project that has open steps, as compact text lines.
  * `projects` maps id → display name so ad clients and work projects read alike.
  */
-export function stepsBriefLines(
+/**
+ * Only the steps that need the owner NOW — overdue, due today or due tomorrow —
+ * one line each, most overdue first. The 9am brief is sent only when this (or a
+ * live approval, or a newly overdue invoice) has something in it.
+ */
+export function urgentStepLines(
   rows: Rec[],
-  projects: { id: string; name: string; due?: string | null }[],
+  projects: { id: string; name: string }[],
   today = todayISO(),
+  withinDays = 1,
 ): string[] {
   const days = (d: string) => Math.round((Date.parse(d) - Date.parse(today)) / 86_400_000)
-  const lines: string[] = []
+  const seen = new Set<string>()
+  const out: { n: number; line: string }[] = []
   for (const p of projects) {
-    const { open } = stepsFor(rows, p.id, today)
-    if (!open.length) continue
-    const bits = open.slice(0, 4).map((s) => {
-      if (!s.due) return `${s.title} (no deadline set)`
+    if (seen.has(p.id)) continue
+    seen.add(p.id)
+    for (const s of stepsFor(rows, p.id, today).open) {
+      if (!s.due) continue
       const n = days(s.due)
-      const when = n < 0 ? `OVERDUE by ${-n}d` : n === 0 ? 'due TODAY' : n === 1 ? 'due tomorrow' : `due in ${n}d (${s.due})`
-      return `${s.title} (${when})`
-    })
-    const head = p.due ? `${p.name} — target ${p.due}` : p.name
-    lines.push(`- ${head}: ${bits.join(' · ')}${open.length > 4 ? ` · +${open.length - 4} more` : ''}`)
+      if (n > withinDays) continue
+      const when = n < 0 ? `OVERDUE by ${-n}d` : n === 0 ? 'due today' : 'due tomorrow'
+      out.push({ n, line: `${p.name}: ${s.title} (${when})` })
+    }
   }
-  return lines
+  return out.sort((a, b) => a.n - b.n).map((o) => o.line)
 }
+

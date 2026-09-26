@@ -23,12 +23,15 @@ export const dynamic = 'force-dynamic'
 // flights would empty every tile on a client who is simply between campaigns.
 const WINDOW_DAYS = 30
 
+// Unexpired only — the same number as the sidebar badge (lib/records.ts
+// getPendingCount). An expired proposal can no longer be approved.
 async function proposedCount(): Promise<number> {
   if (!supabaseConfigured) return 0
   const { count, error } = await supabase
     .from('agent_actions')
     .select('id', { count: 'exact', head: true })
     .eq('status', 'proposed')
+    .gt('expires_at', new Date().toISOString())
   if (error) return 0
   return count ?? 0
 }

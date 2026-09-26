@@ -346,7 +346,9 @@ const overdueInvoiceCheck: ScheduledCheck = {
         const late = daysPast(r.due_date, today)
         const who = (r.meta?.customer as string) || r.title
         return {
-          idempotencyKey: `overdue-invoice:${r.id}:${today}`,
+          // ONCE A WEEK per invoice (days 8, 15, 22…), not every morning: a daily
+          // key sent the same card for the same invoice every day until it was paid.
+          idempotencyKey: `overdue-invoice:${r.id}:w${Math.floor(late / 7)}`,
           payload: {
             row_id: r.id,
             channel: 'whatsapp',
@@ -366,8 +368,8 @@ const overdueInvoiceCheck: ScheduledCheck = {
 // it does NOT touch your ad account.
 //
 // ⚠️ NOTE THE IDEMPOTENCY KEY — it deliberately differs from the chaser above.
-// An invoice gets MORE overdue every day, so `:${today}` correctly re-asks daily.
-// An ad's totals barely move day to day; that same pattern would re-propose the
+// The invoice chaser re-asks once a week (`:w${weeks late}`) as the invoice ages.
+// An ad's totals barely move day to day; a date-keyed pattern would re-propose the
 // identical recommendations every single morning forever. So this one keys on
 // SPEND: once per ad per issue, re-raised only when that ad has burned another
 // RM100 — i.e. only when there is genuinely new money at stake.
