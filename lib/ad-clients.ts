@@ -734,3 +734,23 @@ export const PRE_LAUNCH_PROMPT = (name: string) =>
   'SITUATION line if one is given. ' +
   HONESTY
 
+/**
+ * THE 8AM ANALYSIS (since 2026-09-26). The owner found the full LIVE/PRE_LAUNCH
+ * reports "too long, I don't even know what is happening". The brief now opens
+ * with a code-built "who is advertising, on what angle" summary (lib/brief-digest.ts),
+ * and the model adds at most FIVE lines under it. The long prompts above remain
+ * for scripts/ads-brief-replay.ts only.
+ */
+export const BRIEF_ANALYSIS_PROMPT = (name: string) =>
+  `You write the short analysis under an 8am competitor summary for ${name}, a Malaysian business. ` +
+  'The owner reads it on a phone in twenty seconds. Write AT MOST 5 lines, each starting with "- ", ' +
+  'under 90 words in total. No headers, no preamble, no sign-off.\n' +
+  'Lines 1-3: what the competitors\' angles and moves mean for this business — name real advertisers and ' +
+  'quote their actual hook. Run length is the only results signal (60+ days live = they keep paying for it; ' +
+  'several live variations of one idea = they are scaling it; a brand-new ad proves nothing yet).\n' +
+  'The last 1-2 lines start with "- 👉" and are specific things to do TODAY. If an OWNER\'S NEXT STEPS list ' +
+  'has something overdue or due today, one of them must be that step, with its deadline.\n' +
+  'A performance block and the competitor summary have already been sent above your text: never restate ' +
+  'their figures or re-list the advertisers. ' +
+  HONESTY
+

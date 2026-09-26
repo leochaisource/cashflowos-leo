@@ -4,7 +4,16 @@ import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, isRelevant, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 import { persistThumbnails } from '@/lib/creatives'
 import { refreshProfiles } from '@/lib/competitor-profiles'
-import { AD_CLIENTS, keywordsForToday, searchesForToday, watchPageForToday, isConfigured, LIVE_PROMPT, PRE_LAUNCH_PROMPT, FUNNEL_BLOCK_NOTE, type AdClient } from '@/lib/ad-clients'
+import { AD_CLIENTS, keywordsForToday, searchesForToday, watchPageForToday, isConfigured, BRIEF_ANALYSIS_PROMPT, type AdClient } from '@/lib/ad-clients'
+import {
+  loadDigestProfiles,
+  competitorDigest,
+  clampAnalysis,
+  operatorAlerts,
+  competitorsLink,
+  dayLabel,
+  type FreshAdvertiser,
+} from '@/lib/brief-digest'
 import {
   ghlPerformance,
   renderPerformance,
@@ -217,17 +226,28 @@ async function adyntelPage(pageId: string): Promise<{ ads: NormalisedAd[]; calls
 // than duplicated, and first_seen_at survives across runs.
 type PriorRow = PriorAd & { keywords: string[] | null }
 
+// PAGED. PostgREST returns at most 1,000 rows per request, and Claude Malaysia
+// holds ~2,000 ads: an unpaged read silently knew only half of them, so every
+// morning ~half the "new" ads were ads stored weeks ago (found 2026-09-26).
 async function loadPrior(clientId: string): Promise<PriorRow[]> {
   if (!supabaseConfigured) return []
-  const { data, error } = await supabase
-    .from('competitor_ads')
-    .select('ad_archive_id, competitor, is_active, title, body_text, keywords')
-    .eq('client', clientId)
-  if (error) {
-    console.error('[CFO] competitor_ads read failed:', error.message)
-    return []
+  const out: PriorRow[] = []
+  const size = 1000
+  for (let from = 0; ; from += size) {
+    const { data, error } = await supabase
+      .from('competitor_ads')
+      .select('ad_archive_id, competitor, is_active, title, body_text, keywords')
+      .eq('client', clientId)
+      .order('id')
+      .range(from, from + size - 1)
+    if (error) {
+      console.error(`[CFO] competitor_ads read failed at row ${from}:`, error.message)
+      break
+    }
+    out.push(...((data ?? []) as PriorRow[]))
+    if (!data || data.length < size) break
   }
-  return (data ?? []) as PriorRow[]
+  return out
 }
 
 /**
@@ -678,6 +698,21 @@ async function runClient(client: AdClient, records: Rec[]) {
       `Watching ${todaysSearches.length} of ${allSearches} keyword×country searches today (rotating): ${todaysSearches.map(([k, cc]) => `${k} (${cc})`).join(', ')}`,
     )
 
+  // Who turned up this morning with on-topic ads never stored before — the
+  // "new" half of the competitor summary. A demo client re-reads stored ads,
+  // so nothing about it is new.
+  const knownIds = new Set(prior.map((p) => p.ad_archive_id))
+  const knownAdvertisers = new Set(prior.map((p) => p.competitor))
+  const freshBy = new Map<string, FreshAdvertiser>()
+  if (!isDemo)
+    for (const a of competitors) {
+      if (!a.page_name || knownIds.has(a.ad_archive_id)) continue
+      if (!watchedIds.has(a.ad_archive_id) && !isRelevant(a, client.relevanceTerms, client.excludeTerms)) continue
+      const f = freshBy.get(a.page_name) ?? { competitor: a.page_name, newAds: 0, newAdvertiser: !knownAdvertisers.has(a.page_name) }
+      f.newAds++
+      freshBy.set(a.page_name, f)
+    }
+
   // ②b The client's own book of leads. This is the half of the funnel Meta
   // cannot see: who opted in, who actually paid, and who nobody has called yet.
   let sheet: Awaited<ReturnType<typeof leadsSummary>> = null
@@ -819,6 +854,25 @@ async function runClient(client: AdClient, records: Rec[]) {
   // call and costs the whole briefing, so sanitise the finished string too.
   const facts = stripLoneSurrogates(factsRaw)
 
+  // ③a WHO IS ADVERTISING, ON WHAT ANGLE — built in code from the competitor
+  // profiles, before the model runs, so the model can see what is already said
+  // and the summary survives a model outage (lib/brief-digest.ts).
+  let digest = ''
+  let competitorCount: number | null = null
+  if (focus && supabaseConfigured) {
+    const profiles = await loadDigestProfiles(supabase, client.id, [...freshBy.keys()])
+    if (profiles.error) notes.push(`Competitor summary unavailable: ${profiles.error}`)
+    competitorCount = profiles.competitors
+    digest = competitorDigest({
+      title: perfText ? 'Competitors' : `${client.client ?? client.name} — competitors`,
+      dateLabel: dayLabel(),
+      fresh: [...freshBy.values()],
+      profiles,
+    })
+  }
+
+  // ③b The model adds AT MOST five lines under it — what the angles mean and
+  // what to do today. clampAnalysis() enforces the five whatever it writes.
   let report = ''
   const key = process.env.ANTHROPIC_API_KEY?.trim()
   if (key) {
@@ -826,15 +880,21 @@ async function runClient(client: AdClient, records: Rec[]) {
       const anthropic = new Anthropic({ apiKey: key })
       const res = await anthropic.messages.create({
         model: 'claude-opus-5',
-        max_tokens: 3000,
-        system: (preLaunch ? PRE_LAUNCH_PROMPT(client.name) : LIVE_PROMPT(client.name)) + (perf ? FUNNEL_BLOCK_NOTE : ''),
-        messages: [{ role: 'user', content: facts }],
+        max_tokens: 700,
+        system: BRIEF_ANALYSIS_PROMPT(client.name),
+        messages: [
+          {
+            role: 'user',
+            content: facts + (digest ? `\n\nCOMPETITOR SUMMARY ALREADY SENT (do not repeat it):\n${digest.replace(/<[^>]+>/g, '')}` : ''),
+          },
+        ],
       })
-      report = res.content
-        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-        .map((b) => b.text)
-        .join('\n')
-        .trim()
+      report = clampAnalysis(
+        res.content
+          .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+          .map((b) => b.text)
+          .join('\n'),
+      )
     } catch (e) {
       notes.push(`Claude unavailable: ${(e as Error).message}`)
     }
@@ -846,29 +906,31 @@ async function runClient(client: AdClient, records: Rec[]) {
     (sheet?.ok
       ? `\n🧲 <b>${sheet.yesterday}</b> opt-in(s) yesterday · <b>${sheet.signups}</b> paid (${money(sheet.revenue)}) · <b>${sheet.followUps.length}</b> to follow up`
       : '')
-  // A brief whose model call failed used to fall back to the entire raw facts
-  // block — every competitor ad, every data-quality line. That is a debug dump,
-  // and this message goes to a client group. Where a performance block exists it
-  // already carries the numbers that matter, so the fallback is the block plus
-  // an honest line about the missing analysis.
-  if (!report && perfText) notes.push('The written analysis is missing from this brief — the figures above are complete.')
-  const body = [
-    perfText ? esc(perfText) : header,
-    '',
-    report ? esc(report) : perfText ? '' : esc(facts),
+  // THE MESSAGE (owner's format, 2026-09-26): the performance block, then who is
+  // advertising and on what angle, then at most five lines of analysis, a link
+  // to the full list, and at most two alerts he must act on. ONE message.
+  //
+  // What it no longer carries: the raw facts block (the model's INPUT — it used
+  // to be sent whenever the model failed, raw image URLs and all), and every
+  // internal note. Both are still archived in full (brief_daily.notes,
+  // adyntel_runs.facts_text) and shown on the Research log page.
+  const alerts = operatorAlerts(notes)
+  const text = [
+    perfText ? esc(perfText) : spent > 0 || !focus ? header : '',
+    digest,
+    report ? esc(report) : '',
+    focus ? competitorsLink(client.id, competitorCount) : '',
+    alerts.map((a) => `⚠️ ${esc(a)}`).join('\n'),
   ]
     .filter(Boolean)
-    .join('\n')
-  const noteBlock = notes.length ? '\n⚠️ ' + notes.map(esc).join('\n⚠️ ') : ''
-  const text = body + noteBlock
+    .join('\n\n')
 
   const chunks = chunk(text)
   // THE CLIENT GROUP GETS THE NUMBERS AND NOTHING ELSE (owner's instruction,
-  // 2026-09-23). The competitor analysis is working material for the operator —
-  // it names the client's rivals and argues about their creative, which is not
-  // a conversation to have in the client's own group. The operator still gets
-  // the full brief plus the warning notes.
-  const clientChunks = perfText ? chunk(esc(perfText)) : noteBlock ? chunk(body) : chunks
+  // 2026-09-23). The competitor summary is working material for the operator —
+  // it names the client's rivals, which is not a conversation to have in the
+  // client's own group. No numbers, no message to the group.
+  const clientChunks = perfText ? chunk(esc(perfText)) : []
   const to = recipients(client)
   // Track delivery per destination. A group the bot was removed from, or a
   // mistyped id, must show up in the run result — otherwise the brief goes
@@ -881,9 +943,10 @@ async function runClient(client: AdClient, records: Rec[]) {
     [to.client, clientChunks],
   ] as const) {
     for (const chat of chats) {
+      if (!parts.length) continue
       let ok = true
       for (const part of parts) {
-        const r = await sendMessage(chat, part)
+        const r = await sendMessage(chat, part, { noPreview: true })
         if (!r.ok) {
           ok = false
           failed.push({ chat, error: r.error ?? 'unknown' })

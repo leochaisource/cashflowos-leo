@@ -95,6 +95,8 @@ export async function botUsername(): Promise<string | null> {
 export async function sendMessage(
   chatId: string | number,
   text: string,
+  // A link to the dashboard would otherwise unfurl into a preview of the login page.
+  opts: { noPreview?: boolean } = {},
 ): Promise<{ ok: boolean; error?: string }> {
   const url = api('sendMessage')
   if (!url) {
@@ -104,7 +106,12 @@ export async function sendMessage(
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      parse_mode: 'HTML',
+      ...(opts.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
+    }),
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
