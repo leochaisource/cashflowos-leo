@@ -4,7 +4,7 @@ import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, isRelevant, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 import { persistThumbnails } from '@/lib/creatives'
 import { refreshProfiles } from '@/lib/competitor-profiles'
-import { AD_CLIENTS, keywordsForToday, searchesForToday, watchPageForToday, isConfigured, BRIEF_ANALYSIS_PROMPT, type AdClient } from '@/lib/ad-clients'
+import { AD_CLIENTS, keywordsForToday, searchesForToday, watchPageForToday, isConfigured, BRIEF_ANALYSIS_PROMPT, BRIEF_ANALYSIS_MAX_TOKENS, type AdClient } from '@/lib/ad-clients'
 import {
   loadDigestProfiles,
   competitorDigest,
@@ -880,7 +880,10 @@ async function runClient(client: AdClient, records: Rec[]) {
       const anthropic = new Anthropic({ apiKey: key })
       const res = await anthropic.messages.create({
         model: 'claude-opus-5',
-        max_tokens: 700,
+        max_tokens: BRIEF_ANALYSIS_MAX_TOKENS,
+        // Reading facts that are already in front of it: low effort keeps the
+        // thinking short, so the reply isn't squeezed out.
+        output_config: { effort: 'low' },
         system: BRIEF_ANALYSIS_PROMPT(client.name),
         messages: [
           {

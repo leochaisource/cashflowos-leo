@@ -751,6 +751,12 @@ export const BRIEF_ANALYSIS_PROMPT = (name: string) =>
   'The last 1-2 lines start with "- 👉" and are specific things to do TODAY. If an OWNER\'S NEXT STEPS list ' +
   'has something overdue or due today, one of them must be that step, with its deadline.\n' +
   'A performance block and the competitor summary have already been sent above your text: never restate ' +
-  'their figures or re-list the advertisers. ' +
-  HONESTY
+  'their figures or re-list the advertisers. Each line under 30 words.\n' +
+  // HONESTY's full wording made every line end in a disclaimer sentence; in five
+  // lines the rule matters, the recital doesn't.
+  'You only see public ads: never claim a competitor ad converts, works or is profitable, and do not add ' +
+  'disclaimers about it either — just read run length as the only signal. Never invent numbers.'
+
+/** Room for the model to think AND answer: at 700 tokens, thinking alone used it all and the reply was empty. */
+export const BRIEF_ANALYSIS_MAX_TOKENS = 3000
 

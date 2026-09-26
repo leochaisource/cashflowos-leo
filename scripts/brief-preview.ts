@@ -5,14 +5,20 @@
 //   ... --all      every focus project
 //   ... --date=2026-09-25   treat ads first stored that day as "new this morning"
 //
+//   ... --ai       also write the five-line analysis with the model (a few cents
+//                  of Anthropic credit; still no Adyntel, still nothing sent)
+//
 // Uses lib/brief-digest.ts, the code the cron runs, with the latest stored
-// performance block and notes from brief_daily. The one thing it cannot show is
-// the model's five-line analysis (that needs a live run).
+// performance block and notes from brief_daily. --ai feeds the model the stored
+// market facts (adyntel_runs.facts_text) — the same market section the cron
+// builds, minus that morning's delivery and leads lines.
+import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
-import { AD_CLIENTS } from '../lib/ad-clients.ts'
+import { AD_CLIENTS, BRIEF_ANALYSIS_PROMPT, BRIEF_ANALYSIS_MAX_TOKENS } from '../lib/ad-clients.ts'
 import {
   loadDigestProfiles,
   competitorDigest,
+  clampAnalysis,
   operatorAlerts,
   competitorsLink,
   dayLabel,
@@ -21,6 +27,7 @@ import {
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.split('=')[1]
 const ALL = process.argv.includes('--all')
+const AI = process.argv.includes('--ai')
 const ID = arg('client')
 const clients = ALL
   ? AD_CLIENTS.filter((c) => typeof c.rank === 'number').sort((a, b) => (a.rank as number) - (b.rank as number))
@@ -84,11 +91,39 @@ for (const c of clients) {
     fresh: [...freshBy.values()],
     profiles,
   })
+  let analysis = '<i>(+ at most 5 lines of AI analysis — run with --ai to see them)</i>'
+  if (AI) {
+    const { data: run } = await db
+      .from('adyntel_runs')
+      .select('facts_text')
+      .eq('project', c.id)
+      .order('date', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const facts = [
+      `CLIENT: ${c.name}`,
+      c.briefContext ? `SITUATION: ${c.briefContext}` : '',
+      perfText ? `PERFORMANCE BLOCK ALREADY SENT (verbatim, above your text — do not restate it):\n${perfText}` : '',
+      (run?.facts_text as string | null) ?? '',
+      `COMPETITOR SUMMARY ALREADY SENT (do not repeat it):\n${digest.replace(/<[^>]+>/g, '')}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+    const res = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.trim() }).messages.create({
+      model: 'claude-opus-5',
+      max_tokens: BRIEF_ANALYSIS_MAX_TOKENS,
+      output_config: { effort: 'low' },
+      system: BRIEF_ANALYSIS_PROMPT(c.name),
+      messages: [{ role: 'user', content: facts }],
+    })
+    const raw = res.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n')
+    analysis = esc(clampAnalysis(raw))
+  }
   const alerts = operatorAlerts(notes)
   const text = [
     perfText ? esc(perfText) : '',
     digest,
-    '<i>(+ at most 5 lines of AI analysis on a live run)</i>',
+    analysis,
     competitorsLink(c.id, profiles.competitors),
     alerts.map((a) => `⚠️ ${esc(a)}`).join('\n'),
   ]
