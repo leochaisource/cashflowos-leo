@@ -16,6 +16,7 @@ import {
 } from '@/lib/brief-digest'
 import {
   ghlPerformance,
+  perfWindow,
   renderPerformance,
   ghlConfigured,
   formSubmissionRows,
@@ -25,6 +26,8 @@ import {
   type SaleRow,
 } from '@/lib/ghl'
 import { archiveRun, archiveRegistry } from '@/lib/archive'
+import { ghlSaleRows } from '@/lib/archive-rows'
+import { estimateDeal, saveDealDaily } from '@/lib/deal-estimate'
 import { loadAdRows } from '@/lib/metrics'
 import { focusProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
@@ -464,7 +467,7 @@ async function runClient(client: AdClient, records: Rec[]) {
     } else {
       try {
         const reportDay = new Date(Date.now() - 864e5).toISOString().slice(0, 10)
-        const rows = await loadAdRows([client.id], client.ghl.spendSince)
+        const rows = await loadAdRows([client.id], perfWindow(client, reportDay).spendSince)
         const spendByCampaign = (campaign: string, from: string, to: string) =>
           rows
             .filter((r) => r.date >= from && r.date <= to && (campaign === '*' || r.campaign_name === campaign))
@@ -484,9 +487,10 @@ async function runClient(client: AdClient, records: Rec[]) {
           saleRowsForDay = await saleRows(
             loc,
             token,
-            dayBounds(g.salesSince, tz).start,
+            dayBounds(perfWindow(client, reportDay).salesSince, tz).start,
             end,
             g.excludeOrderSources ?? [],
+            g.includeOrderSources ?? [],
           )
         } catch (e) {
           notes.push(`Archive detail unavailable: ${(e as Error).message}`)
@@ -498,6 +502,32 @@ async function runClient(client: AdClient, records: Rec[]) {
       } catch (e) {
         notes.push(`Performance block failed: ${(e as Error).message}`)
       }
+    }
+  }
+
+  // ①b YOUR SHARE — Leo's estimated cut of the event in progress, under his
+  // profit-share deal with this client (lib/deal.ts). Operator only: it is his
+  // pay, not the client group's business. Yesterday's sales are stored first so
+  // the estimate sees them (the upsert is idempotent; the archive repeats it).
+  let dealText = ''
+  if (client.deal && supabaseConfigured) {
+    try {
+      if (saleRowsForDay.length)
+        await supabase.from('ghl_sales').upsert(ghlSaleRows(client.id, saleRowsForDay), { onConflict: 'project,transaction_id' })
+      const g = client.ghl
+      const ghl =
+        g && ghlConfigured(client)
+          ? { locationId: process.env[g.locationEnv]!.trim(), token: process.env[g.tokenEnv]!.trim() }
+          : null
+      const reportDay = new Date(Date.now() - 864e5).toISOString().slice(0, 10)
+      const est = await estimateDeal(supabase, client.id, client.deal, reportDay, { ghl, lookupMax: 40 })
+      if (est) {
+        dealText = est.text
+        const note = await saveDealDaily(supabase, client.id, est)
+        if (note) notes.push(note)
+      }
+    } catch (e) {
+      notes.push(`Your-share estimate unavailable: ${(e as Error).message}`)
     }
   }
 
@@ -958,6 +988,14 @@ async function runClient(client: AdClient, records: Rec[]) {
       }
       if (ok) delivered.push(chat)
     }
+  }
+  // YOUR SHARE goes as its OWN message to the owner's private chat ONLY (Leo,
+  // 2026-09-27) — not folded into the brief, never to the client group, and not
+  // to TELEGRAM_TEAM_CHAT_IDS either: it is his pay.
+  const owner = process.env.OWNER_CHAT_ID?.trim()
+  if (dealText && owner) {
+    const r = await sendMessage(owner, dealText, { noPreview: true })
+    if (!r.ok) failed.push({ chat: `${owner} (your share)`, error: r.error ?? 'unknown' })
   }
   if (failed.length)
     console.error(`[CFO] ${client.id}: brief undelivered to ${failed.map((f) => `${f.chat} (${f.error})`).join(', ')}`)

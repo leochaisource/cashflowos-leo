@@ -466,3 +466,11 @@ code {
   .cmp-tbl .cmp-num { text-align: right; }
   .cmp-search { max-width: none; }
 }
+
+/* ---- your share (/projects/<id>/share) ---- */
+.deal-tbl td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.deal-tbl tr.deal-h td { font-weight: 700; color: var(--ink); background: var(--paper-2); }
+.deal-tbl tr.deal-sum td { font-weight: 700; }
+.deal-tbl tr.deal-you td { color: var(--clay-deep); font-weight: 700; }
+.deal-tbl tr.deal-total td { font-weight: 800; font-size: 15px; border-top: 2px solid var(--line-2); }
+.deal-moves { margin: 0; padding-left: 18px; display: grid; gap: 8px; font-size: 14px; line-height: 1.5; color: var(--ink); }

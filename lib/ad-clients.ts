@@ -1,3 +1,6 @@
+// Explicit .ts extension: this registry is shared with scripts/ run by Node's type stripping.
+import { DEAL_CLAUDE_MALAYSIA, type Deal } from './deal.ts'
+
 // The client registry for the 8am ads brief AND the project dashboard.
 //
 // ONE list, two consumers: the morning brief (app/api/cron-ads) and the
@@ -74,6 +77,11 @@ export type AdClient = {
    */
   briefChatIdEnvs?: string[]
   /**
+   * Leo's commercial terms with this client, when he is paid a share of profit
+   * rather than a fee — drives the "💰 Your share" block and the Your share tab.
+   */
+  deal?: Deal
+  /**
    * Broad keywords drag in advertisers who merely share vocabulary — searching
    * "automate business operations" returns a real-estate app, an IT reseller and
    * a curtain shop, and because they have run for two years they outrank every
@@ -145,6 +153,8 @@ export type AdClient = {
     spendSince: string
     /** Order source names that are upsells to existing buyers, not new seats. */
     excludeOrderSources?: string[]
+    /** Only payments whose source contains one of these count — the location sells other products too. */
+    includeOrderSources?: string[]
     /**
      * Count WhatsApp conversation windows opened on the report day. Every new
      * lead gets an outbound WhatsApp template, but the 24-hour window in which
@@ -294,6 +304,7 @@ export const AD_CLIENTS: AdClient[] = [
       salesSince: '2026-09-13', // the last 1-day class — MOVE THIS after the next one
       spendSince: '2026-09-16', // CM1D campaign start — MOVE THIS at the next launch
       excludeOrderSources: ['VIP Ticket Upgrade'], // an upsell to a buyer, not another seat
+      includeOrderSources: ['Claude 1 Day Workshop', 'CM1D', 'VIP Ticket Upgrade'], // not Forex / Brain Health / CloserKing
       whatsappWindows: true, // the Claude Malaysia line, +60 17-598 7155
     },
     watchPages: [
@@ -312,6 +323,7 @@ export const AD_CLIENTS: AdClient[] = [
     // falls back to the owner — so adding this line changes nothing until the
     // env var exists.
     briefChatIdEnvs: ['CLAUDE_MALAYSIA_GROUP_CHAT_ID'],
+    deal: DEAL_CLAUDE_MALAYSIA, // Marketing Collaboration Agreement, 27 Aug 2026 — lib/deal.ts
     client: 'Claude Malaysia',
     stage: 'active',
     launchDate: '2026-08-02',

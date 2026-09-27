@@ -166,6 +166,7 @@ export function operatorAlerts(notes: string[], max = 2): string[] {
     [/^Meta unavailable/i, (n) => `Meta API failed: ${short(n)}`],
     [/^Performance block failed|^GHL|GoHighLevel/i, (n) => `GHL figures incomplete: ${short(n)}`],
     [/^Master leads sheet|^Leads unreadable/i, () => 'Master leads sheet could not be read.'],
+    [/^Your-share estimate unavailable/i, (n) => `Your-share estimate failed: ${short(n)}`],
     [/run supabase\/[\w-]+\.sql/i, (n) => `Database update needed: ${n.match(/supabase\/[\w-]+\.sql/i)?.[0]} (paste it in the Supabase SQL editor).`],
     [/^Claude unavailable/i, (n) => `AI analysis failed: ${short(n)}`],
   ]

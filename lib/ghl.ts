@@ -1,4 +1,6 @@
 import type { AdClient } from './ad-clients'
+// Explicit .ts extension: this file is shared with scripts/ (Node type stripping).
+import { previousEventDate } from './deal.ts'
 
 // GoHighLevel — the half of the funnel Meta cannot see.
 //
@@ -310,6 +312,9 @@ export async function saleRows(
   fromISO: string,
   untilISO: string,
   excludeSources: string[],
+  // The GHL location also sells other businesses' products (Forex, Brain
+  // Health, CloserKing). Only sources matching one of these are this client's.
+  includeSources: string[] = [],
 ): Promise<SaleRow[]> {
   // GHL's date-only startAt/endAt are UTC, so the request is deliberately
   // widened by a day at each end and the exact window is applied here against
@@ -333,6 +338,8 @@ export async function saleRows(
   const wanted = txns.filter((t) => {
     // Paid only: a pending or failed checkout is not a seat in the room.
     if (t.status !== 'succeeded') return false
+    const src = (t.entitySourceName ?? '').toLowerCase()
+    if (includeSources.length && !includeSources.some((x) => src.includes(x.toLowerCase()))) return false
     const at = new Date(t.createdAt).getTime()
     return at >= from && at <= until
   })
@@ -387,8 +394,9 @@ export async function seatsSold(
   fromISO: string,
   untilISO: string,
   excludeSources: string[],
+  includeSources: string[] = [],
 ): Promise<number> {
-  const rows = await saleRows(locationId, token, fromISO, untilISO, excludeSources)
+  const rows = await saleRows(locationId, token, fromISO, untilISO, excludeSources, includeSources)
   return rows.filter((r) => !r.isUpsell).reduce((s, r) => s + r.seats, 0)
 }
 
@@ -396,6 +404,24 @@ export async function seatsSold(
  * The whole performance block for one day: spend from Meta (passed in, since
  * lib/metrics already owns `ad_daily`), leads and purchases from GHL.
  */
+/**
+ * The cumulative window of the performance block. With a deal schedule it rolls
+ * by itself: "since the last class" becomes the previous event's day, and spend
+ * starts the day after — the dates that used to be moved by hand after every
+ * event. The configured dates still apply while they are later (e.g. a campaign
+ * that started after the last event).
+ */
+export function perfWindow(client: AdClient, dateISO: string): { salesSince: string; spendSince: string } {
+  const cfg = client.ghl!
+  const prev = client.deal ? previousEventDate(client.deal, dateISO) : null
+  if (!prev) return { salesSince: cfg.salesSince, spendSince: cfg.spendSince }
+  const dayAfter = new Date(Date.parse(`${prev}T00:00:00Z`) + 864e5).toISOString().slice(0, 10)
+  return {
+    salesSince: cfg.salesSince > prev ? cfg.salesSince : prev,
+    spendSince: cfg.spendSince > dayAfter ? cfg.spendSince : dayAfter,
+  }
+}
+
 export async function ghlPerformance(
   client: AdClient,
   dateISO: string,
@@ -407,6 +433,7 @@ export async function ghlPerformance(
   const locationId = process.env[cfg.locationEnv]!.trim()
   const tz = cfg.timeZone ?? 'Asia/Kuala_Lumpur'
   const { start, end } = dayBounds(dateISO, tz)
+  const win = perfWindow(client, dateISO)
   const problems: string[] = []
 
   const funnels: GhlFunnelRow[] = []
@@ -442,14 +469,14 @@ export async function ghlPerformance(
     // Cumulative runs from the start of the last class's day; "today" is the
     // report day only. Both end at the close of the report day, so a brief
     // never counts a sale that happened after the period it describes.
-    const salesFrom = dayBounds(cfg.salesSince, tz).start
-    purchasesTotal = await seatsSold(locationId, token, salesFrom, end, cfg.excludeOrderSources ?? [])
-    purchasesToday = await seatsSold(locationId, token, start, end, cfg.excludeOrderSources ?? [])
+    const salesFrom = dayBounds(win.salesSince, tz).start
+    purchasesTotal = await seatsSold(locationId, token, salesFrom, end, cfg.excludeOrderSources ?? [], cfg.includeOrderSources ?? [])
+    purchasesToday = await seatsSold(locationId, token, start, end, cfg.excludeOrderSources ?? [], cfg.includeOrderSources ?? [])
   } catch (e) {
     problems.push(`Purchases unreadable from GHL (${(e as Error).message}) — shown as unknown, not zero.`)
   }
 
-  const spendTotal = spendByCampaign('*', cfg.spendSince, dateISO)
+  const spendTotal = spendByCampaign('*', win.spendSince, dateISO)
   return {
     date: dateISO,
     funnels,
@@ -457,12 +484,65 @@ export async function ghlPerformance(
     whatsappWindows,
     whatsappTracked: !!cfg.whatsappWindows,
     purchasesTotal,
-    salesSince: cfg.salesSince,
+    salesSince: win.salesSince,
     spendTotal,
-    spendSince: cfg.spendSince,
+    spendSince: win.spendSince,
     costPerSale: purchasesTotal && purchasesTotal > 0 ? spendTotal / purchasesTotal : null,
     problems,
   }
+}
+
+// ---------------------------------------------------------------- first touch
+
+/** What GHL recorded about how a contact first arrived. */
+export type FirstTouch = {
+  dateAdded: string | null
+  sessionSource: string | null
+  utmSource: string | null
+  campaign: string | null
+  url: string | null
+  fbclid: boolean
+  fbc: boolean
+  adId: string | null
+}
+
+export async function contactFirstTouch(locationId: string, token: string, contactId: string): Promise<FirstTouch> {
+  const j = await getJSON(`${API}/contacts/${encodeURIComponent(contactId)}`, token)
+  const c = (j.contact ?? j) as Record<string, unknown>
+  const a = (c.attributionSource ?? {}) as Record<string, string | null | undefined>
+  void locationId // the token is scoped to the location; kept for a uniform call shape
+  return {
+    dateAdded: (c.dateAdded as string) ?? null,
+    sessionSource: a.sessionSource ?? null,
+    utmSource: a.utmSource ?? null,
+    campaign: a.campaign ?? null,
+    url: a.url ?? null,
+    fbclid: !!a.fbclid || /[?&]fbclid=/.test(a.url ?? ''),
+    fbc: !!a.fbc,
+    adId: a.adId ?? null,
+  }
+}
+
+/**
+ * Clause 6 of the Claude Malaysia agreement, as far as GHL can see it:
+ *   · on the House's records on/before the agreement date → Organic (6(a)),
+ *   · first touch a paid click or ad lead form → Ads (6(b)),
+ *   · anything else → unknown, which the contract counts as Organic (6(c)).
+ *
+ * This is the FALLBACK. The House decides seats from its payment records and
+ * community join dates (EventOps); GHL often loses the ad click — the CS team's
+ * "cs follow up" links and direct checkouts become the recorded first touch — so
+ * this undercounts Ads Seats (14 here vs EventOps' 29 on 27 Sep 2026).
+ */
+export function classifyFirstTouch(t: FirstTouch, agreementDate: string): { source: 'ads' | 'organic' | 'unknown'; reason: string } {
+  const paid =
+    t.fbclid || t.fbc || !!t.adId || /\[sf\]/i.test(t.campaign ?? '') || /^(facebook|instagram)_/i.test(t.utmSource ?? '')
+  const pre = !!t.dateAdded && t.dateAdded <= new Date(`${agreementDate}T23:59:59+08:00`).toISOString()
+  if (pre) return { source: 'organic', reason: `on the House's records since ${t.dateAdded!.slice(0, 10)} (before the agreement)` }
+  if (paid) return { source: 'ads', reason: `first touch: ${t.utmSource ?? t.sessionSource ?? 'paid click'}${t.campaign ? ` · ${t.campaign}` : ''}` }
+  if (/community|organic|affiliate/i.test(t.utmSource ?? '') || /community|organic/i.test(t.campaign ?? ''))
+    return { source: 'organic', reason: `first touch: ${t.utmSource ?? t.campaign}` }
+  return { source: 'unknown', reason: `first touch: ${t.utmSource ?? t.sessionSource ?? 'nothing recorded'} — no ad click on record` }
 }
 
 // ---------------------------------------------------------------- rendering
