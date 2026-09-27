@@ -474,3 +474,11 @@ code {
 .deal-tbl tr.deal-you td { color: var(--clay-deep); font-weight: 700; }
 .deal-tbl tr.deal-total td { font-weight: 800; font-size: 15px; border-top: 2px solid var(--line-2); }
 .deal-moves { margin: 0; padding-left: 18px; display: grid; gap: 8px; font-size: 14px; line-height: 1.5; color: var(--ink); }
+@media (max-width: 768px) {
+  /* A two-column sum reads as a sum, not as a stack of cards. */
+  .deal-tbl { display: table; background: var(--card); border: 1px solid var(--line); }
+  .deal-tbl tbody { display: table-row-group; }
+  .deal-tbl tr { display: table-row; background: none; border: none; margin: 0; padding: 0; }
+  .deal-tbl td { display: table-cell; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .deal-tbl td::before { content: none; }
+}

@@ -186,9 +186,9 @@ export default async function SharePage({ params }: { params: Promise<{ id: stri
               </tbody>
             </table>
             <p className="set-note">
-              Shared Costs ({money(r.sharedCosts)}) use the agreement&apos;s worked example — venue, camera, GHL/WhatsApp and
-              RM{deal.sharedCostDefaults.mealPerSeat} meals per seat — until the House&apos;s statement gives the invoices. Class
-              and DFY commissions are not included yet.
+              {`Shared Costs (${money(r.sharedCosts)}) use the agreement's worked example — venue, camera, GHL/WhatsApp ` +
+                `and RM${deal.sharedCostDefaults.mealPerSeat} meals per seat — until the House's statement gives the invoices. ` +
+                'Class and DFY commissions are not included yet.'}
             </p>
           </section>
 

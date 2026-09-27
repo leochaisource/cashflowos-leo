@@ -60,8 +60,13 @@ const dayStart = (d: string) => new Date(`${d}T00:00:00+08:00`).toISOString()
 const dayEnd = (d: string) => new Date(`${d}T23:59:59.999+08:00`).toISOString()
 const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const rm = (n: number) => `${n < 0 ? '−' : ''}RM${Math.round(Math.abs(n)).toLocaleString('en-MY')}`
-const shortDay = (iso: string) =>
-  new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).replace(',', '')
+// Fixed names: ICU prints September as "Sept" in some locales and "Sep" in others.
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const shortDay = (iso: string) => {
+  const d = new Date(`${iso}T12:00:00Z`)
+  return `${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`
+}
 
 /** Meta spend for the event window, up to the report day. */
 async function adSpendBetween(db: SupabaseClient, project: string, from: string, to: string): Promise<number> {
