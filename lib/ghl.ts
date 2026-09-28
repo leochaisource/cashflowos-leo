@@ -52,6 +52,8 @@ export type GhlPerformance = {
   funnels: GhlFunnelRow[]
   /** Seats sold on the report day itself. null = unreadable. */
   purchasesToday: number | null
+  /** Money collected on the report day (tickets + upgrades). null = unreadable. */
+  revenueToday: number | null
   /** WhatsApp conversation windows opened on the report day. null = unreadable, or not tracked. */
   whatsappWindows: number | null
   /** Whether this client tracks WhatsApp windows — so a failed read prints "unavailable" instead of vanishing. */
@@ -65,6 +67,10 @@ export type GhlPerformance = {
   costPerSale: number | null
   /** Anything that went wrong, for the brief's warning line. */
   problems: string[]
+  /** "Are we on track" — set by the cron when the client has an event schedule. */
+  pace?: { line: string } | null
+  /** Who to chase today (lib/followups.ts) — set by the cron; rendered at the end of the block. */
+  followups?: { text: string; unpaid: number; chats: number; hot: number; warm: number } | null
 }
 
 const headers = (token: string) => ({
@@ -465,13 +471,16 @@ export async function ghlPerformance(
 
   let purchasesTotal: number | null = null
   let purchasesToday: number | null = null
+  let revenueToday: number | null = null
   try {
     // Cumulative runs from the start of the last class's day; "today" is the
     // report day only. Both end at the close of the report day, so a brief
     // never counts a sale that happened after the period it describes.
     const salesFrom = dayBounds(win.salesSince, tz).start
     purchasesTotal = await seatsSold(locationId, token, salesFrom, end, cfg.excludeOrderSources ?? [], cfg.includeOrderSources ?? [])
-    purchasesToday = await seatsSold(locationId, token, start, end, cfg.excludeOrderSources ?? [], cfg.includeOrderSources ?? [])
+    const today = await saleRows(locationId, token, start, end, cfg.excludeOrderSources ?? [], cfg.includeOrderSources ?? [])
+    purchasesToday = today.filter((r) => !r.isUpsell).reduce((s, r) => s + r.seats, 0)
+    revenueToday = today.reduce((s, r) => s + (r.amount ?? 0), 0)
   } catch (e) {
     problems.push(`Purchases unreadable from GHL (${(e as Error).message}) — shown as unknown, not zero.`)
   }
@@ -481,6 +490,7 @@ export async function ghlPerformance(
     date: dateISO,
     funnels,
     purchasesToday,
+    revenueToday,
     whatsappWindows,
     whatsappTracked: !!cfg.whatsappWindows,
     purchasesTotal,
@@ -490,6 +500,77 @@ export async function ghlPerformance(
     costPerSale: purchasesTotal && purchasesTotal > 0 ? spendTotal / purchasesTotal : null,
     problems,
   }
+}
+
+// ---------------------------------------------------------------- follow-up inputs
+
+export type WaMessage = { id: string; direction: 'inbound' | 'outbound'; body: string; contactId: string; dateAdded: string }
+
+/** Every WhatsApp message (both directions) in a window, oldest first. */
+export async function whatsappMessages(locationId: string, token: string, fromISO: string, toISO: string): Promise<WaMessage[]> {
+  const out: WaMessage[] = []
+  let cursor: string | null = null
+  for (let page = 0; page < 100; page++) {
+    const url =
+      `${API}/conversations/messages/export?locationId=${encodeURIComponent(locationId)}&channel=WhatsApp&limit=100` +
+      `&startDate=${encodeURIComponent(fromISO)}&endDate=${encodeURIComponent(toISO)}` +
+      (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')
+    const j = await getJSON(url, token, '2021-04-15')
+    const msgs = (j.messages as Record<string, unknown>[] | undefined) ?? []
+    for (const m of msgs) {
+      const direction = m.direction === 'inbound' ? 'inbound' : m.direction === 'outbound' ? 'outbound' : null
+      if (!direction || !m.contactId || !m.dateAdded) continue
+      out.push({ id: String(m.id), direction, body: String(m.body ?? ''), contactId: String(m.contactId), dateAdded: String(m.dateAdded) })
+    }
+    cursor = (j.nextCursor as string | undefined) ?? null
+    if (!cursor || msgs.length < 100) break
+  }
+  return out.sort((a, b) => a.dateAdded.localeCompare(b.dateAdded))
+}
+
+/** A contact's display name. The message export carries ids only. */
+export async function contactName(token: string, contactId: string): Promise<string | null> {
+  const j = await getJSON(`${API}/contacts/${encodeURIComponent(contactId)}`, token)
+  const c = (j.contact ?? j) as Record<string, unknown>
+  const name = (c.contactName as string) || [c.firstName, c.lastName].filter(Boolean).join(' ') || (c.name as string) || null
+  return name ? String(name).trim() : null
+}
+
+export type CheckoutAttempt = { contactId: string; name: string | null; status: string; at: string; amount: number | null }
+
+/**
+ * Who has ever paid for this client's product, and who STARTED a checkout
+ * since `sinceISO` (failed or pending) but never paid. Many failed attempts are
+ * followed by a successful retry minutes later — those people are not unpaid.
+ */
+export async function paymentAttempts(
+  locationId: string,
+  token: string,
+  sinceISO: string,
+  includeSources: string[],
+): Promise<{ paidEver: Set<string>; unpaid: CheckoutAttempt[] }> {
+  const txns: Txn[] = []
+  for (let offset = 0; offset < 1000; offset += 100) {
+    const j = await getJSON(
+      `${API}/payments/transactions?altId=${encodeURIComponent(locationId)}&altType=location&limit=100&offset=${offset}`,
+      token,
+    )
+    const batch = (j.data as Txn[] | undefined) ?? []
+    txns.push(...batch)
+    if (batch.length < 100) break
+  }
+  const ours = (t: Txn) => !includeSources.length || includeSources.some((x) => (t.entitySourceName ?? '').toLowerCase().includes(x.toLowerCase()))
+  const paidEver = new Set(txns.filter((t) => ours(t) && t.status === 'succeeded' && t.contactId).map((t) => t.contactId!))
+  const since = Date.parse(sinceISO)
+  const latest = new Map<string, CheckoutAttempt>()
+  for (const t of txns) {
+    if (!ours(t) || !t.contactId || t.status === 'succeeded' || paidEver.has(t.contactId)) continue
+    if (Date.parse(t.createdAt) < since) continue
+    const cur = latest.get(t.contactId)
+    if (!cur || t.createdAt > cur.at)
+      latest.set(t.contactId, { contactId: t.contactId, name: t.contactName ?? null, status: t.status ?? 'unknown', at: t.createdAt, amount: t.amount ?? null })
+  }
+  return { paidEver, unpaid: [...latest.values()].sort((a, b) => b.at.localeCompare(a.at)) }
 }
 
 // ---------------------------------------------------------------- first touch
@@ -572,12 +653,18 @@ export function renderPerformance(p: GhlPerformance): string {
   }
   if (p.whatsappWindows !== null || p.whatsappTracked)
     out.push('', `WhatsApp conversation windows opened: ${p.whatsappWindows === null ? 'unavailable' : p.whatsappWindows}`)
-  out.push('', `Direct purchases: ${p.purchasesToday === null ? 'unavailable' : p.purchasesToday}`)
+  out.push(
+    '',
+    `Direct purchases: ${p.purchasesToday === null ? 'unavailable' : p.purchasesToday}` +
+      (p.revenueToday ? ` (${rm(p.revenueToday)} collected)` : ''),
+  )
+  if (p.pace) out.push(p.pace.line)
   out.push(
     '',
     `Total purchases: ${p.purchasesTotal === null ? 'unavailable' : p.purchasesTotal} (accumulative, since ${longDate(p.salesSince)})`,
     `Total Amount spend: ${rm(p.spendTotal)} (since ${longDate(p.spendSince)})`,
     `Cost Per Sale: ${p.costPerSale === null ? 'unavailable' : rm(p.costPerSale)}`,
   )
+  if (p.followups?.text) out.push('', p.followups.text)
   return out.join('\n')
 }

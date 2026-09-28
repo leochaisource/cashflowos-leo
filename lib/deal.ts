@@ -33,6 +33,8 @@ export type Deal = {
   /** Shared Costs per event until the House's statement gives the actual invoices (worked example). */
   sharedCostDefaults: { venue: number; camera: number; platform: number; mealPerSeat: number }
   ticketPrices: { general: number; vip: number }
+  /** Clause 6(g): venue capacity — the paid-seat target for each event. */
+  seatTarget: number
   /** Schedule 3 — measured by the House over two events; shown as a daily early warning. */
   standards: { adsSeats: number; costPerTicketReview: number }
 }
@@ -54,6 +56,7 @@ export const DEAL_CLAUDE_MALAYSIA: Deal = {
   affiliateSources: ['[Kamin]'],
   sharedCostDefaults: { venue: 1000, camera: 1000, platform: 525, mealPerSeat: 25 },
   ticketPrices: { general: 397, vip: 697 },
+  seatTarget: 70,
   standards: { adsSeats: 24, costPerTicketReview: 150 },
 }
 
@@ -222,5 +225,40 @@ export function standards(deal: Deal, i: Pick<ShareInput, 'adsSeats' | 'adSpend'
     costPerTicket,
     costPerTicketReview: deal.standards.costPerTicketReview,
     overReviewLine: costPerTicket !== null && costPerTicket > deal.standards.costPerTicketReview,
+  }
+}
+
+// ---------------------------------------------------------------- pace
+
+export type Pace = {
+  eventDate: string
+  paid: number
+  target: number
+  remaining: number
+  daysLeft: number
+  needPerDay: number
+  recentPerDay: number
+  status: 'sold out' | 'on track' | 'behind'
+}
+
+/**
+ * Are we on track to fill the room? Seats still needed over the selling days
+ * left (today up to the day before the event), against the recent daily pace.
+ */
+export function computePace(args: { eventDate: string; today: string; paid: number; target: number; recentSeats: number[] }): Pace {
+  const days = Math.round((Date.parse(`${args.eventDate}T00:00:00Z`) - Date.parse(`${args.today}T00:00:00Z`)) / 864e5)
+  const daysLeft = Math.max(1, days)
+  const remaining = Math.max(0, args.target - args.paid)
+  const needPerDay = Math.ceil(remaining / daysLeft)
+  const recentPerDay = args.recentSeats.length ? Math.round((args.recentSeats.reduce((a, b) => a + b, 0) / args.recentSeats.length) * 10) / 10 : 0
+  return {
+    eventDate: args.eventDate,
+    paid: args.paid,
+    target: args.target,
+    remaining,
+    daysLeft,
+    needPerDay,
+    recentPerDay,
+    status: remaining === 0 ? 'sold out' : recentPerDay >= needPerDay ? 'on track' : 'behind',
   }
 }

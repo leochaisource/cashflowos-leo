@@ -27,7 +27,9 @@ import {
 } from '@/lib/ghl'
 import { archiveRun, archiveRegistry } from '@/lib/archive'
 import { ghlSaleRows } from '@/lib/archive-rows'
-import { estimateDeal, saveDealDaily } from '@/lib/deal-estimate'
+import { estimateDeal, saveDealDaily, buildPace } from '@/lib/deal-estimate'
+import { eventFor } from '@/lib/deal'
+import { buildFollowups, renderGroupFollowups, renderPrivateFollowups, type Followups } from '@/lib/followups'
 import { loadAdRows } from '@/lib/metrics'
 import { focusProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
@@ -455,6 +457,7 @@ async function runClient(client: AdClient, records: Rec[]) {
   // the top always matches the numbers underneath.
   let perf: Awaited<ReturnType<typeof ghlPerformance>> = null
   let perfText = ''
+  let followupsP: Promise<Followups | null> | null = null
   // The individual opt-ins and sales behind the counts, kept for the archive.
   let leadRows: LeadRow[] = []
   let saleRowsForDay: SaleRow[] = []
@@ -496,6 +499,42 @@ async function runClient(client: AdClient, records: Rec[]) {
           notes.push(`Archive detail unavailable: ${(e as Error).message}`)
         }
         if (perf) {
+          // "Are we on track?" — needs the event schedule (lib/deal.ts).
+          if (client.deal) {
+            try {
+              perf.pace = await buildPace(supabase, client.id, client.deal, reportDay, saleRowsForDay)
+            } catch (e) {
+              notes.push(`Pace unavailable: ${(e as Error).message}`)
+            }
+            const g = client.ghl!
+            // Who to chase today — STARTED here, awaited just before the message
+            // is assembled, so its GHL reads and model calls overlap the
+            // competitor research instead of adding to the run's length.
+            if (g.followups) {
+              const tz = g.timeZone ?? 'Asia/Kuala_Lumpur'
+              const { start, end } = dayBounds(reportDay, tz)
+              const next = eventFor(client.deal, new Date(Date.parse(`${reportDay}T00:00:00Z`) + 864e5).toISOString().slice(0, 10))
+              const key = process.env.ANTHROPIC_API_KEY?.trim()
+              followupsP = next
+                ? buildFollowups({
+                    locationId: process.env[g.locationEnv]!.trim(),
+                    token: process.env[g.tokenEnv]!.trim(),
+                    day: reportDay,
+                    dayStartISO: start,
+                    dayEndISO: end,
+                    salesSinceISO: dayBounds(next.from, tz).start,
+                    includeSources: g.includeOrderSources ?? [],
+                    product:
+                      `${client.client ?? client.name} one-day Claude AI workshop on ${next.to}, tickets ` +
+                      `RM${client.deal.ticketPrices.general} General / RM${client.deal.ticketPrices.vip} VIP`,
+                    anthropic: key ? new Anthropic({ apiKey: key }) : null,
+                  }).catch((e) => {
+                    notes.push(`Follow-ups unavailable: ${(e as Error).message}`)
+                    return null
+                  })
+                : null
+            }
+          }
           perfText = renderPerformance(perf)
           notes.push(...perf.problems)
         }
@@ -947,6 +986,26 @@ async function runClient(client: AdClient, records: Rec[]) {
   // to be sent whenever the model failed, raw image URLs and all), and every
   // internal note. Both are still archived in full (brief_daily.notes,
   // adyntel_runs.facts_text) and shown on the Research log page.
+  // Who to chase today joins the END of the performance block — the client
+  // group sees it (names only, capped); the owner gets the full list privately.
+  let followupsPrivate = ''
+  if (followupsP && perf) {
+    const f = await followupsP
+    if (f) {
+      const leads = f.chats.filter((c) => c.intent !== 'not_a_lead')
+      perf.followups = {
+        text: renderGroupFollowups(f),
+        unpaid: f.unpaid.length,
+        chats: leads.length,
+        hot: leads.filter((c) => c.intent === 'hot').length,
+        warm: leads.filter((c) => c.intent === 'warm').length,
+      }
+      perfText = renderPerformance(perf)
+      followupsPrivate = renderPrivateFollowups(f, process.env[client.ghl!.locationEnv]!.trim(), client.client ?? client.name)
+      if (f.intentError) notes.push(`Follow-up intent: ${f.intentError}`)
+    }
+  }
+
   const alerts = operatorAlerts(notes)
   const text = [
     perfText ? esc(perfText) : spent > 0 || !focus ? header : '',
@@ -996,6 +1055,16 @@ async function runClient(client: AdClient, records: Rec[]) {
   if (dealText && owner) {
     const r = await sendMessage(owner, dealText, { noPreview: true })
     if (!r.ok) failed.push({ chat: `${owner} (your share)`, error: r.error ?? 'unknown' })
+  }
+  // The full follow-up list — every name with a GHL link — to the owner only.
+  if (followupsPrivate && owner) {
+    for (const part of chunk(followupsPrivate)) {
+      const r = await sendMessage(owner, part, { noPreview: true })
+      if (!r.ok) {
+        failed.push({ chat: `${owner} (follow-ups)`, error: r.error ?? 'unknown' })
+        break
+      }
+    }
   }
   if (failed.length)
     console.error(`[CFO] ${client.id}: brief undelivered to ${failed.map((f) => `${f.chat} (${f.error})`).join(', ')}`)

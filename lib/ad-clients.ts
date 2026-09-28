@@ -156,6 +156,12 @@ export type AdClient = {
     /** Only payments whose source contains one of these count — the location sells other products too. */
     includeOrderSources?: string[]
     /**
+     * Add "who to chase today" to the morning block: unpaid checkouts, and
+     * yesterday's WhatsApp chats judged for buying intent (lib/followups.ts).
+     * Needs a deal schedule for the event dates.
+     */
+    followups?: boolean
+    /**
      * Count WhatsApp conversation windows opened on the report day. Every new
      * lead gets an outbound WhatsApp template, but the 24-hour window in which
      * the team can chat freely only opens when the lead REPLIES — so this is
@@ -306,6 +312,7 @@ export const AD_CLIENTS: AdClient[] = [
       excludeOrderSources: ['VIP Ticket Upgrade'], // an upsell to a buyer, not another seat
       includeOrderSources: ['Claude 1 Day Workshop', 'CM1D', 'VIP Ticket Upgrade'], // not Forex / Brain Health / CloserKing
       whatsappWindows: true, // the Claude Malaysia line, +60 17-598 7155
+      followups: true, // unpaid checkouts + yesterday's WhatsApp chats by buying intent (owner, 2026-09-28)
     },
     watchPages: [
       { name: 'Hustle Malaysia', pageId: '791929197338366' }, // "Certified Claude AI Professional" — the direct competitor

@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 // Explicit .ts extensions: shared with scripts/deal-preview.ts (Node type stripping).
 import {
   eventFor,
+  computePace,
   computeShare,
   marginals,
   standards,
@@ -90,6 +91,7 @@ async function adSpendBetween(db: SupabaseClient, project: string, from: string,
 type HouseReport = {
   report_date: string
   paid: number | null
+  target: number | null
   ads_confirmed: number | null
   organic_confirmed: number | null
   unknown: number | null
@@ -103,7 +105,7 @@ type HouseReport = {
 async function latestHouseReport(db: SupabaseClient, project: string, eventDate: string, asOf: string): Promise<HouseReport | null> {
   const { data, error } = await db
     .from('house_reports')
-    .select('report_date, paid, ads_confirmed, organic_confirmed, unknown, general, vip, affiliate_seats, ads_revenue, organic_revenue')
+    .select('report_date, paid, target, ads_confirmed, organic_confirmed, unknown, general, vip, affiliate_seats, ads_revenue, organic_revenue')
     .eq('project', project)
     .eq('event_date', eventDate)
     .lte('report_date', asOf < eventDate ? eventDate : asOf)
@@ -290,6 +292,66 @@ export function renderDealBlock(e: Omit<DealEstimate, 'text'>, deal: Deal): stri
       `Cost per ads ticket ${rm(s.costPerTicket)} (review line ${rm(s.costPerTicketReview)})${s.overReviewLine ? ' ⚠️' : ''} · ads seats ${s.adsSeats}/${s.adsSeatsTarget}`,
     )
   return lines.join('\n')
+}
+
+// ---------------------------------------------------------------- pace (the client group's "on track?")
+
+const addDay = (iso: string, n: number) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10)
+const klDate = (iso: string) => new Date(Date.parse(iso) + 8 * 3600e3).toISOString().slice(0, 10)
+
+/**
+ * "Are we on track?" for the event being sold. Paid-so-far comes from the
+ * House's EventOps count when it's fresh — it includes people who bought early
+ * for this event, which a date window over GHL can't see — else our GHL count
+ * since the last event, labelled as such. The recent pace is GHL seats over
+ * the last three report days.
+ */
+export async function buildPace(
+  db: SupabaseClient,
+  project: string,
+  deal: Deal,
+  day: string,
+  sales: { paidAt: string; seats: number; isUpsell: boolean }[],
+): Promise<{ line: string; pace: ReturnType<typeof computePace>; source: string } | null> {
+  const today = addDay(day, 1)
+  const w = eventFor(deal, today)
+  if (!w) return null
+  const report = await latestHouseReport(db, project, w.to, day)
+  const seatsOn = (d: string) => sales.filter((s) => !s.isUpsell && klDate(s.paidAt) === d).reduce((n, s) => n + s.seats, 0)
+  let recent = [addDay(day, -2), addDay(day, -1), day].map(seatsOn)
+  const sinceWindow = sales.filter((s) => !s.isUpsell && klDate(s.paidAt) >= w.from).reduce((n, s) => n + s.seats, 0)
+  const paid = report?.paid ?? sinceWindow
+  const target = report?.target ?? deal.seatTarget
+  // When the House's own count is used for "paid", take the recent pace from it
+  // too (its growth over ~3 days) — GHL misses seats paid outside it, and mixing
+  // the two would make a sale that EventOps saw look like no progress.
+  let paceFrom = 'GHL'
+  if (report?.paid !== null && report?.paid !== undefined) {
+    const { data } = await db
+      .from('house_reports')
+      .select('report_date, paid')
+      .eq('project', project)
+      .eq('event_date', w.to)
+      .lte('report_date', addDay(report.report_date, -2))
+      .not('paid', 'is', null)
+      .order('report_date', { ascending: false })
+      .limit(1)
+    const older = (data ?? [])[0] as { report_date: string; paid: number } | undefined
+    if (older) {
+      const days = Math.max(1, Math.round((Date.parse(report.report_date) - Date.parse(older.report_date)) / 864e5))
+      const perDay = Math.max(0, report.paid - older.paid) / days
+      recent = [perDay]
+      paceFrom = 'EventOps'
+    }
+  }
+  const pace = computePace({ eventDate: w.to, today, paid, target, recentSeats: recent })
+  const source = report ? `EventOps ${shortDay(report.report_date).replace(/^\w+ /, '')}` : 'GHL, since last event'
+  const verdict = pace.status === 'sold out' ? 'SOLD OUT ✅' : pace.status === 'on track' ? 'on track ✅' : 'behind ⚠️'
+  const line =
+    pace.status === 'sold out'
+      ? `On track? ${pace.paid}/${pace.target} paid for ${shortDay(w.to)} (${source}) — ${verdict}`
+      : `On track? ${pace.paid}/${pace.target} paid for ${shortDay(w.to)} (${source}) · need ${pace.remaining} in ${pace.daysLeft} day${pace.daysLeft === 1 ? '' : 's'} = ${pace.needPerDay}/day · selling ${pace.recentPerDay}/day lately (${paceFrom}) → ${verdict}`
+  return { line, pace, source }
 }
 
 /** Keep the morning's estimate. Never throws: a storage fault must not cost the brief. */
