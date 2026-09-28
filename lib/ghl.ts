@@ -506,26 +506,43 @@ export async function ghlPerformance(
 
 export type WaMessage = { id: string; direction: 'inbound' | 'outbound'; body: string; contactId: string; dateAdded: string }
 
-/** Every WhatsApp message (both directions) in a window, oldest first. */
+/**
+ * Every WhatsApp message (both directions) in a window, oldest first.
+ *
+ * The export has been seen to answer with an EMPTY page while hundreds of
+ * messages exist (2026-09-28) — which would read as "nobody messaged us". So
+ * the pages received are checked against the export's own `total`: short →
+ * retry, still short → throw, and the caller says "unavailable", never "none".
+ */
 export async function whatsappMessages(locationId: string, token: string, fromISO: string, toISO: string): Promise<WaMessage[]> {
-  const out: WaMessage[] = []
-  let cursor: string | null = null
-  for (let page = 0; page < 100; page++) {
-    const url =
-      `${API}/conversations/messages/export?locationId=${encodeURIComponent(locationId)}&channel=WhatsApp&limit=100` +
-      `&startDate=${encodeURIComponent(fromISO)}&endDate=${encodeURIComponent(toISO)}` +
-      (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')
-    const j = await getJSON(url, token, '2021-04-15')
-    const msgs = (j.messages as Record<string, unknown>[] | undefined) ?? []
-    for (const m of msgs) {
-      const direction = m.direction === 'inbound' ? 'inbound' : m.direction === 'outbound' ? 'outbound' : null
-      if (!direction || !m.contactId || !m.dateAdded) continue
-      out.push({ id: String(m.id), direction, body: String(m.body ?? ''), contactId: String(m.contactId), dateAdded: String(m.dateAdded) })
+  let last = ''
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, 1500 * attempt))
+    const out: WaMessage[] = []
+    let received = 0
+    let total: number | null = null
+    let cursor: string | null = null
+    for (let page = 0; page < 100; page++) {
+      const url =
+        `${API}/conversations/messages/export?locationId=${encodeURIComponent(locationId)}&channel=WhatsApp&limit=100` +
+        `&startDate=${encodeURIComponent(fromISO)}&endDate=${encodeURIComponent(toISO)}` +
+        (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')
+      const j = await getJSON(url, token, '2021-04-15')
+      if (total === null && typeof j.total === 'number') total = j.total
+      const msgs = (j.messages as Record<string, unknown>[] | undefined) ?? []
+      received += msgs.length
+      for (const m of msgs) {
+        const direction = m.direction === 'inbound' ? 'inbound' : m.direction === 'outbound' ? 'outbound' : null
+        if (!direction || !m.contactId || !m.dateAdded) continue
+        out.push({ id: String(m.id), direction, body: String(m.body ?? ''), contactId: String(m.contactId), dateAdded: String(m.dateAdded) })
+      }
+      cursor = (j.nextCursor as string | undefined) ?? null
+      if (!cursor || msgs.length < 100) break
     }
-    cursor = (j.nextCursor as string | undefined) ?? null
-    if (!cursor || msgs.length < 100) break
+    if (total === null || received >= total * 0.95) return out.sort((a, b) => a.dateAdded.localeCompare(b.dateAdded))
+    last = `WhatsApp export incomplete — got ${received} of ${total} messages`
   }
-  return out.sort((a, b) => a.dateAdded.localeCompare(b.dateAdded))
+  throw new Error(last)
 }
 
 /** A contact's display name. The message export carries ids only. */
