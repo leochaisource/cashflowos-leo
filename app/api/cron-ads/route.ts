@@ -29,7 +29,15 @@ import { archiveRun, archiveRegistry } from '@/lib/archive'
 import { ghlSaleRows } from '@/lib/archive-rows'
 import { estimateDeal, saveDealDaily, buildPace } from '@/lib/deal-estimate'
 import { eventFor } from '@/lib/deal'
-import { buildFollowups, renderGroupFollowups, renderPrivateFollowups, type Followups } from '@/lib/followups'
+import {
+  buildFollowups,
+  renderGroupFollowups,
+  renderPrivateFollowups,
+  assignFollowups,
+  followupProgress,
+  type Followups,
+  type AssignedTask,
+} from '@/lib/followups'
 import { loadAdRows } from '@/lib/metrics'
 import { focusProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
@@ -987,21 +995,47 @@ async function runClient(client: AdClient, records: Rec[]) {
   // internal note. Both are still archived in full (brief_daily.notes,
   // adyntel_runs.facts_text) and shown on the Research log page.
   // Who to chase today joins the END of the performance block — the client
-  // group sees it (names only, capped); the owner gets the full list privately.
+  // group sees it (names only, capped). With a follow-up owner configured
+  // (Ariella, owner's call 2026-09-29) the list becomes GHL tasks + intent
+  // tags for her, and the owner gets one line on her progress instead of the
+  // full list; without one, the owner gets the full list privately as before.
   let followupsPrivate = ''
+  let followupsOwnerLine = ''
   if (followupsP && perf) {
     const f = await followupsP
     if (f) {
+      const g = client.ghl!
+      const token = process.env[g.tokenEnv]!.trim()
+      const who = g.followupAssignee
       const leads = f.chats.filter((c) => c.intent !== 'not_a_lead')
+      let tasks: AssignedTask[] = []
+      if (who) {
+        const today = new Date(Date.parse(`${perf.date}T00:00:00Z`) + 864e5).toISOString().slice(0, 10)
+        const a = await assignFollowups(f, { token, assigneeId: who.userId, dueISO: new Date(`${today}T18:00:00+08:00`).toISOString() })
+        tasks = a.tasks
+        if (a.errors.length) notes.push(`Follow-up tasks: ${a.errors.length} failed in GHL — ${a.errors[0]}`)
+        // Yesterday's tasks, ticked off since? (their ids are in yesterday's brief_daily payload)
+        const yesterday = new Date(Date.parse(`${perf.date}T00:00:00Z`) - 864e5).toISOString().slice(0, 10)
+        const prev = await supabase.from('brief_daily').select('payload').eq('project', client.id).eq('date', yesterday).maybeSingle()
+        const prevTasks = ((prev.data?.payload as { followups?: { tasks?: AssignedTask[] } } | null)?.followups?.tasks ?? []) as AssignedTask[]
+        const progress = prevTasks.length ? await followupProgress(token, prevTasks) : null
+        const count = (k: AssignedTask['kind']) => tasks.filter((t) => t.kind === k).length
+        followupsOwnerLine =
+          `📋 ${who.name}: ` +
+          (progress ? `${progress.done}/${progress.total} follow-ups done yesterday` : 'no tasks from yesterday to check') +
+          ` · today ${tasks.length} task${tasks.length === 1 ? '' : 's'} in GHL (${count('hot')} hot · ${count('warm')} warm · ${count('unpaid')} unpaid)`
+      } else {
+        followupsPrivate = renderPrivateFollowups(f, process.env[g.locationEnv]!.trim(), client.client ?? client.name)
+      }
       perf.followups = {
-        text: renderGroupFollowups(f),
+        text: renderGroupFollowups(f, who?.name),
         unpaid: f.unpaid.length,
         chats: leads.length,
         hot: leads.filter((c) => c.intent === 'hot').length,
         warm: leads.filter((c) => c.intent === 'warm').length,
+        tasks,
       }
       perfText = renderPerformance(perf)
-      followupsPrivate = renderPrivateFollowups(f, process.env[client.ghl!.locationEnv]!.trim(), client.client ?? client.name)
       if (f.intentError) notes.push(`Follow-up intent: ${f.intentError}`)
     }
   }
@@ -1009,6 +1043,8 @@ async function runClient(client: AdClient, records: Rec[]) {
   const alerts = operatorAlerts(notes)
   const text = [
     perfText ? esc(perfText) : spent > 0 || !focus ? header : '',
+    // Operator copy only (clientChunks is built from perfText alone).
+    followupsOwnerLine ? esc(followupsOwnerLine) : '',
     digest,
     report ? esc(report) : '',
     focus ? competitorsLink(client.id, competitorCount) : '',

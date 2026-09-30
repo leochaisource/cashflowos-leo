@@ -5,6 +5,7 @@
 //   ... --date=2026-09-27   the report day (default: yesterday, KL)
 //   ... --ai                judge buying intent with the model (a few cents)
 //   ... --send              also send the private full list to OWNER_CHAT_ID (never a group)
+//   ... --assign            create/refresh today's GHL tasks + intent tags for the follow-up owner
 //
 // Uses lib/followups.ts and lib/deal-estimate.ts buildPace — the code the cron runs.
 import Anthropic from '@anthropic-ai/sdk'
@@ -13,7 +14,7 @@ import { AD_CLIENTS } from '../lib/ad-clients.ts'
 import { dayBounds, saleRows, perfWindow, ghlPerformance, renderPerformance } from '../lib/ghl.ts'
 import { eventFor } from '../lib/deal.ts'
 import { buildPace } from '../lib/deal-estimate.ts'
-import { buildFollowups, renderGroupFollowups, renderPrivateFollowups } from '../lib/followups.ts'
+import { buildFollowups, renderGroupFollowups, renderPrivateFollowups, assignFollowups } from '../lib/followups.ts'
 import { sendMessage } from '../lib/telegram.ts'
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.split('=')[1]
@@ -70,7 +71,7 @@ const perf = await ghlPerformance(client, day, spendByCampaign)
 if (perf) {
   perf.pace = pace
   const leads = f.chats.filter((c) => c.intent !== 'not_a_lead')
-  perf.followups = { text: renderGroupFollowups(f), unpaid: f.unpaid.length, chats: leads.length, hot: 0, warm: 0 }
+  perf.followups = { text: renderGroupFollowups(f, g.followupAssignee?.name), unpaid: f.unpaid.length, chats: leads.length, hot: 0, warm: 0 }
   const text = renderPerformance(perf)
   console.log(text)
   console.log(`\n(${text.length} chars)`)
@@ -78,6 +79,27 @@ if (perf) {
 const priv = renderPrivateFollowups(f, loc, client.client ?? client.name)
 console.log(`\n=== PRIVATE (to Leo) — ${priv.length} chars ===\n`)
 console.log(priv)
+
+// --assign: turn this list into GHL tasks + intent tags for the follow-up owner
+// now (what the 8am run does), and record the task ids on that report day's
+// brief_daily row so the next morning can report how many were done.
+if (process.argv.includes('--assign')) {
+  const who = g.followupAssignee
+  if (!who) throw new Error('no followupAssignee configured for this client')
+  const a = await assignFollowups(f, { token, assigneeId: who.userId, dueISO: new Date(`${today}T18:00:00+08:00`).toISOString() })
+  const kinds = (k: string) => a.tasks.filter((t) => t.kind === k).length
+  console.log(
+    `\nASSIGNED to ${who.name}: ${a.tasks.length} tasks (${a.created} new, ${a.refreshed} refreshed · ${kinds('hot')} hot, ${kinds('warm')} warm, ${kinds('unpaid')} unpaid) · ${a.tagged} contacts tagged` +
+      (a.errors.length ? `\n  ${a.errors.length} error(s), first: ${a.errors[0]}` : ''),
+  )
+  const { data: row } = await db.from('brief_daily').select('payload').eq('project', client.id).eq('date', day).maybeSingle()
+  if (row) {
+    const p = (row.payload ?? {}) as Record<string, unknown>
+    p.followups = { ...((p.followups as object) ?? {}), tasks: a.tasks }
+    const { error } = await db.from('brief_daily').update({ payload: p }).eq('project', client.id).eq('date', day)
+    console.log(error ? `  task ids NOT recorded: ${error.message}` : `  task ids recorded on brief_daily ${day}`)
+  } else console.log(`  no brief_daily row for ${day} — task ids not recorded`)
+}
 
 // --send: deliver the private list to the owner's chat now (never a group).
 if (process.argv.includes('--send')) {

@@ -1,7 +1,20 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { jsonSchemaOutputFormat } from '@anthropic-ai/sdk/helpers/json-schema'
 // Explicit .ts extensions: shared with scripts/followups-preview.ts (Node type stripping).
-import { whatsappMessages, contactName, paymentAttempts, type CheckoutAttempt, type WaMessage } from './ghl.ts'
+import {
+  whatsappMessages,
+  contactBasics,
+  paymentAttempts,
+  teamMembers,
+  contactTasks,
+  createTask,
+  updateTask,
+  getTask,
+  addTags,
+  removeTags,
+  type CheckoutAttempt,
+  type WaMessage,
+} from './ghl.ts'
 import { clip } from './format.ts'
 
 // WHO TO CHASE TODAY — for the client group's morning update (owner's ask,
@@ -30,6 +43,8 @@ export type ChatLead = {
   lastInboundAt: string
   /** They opened a new 24h window yesterday (no message from them in the 24h before). */
   newWindow: boolean
+  /** The contact's GHL tags when read — so a stale intent tag can be swapped, not stacked. */
+  tags: string[]
 }
 export type Followups = {
   day: string
@@ -139,7 +154,12 @@ export async function buildFollowups(args: {
   product: string
   anthropic: Anthropic | null
 }): Promise<Followups> {
-  const { paidEver, unpaid } = await paymentAttempts(args.locationId, args.token, args.salesSinceISO, args.includeSources)
+  const { paidEver, unpaid: attempts } = await paymentAttempts(args.locationId, args.token, args.salesSinceISO, args.includeSources)
+  // The client's own team is never a lead (test checkouts, internal chats).
+  const team = await teamMembers(args.locationId, args.token).catch(() => ({ emails: new Set<string>(), names: new Set<string>() }))
+  const isTeam = (name: string | null, email: string | null) =>
+    (!!email && team.emails.has(email)) || (!!name && team.names.has(name.toLowerCase().replace(/s+/g, ' ').trim()))
+  const unpaid = attempts.filter((u) => !isTeam(u.name, u.email))
 
   // Yesterday plus the 24h before it: context for the model, and the test for a newly opened window.
   const dayStart = Date.parse(args.dayStartISO)
@@ -163,38 +183,45 @@ export async function buildFollowups(args: {
       next: null,
       lastInboundAt: new Date(Math.max(...yesterday)).toISOString(),
       newWindow,
+      tags: [],
     })
   }
   chats.sort((a, b) => b.lastInboundAt.localeCompare(a.lastInboundAt))
   const judged = chats.slice(0, MAX_CHATS)
 
   // Names (the export carries ids only), a few at a time.
+  const teamIds = new Set<string>()
   for (let i = 0; i < judged.length; i += 8)
     await Promise.all(
       judged.slice(i, i + 8).map(async (c) => {
         try {
-          c.name = await contactName(args.token, c.contactId)
+          const b = await contactBasics(args.token, c.contactId)
+          c.name = b.name
+          c.tags = b.tags
+          if (isTeam(b.name, b.email)) teamIds.add(c.contactId)
         } catch {
           c.name = null
         }
       }),
     )
 
+  const leads = judged.filter((c) => !teamIds.has(c.contactId))
+
   let intentError: string | null = null
-  if (args.anthropic && judged.length) {
+  if (args.anthropic && leads.length) {
     const { verdicts, error } = await judge(
       args.anthropic,
       args.product,
-      judged.map((c) => ({ id: c.contactId, text: transcript(byContact.get(c.contactId)!) })),
+      leads.map((c) => ({ id: c.contactId, text: transcript(byContact.get(c.contactId)!) })),
     )
     intentError = error
-    for (const c of judged) {
+    for (const c of leads) {
       const v = verdicts.get(c.contactId)
       if (v) Object.assign(c, v)
     }
   } else if (!args.anthropic) intentError = 'no Anthropic key — intent not judged'
 
-  return { day: args.day, unpaid, chats: judged, intentError }
+  return { day: args.day, unpaid, chats: leads, intentError }
 }
 
 // ---------------------------------------------------------------- rendering
@@ -211,7 +238,7 @@ const who = (n: string | null) => clip(n?.trim() || 'Unnamed contact', 40)
  * The group's section — plain text (the performance block is escaped as a
  * whole). All hot leads by name, up to 5 warm, the rest as counts.
  */
-export function renderGroupFollowups(f: Followups): string {
+export function renderGroupFollowups(f: Followups, assignee?: string): string {
   const out: string[] = []
   const chatOf = new Map(f.chats.map((c) => [c.contactId, c]))
   if (f.unpaid.length) {
@@ -247,7 +274,7 @@ export function renderGroupFollowups(f: Followups): string {
   for (const c of shown)
     out.push(`${c.intent === 'hot' ? '🔥' : c.intent === 'warm' ? '🙂' : '-'} ${who(c.name)}${c.reason ? ` — ${clip(c.reason, 70)}` : ''}`)
   const rest = leads.length - shown.length
-  if (rest > 0) out.push(`…and ${rest} more (full list sent to Leo)`)
+  if (rest > 0) out.push(`…and ${rest} more${assignee ? ` — all assigned to ${assignee} in GHL` : ''}`)
   return out.join('\n')
 }
 
@@ -283,4 +310,141 @@ export function renderPrivateFollowups(f: Followups, locationId: string, clientN
   if (f.intentError) out.push('', `<i>Intent: ${esc(clip(f.intentError, 120))}</i>`)
   out.push('', '<i>↺ = was already chatting the day before (not a new chat window).</i>')
   return out.join('\n')
+}
+
+// ---------------------------------------------------------------- to the CS team, inside GHL
+
+// Every morning the list becomes GHL work for the person who chats with the
+// leads (owner's call, 2026-09-29: Ariella, not a spreadsheet): a task per hot
+// lead, warm lead and unpaid checkout — due today, assigned to her, saying why
+// and what to send — and an intent tag on everyone judged, so she can filter a
+// smart list. She ticks tasks off in GHL; the next morning reads how many.
+
+export const INTENT_TAGS: Record<Exclude<Intent, 'unknown'>, string> = {
+  hot: 'intent-hot',
+  warm: 'intent-warm',
+  cold: 'intent-cold',
+  not_a_lead: 'intent-not-lead',
+}
+const ALL_INTENT_TAGS = Object.values(INTENT_TAGS)
+const UNPAID_TAG = 'payment-not-completed'
+/** How our tasks are recognised (so a lead chatting two days running gets one task, refreshed). */
+const MARK = '— CashFlowOS follow-up'
+
+export type AssignedTask = { contactId: string; taskId: string; kind: 'hot' | 'warm' | 'unpaid' }
+export type Assignment = { tasks: AssignedTask[]; created: number; refreshed: number; tagged: number; errors: string[] }
+
+const klTime = (iso: string) => {
+  const d = new Date(Date.parse(iso) + 8 * 3600e3)
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+}
+
+export async function assignFollowups(
+  f: Followups,
+  opts: { token: string; assigneeId: string; dueISO: string },
+): Promise<Assignment> {
+  const out: Assignment = { tasks: [], created: 0, refreshed: 0, tagged: 0, errors: [] }
+  const chatOf = new Map(f.chats.map((c) => [c.contactId, c]))
+
+  // One task per person: an unpaid checkout outranks the chat it may also have.
+  type Todo = { contactId: string; kind: AssignedTask['kind']; title: string; body: string }
+  const todos: Todo[] = []
+  const seen = new Set<string>()
+  for (const u of f.unpaid) {
+    const c = chatOf.get(u.contactId)
+    seen.add(u.contactId)
+    todos.push({
+      contactId: u.contactId,
+      kind: 'unpaid',
+      title: `💳 Payment not completed — follow up today`,
+      body: [
+        `Started paying but it didn't go through (${u.status}, ${klTime(u.at)}${u.amount ? `, RM${u.amount}` : ''}).`,
+        c?.reason ? `From their chat: ${c.reason}` : null,
+        `Suggested: ask what stopped the payment and resend the payment link.`,
+        MARK,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    })
+  }
+  for (const c of f.chats) {
+    if (seen.has(c.contactId) || (c.intent !== 'hot' && c.intent !== 'warm')) continue
+    todos.push({
+      contactId: c.contactId,
+      kind: c.intent,
+      title: `${c.intent === 'hot' ? '🔥 Hot' : '🙂 Warm'} lead — follow up today`,
+      body: [
+        c.reason ? `Why: ${c.reason}` : null,
+        c.next ? `Suggested message: ${c.next}` : null,
+        `Their last message: ${klTime(c.lastInboundAt)}`,
+        MARK,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    })
+  }
+
+  // A few at a time: GHL rate-limits per location.
+  for (let i = 0; i < todos.length; i += 6)
+    await Promise.all(
+      todos.slice(i, i + 6).map(async (t) => {
+        const input = { title: t.title, body: t.body, dueDate: opts.dueISO, assignedTo: opts.assigneeId }
+        try {
+          const open = (await contactTasks(opts.token, t.contactId)).find((x) => !x.completed && (x.body ?? '').includes(MARK))
+          if (open) {
+            await updateTask(opts.token, t.contactId, open.id, input)
+            out.refreshed++
+            out.tasks.push({ contactId: t.contactId, taskId: open.id, kind: t.kind })
+          } else {
+            const id = await createTask(opts.token, t.contactId, input)
+            out.created++
+            out.tasks.push({ contactId: t.contactId, taskId: id, kind: t.kind })
+          }
+        } catch (e) {
+          out.errors.push((e as Error).message)
+        }
+      }),
+    )
+
+  // Intent tags: swap a stale one rather than stacking hot on warm on cold.
+  const tagJobs: { contactId: string; add: string[]; remove: string[] }[] = []
+  for (const c of f.chats) {
+    if (c.intent === 'unknown') continue
+    const want = INTENT_TAGS[c.intent]
+    const add = c.tags.includes(want) ? [] : [want]
+    const remove = c.tags.filter((t) => ALL_INTENT_TAGS.includes(t) && t !== want)
+    if (add.length || remove.length) tagJobs.push({ contactId: c.contactId, add, remove })
+  }
+  for (const u of f.unpaid) tagJobs.push({ contactId: u.contactId, add: [UNPAID_TAG], remove: [] })
+  for (let i = 0; i < tagJobs.length; i += 6)
+    await Promise.all(
+      tagJobs.slice(i, i + 6).map(async (j) => {
+        try {
+          if (j.remove.length) await removeTags(opts.token, j.contactId, j.remove)
+          if (j.add.length) await addTags(opts.token, j.contactId, j.add)
+          out.tagged++
+        } catch (e) {
+          out.errors.push((e as Error).message)
+        }
+      }),
+    )
+  return out
+}
+
+/** How many of a morning's tasks have been ticked off since. */
+export async function followupProgress(token: string, tasks: AssignedTask[]): Promise<{ done: number; total: number; unreadable: number }> {
+  let done = 0
+  let unreadable = 0
+  for (let i = 0; i < tasks.length; i += 5)
+    await Promise.all(
+      tasks.slice(i, i + 5).map(async (t) => {
+        try {
+          const task = await getTask(token, t.contactId, t.taskId)
+          if (task?.completed) done++
+        } catch {
+          unreadable++ // deleted, or unreadable — not counted as done
+        }
+      }),
+    )
+  return { done, total: tasks.length, unreadable }
 }

@@ -70,7 +70,15 @@ export type GhlPerformance = {
   /** "Are we on track" — set by the cron when the client has an event schedule. */
   pace?: { line: string } | null
   /** Who to chase today (lib/followups.ts) — set by the cron; rendered at the end of the block. */
-  followups?: { text: string; unpaid: number; chats: number; hot: number; warm: number } | null
+  followups?: {
+    text: string
+    unpaid: number
+    chats: number
+    hot: number
+    warm: number
+    /** GHL tasks created/refreshed for the follow-up owner — read back next morning for progress. */
+    tasks?: { contactId: string; taskId: string; kind: 'hot' | 'warm' | 'unpaid' }[]
+  } | null
 }
 
 const headers = (token: string) => ({
@@ -545,15 +553,86 @@ export async function whatsappMessages(locationId: string, token: string, fromIS
   throw new Error(last)
 }
 
-/** A contact's display name. The message export carries ids only. */
-export async function contactName(token: string, contactId: string): Promise<string | null> {
+/** A contact's display name and tags. The message export carries ids only. */
+export async function contactBasics(token: string, contactId: string): Promise<{ name: string | null; email: string | null; tags: string[] }> {
   const j = await getJSON(`${API}/contacts/${encodeURIComponent(contactId)}`, token)
   const c = (j.contact ?? j) as Record<string, unknown>
   const name = (c.contactName as string) || [c.firstName, c.lastName].filter(Boolean).join(' ') || (c.name as string) || null
-  return name ? String(name).trim() : null
+  return {
+    name: name ? String(name).trim() : null,
+    email: c.email ? String(c.email).toLowerCase() : null,
+    tags: Array.isArray(c.tags) ? (c.tags as string[]) : [],
+  }
 }
 
-export type CheckoutAttempt = { contactId: string; name: string | null; status: string; at: string; amount: number | null }
+// ---------------------------------------------------------------- writes (tasks, tags)
+
+async function sendJSON(method: 'POST' | 'PUT' | 'DELETE', url: string, token: string, body: unknown): Promise<Record<string, unknown>> {
+  const res = await fetch(url, {
+    method,
+    headers: { ...headers(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`GHL ${res.status} on ${method} ${new URL(url).pathname}${detail ? ` — ${detail.slice(0, 160)}` : ''}`)
+  }
+  return (await res.json().catch(() => ({}))) as Record<string, unknown>
+}
+
+export type GhlTask = { id: string; title: string; body: string | null; dueDate: string | null; completed: boolean; assignedTo: string | null }
+
+export async function contactTasks(token: string, contactId: string): Promise<GhlTask[]> {
+  const j = await getJSON(`${API}/contacts/${encodeURIComponent(contactId)}/tasks`, token)
+  return ((j.tasks as GhlTask[] | undefined) ?? []).map((t) => ({ ...t, completed: !!t.completed }))
+}
+
+export async function getTask(token: string, contactId: string, taskId: string): Promise<GhlTask | null> {
+  const j = await getJSON(`${API}/contacts/${encodeURIComponent(contactId)}/tasks/${encodeURIComponent(taskId)}`, token)
+  const t = (j.task ?? null) as GhlTask | null
+  return t ? { ...t, completed: !!t.completed } : null
+}
+
+export type TaskInput = { title: string; body: string; dueDate: string; assignedTo: string }
+
+export async function createTask(token: string, contactId: string, t: TaskInput): Promise<string> {
+  const j = await sendJSON('POST', `${API}/contacts/${encodeURIComponent(contactId)}/tasks`, token, { ...t, completed: false })
+  const id = ((j.task ?? j) as { id?: string }).id
+  if (!id) throw new Error('GHL created a task but returned no id')
+  return id
+}
+
+export async function updateTask(token: string, contactId: string, taskId: string, t: TaskInput): Promise<void> {
+  await sendJSON('PUT', `${API}/contacts/${encodeURIComponent(contactId)}/tasks/${encodeURIComponent(taskId)}`, token, { ...t, completed: false })
+}
+
+export async function addTags(token: string, contactId: string, tags: string[]): Promise<void> {
+  if (tags.length) await sendJSON('POST', `${API}/contacts/${encodeURIComponent(contactId)}/tags`, token, { tags })
+}
+
+export async function removeTags(token: string, contactId: string, tags: string[]): Promise<void> {
+  if (tags.length) await sendJSON('DELETE', `${API}/contacts/${encodeURIComponent(contactId)}/tags`, token, { tags })
+}
+
+export type CheckoutAttempt = { contactId: string; name: string | null; email: string | null; status: string; at: string; amount: number | null }
+
+/**
+ * The location's own team (GHL users) — their test checkouts and chats are not
+ * leads. Found 2026-09-29 when the client's owner landed on the unpaid list.
+ */
+export async function teamMembers(locationId: string, token: string): Promise<{ emails: Set<string>; names: Set<string> }> {
+  const j = await getJSON(`${API}/users/?locationId=${encodeURIComponent(locationId)}`, token)
+  const norm = (s: string) => s.toLowerCase().replace(/s+/g, ' ').trim()
+  const emails = new Set<string>()
+  const names = new Set<string>()
+  for (const u of (j.users as Record<string, unknown>[] | undefined) ?? []) {
+    if (u.email) emails.add(String(u.email).toLowerCase())
+    const n = (u.name as string) || [u.firstName, u.lastName].filter(Boolean).join(' ')
+    if (n && norm(n).includes(' ')) names.add(norm(n)) // full names only — "KL" or "Tan" alone would catch real leads
+  }
+  return { emails, names }
+}
 
 /**
  * Who has ever paid for this client's product, and who STARTED a checkout
@@ -585,7 +664,14 @@ export async function paymentAttempts(
     if (Date.parse(t.createdAt) < since) continue
     const cur = latest.get(t.contactId)
     if (!cur || t.createdAt > cur.at)
-      latest.set(t.contactId, { contactId: t.contactId, name: t.contactName ?? null, status: t.status ?? 'unknown', at: t.createdAt, amount: t.amount ?? null })
+      latest.set(t.contactId, {
+        contactId: t.contactId,
+        name: t.contactName ?? null,
+        email: t.contactEmail ? t.contactEmail.toLowerCase() : null,
+        status: t.status ?? 'unknown',
+        at: t.createdAt,
+        amount: t.amount ?? null,
+      })
   }
   return { paidEver, unpaid: [...latest.values()].sort((a, b) => b.at.localeCompare(a.at)) }
 }

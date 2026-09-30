@@ -162,6 +162,12 @@ export type AdClient = {
      */
     followups?: boolean
     /**
+     * Who works the follow-up list: hot/warm/unpaid leads become GHL tasks
+     * assigned to this GHL user, and everyone judged gets an intent tag. The
+     * owner then gets one progress line instead of the full list.
+     */
+    followupAssignee?: { userId: string; name: string }
+    /**
      * Count WhatsApp conversation windows opened on the report day. Every new
      * lead gets an outbound WhatsApp template, but the 24-hour window in which
      * the team can chat freely only opens when the lead REPLIES — so this is
@@ -313,6 +319,7 @@ export const AD_CLIENTS: AdClient[] = [
       includeOrderSources: ['Claude 1 Day Workshop', 'CM1D', 'VIP Ticket Upgrade'], // not Forex / Brain Health / CloserKing
       whatsappWindows: true, // the Claude Malaysia line, +60 17-598 7155
       followups: true, // unpaid checkouts + yesterday's WhatsApp chats by buying intent (owner, 2026-09-28)
+      followupAssignee: { userId: 'EaYYLKFAWMRPqVZXgm3c', name: 'Ariella' }, // GHL user "Ariella A" (owner, 2026-09-29)
     },
     watchPages: [
       { name: 'Hustle Malaysia', pageId: '791929197338366' }, // "Certified Claude AI Professional" — the direct competitor
