@@ -118,10 +118,23 @@ export function dayBounds(dateISO: string, timeZone: string): { start: string; e
   }
 }
 
+// Two retries on a timeout, rate limit (429) or server error: GHL has been seen
+// to stall a request for 30s+ and answer the same request a moment later.
 async function getJSON(url: string, token: string, version = VERSION): Promise<Record<string, unknown>> {
-  const res = await fetch(url, { headers: { ...headers(token), Version: version }, signal: AbortSignal.timeout(30000) })
-  if (!res.ok) throw new Error(`GHL ${res.status} on ${new URL(url).pathname}`)
-  return (await res.json()) as Record<string, unknown>
+  let last: Error | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt))
+    try {
+      const res = await fetch(url, { headers: { ...headers(token), Version: version }, signal: AbortSignal.timeout(30000) })
+      if (res.ok) return (await res.json()) as Record<string, unknown>
+      last = new Error(`GHL ${res.status} on ${new URL(url).pathname}`)
+      if (res.status !== 429 && res.status < 500) throw last
+    } catch (e) {
+      if (e === last) throw e
+      last = e instanceof Error && e.name === 'TimeoutError' ? new Error(`GHL timed out on ${new URL(url).pathname}`) : (e as Error)
+    }
+  }
+  throw last ?? new Error(`GHL request failed on ${new URL(url).pathname}`)
 }
 
 /**
@@ -553,16 +566,41 @@ export async function whatsappMessages(locationId: string, token: string, fromIS
   throw new Error(last)
 }
 
-/** A contact's display name and tags. The message export carries ids only. */
-export async function contactBasics(token: string, contactId: string): Promise<{ name: string | null; email: string | null; tags: string[] }> {
+export type ContactBasics = {
+  name: string | null
+  email: string | null
+  phone: string | null
+  tags: string[]
+  dateAdded: string | null
+  /** GHL's "source" — usually the form or funnel that created the contact. */
+  source: string | null
+  customFields: { id: string; value: unknown }[]
+  firstTouch: FirstTouch
+}
+
+/** One read of a contact: name, contact details, tags, custom fields and first touch. */
+export async function contactBasics(token: string, contactId: string): Promise<ContactBasics> {
   const j = await getJSON(`${API}/contacts/${encodeURIComponent(contactId)}`, token)
   const c = (j.contact ?? j) as Record<string, unknown>
   const name = (c.contactName as string) || [c.firstName, c.lastName].filter(Boolean).join(' ') || (c.name as string) || null
   return {
     name: name ? String(name).trim() : null,
     email: c.email ? String(c.email).toLowerCase() : null,
+    phone: c.phone ? String(c.phone) : null,
     tags: Array.isArray(c.tags) ? (c.tags as string[]) : [],
+    dateAdded: (c.dateAdded as string) ?? null,
+    source: (c.source as string) ?? null,
+    customFields: Array.isArray(c.customFields) ? (c.customFields as { id: string; value: unknown }[]) : [],
+    firstTouch: firstTouchOf(c),
   }
+}
+
+/** The location's custom fields, by name — e.g. the opt-in form's "Your Industry" / "Your Role". */
+export async function customFieldIds(locationId: string, token: string): Promise<Map<string, string>> {
+  const j = await getJSON(`${API}/locations/${encodeURIComponent(locationId)}/customFields`, token)
+  const out = new Map<string, string>()
+  for (const f of (j.customFields as { id: string; name: string }[] | undefined) ?? []) out.set(f.name.trim().toLowerCase(), f.id)
+  return out
 }
 
 // ---------------------------------------------------------------- writes (tasks, tags)
@@ -644,7 +682,13 @@ export async function paymentAttempts(
   token: string,
   sinceISO: string,
   includeSources: string[],
-): Promise<{ paidEver: Set<string>; unpaid: CheckoutAttempt[] }> {
+  /**
+   * "Paid" means paid by this instant (default: now). A backfill of an earlier
+   * day passes that day's end, so a lead who paid LATER still counts as unpaid
+   * on the day — and paidAt shows when they converted.
+   */
+  asOfISO?: string,
+): Promise<{ paidEver: Set<string>; paidAt: Map<string, string>; unpaid: CheckoutAttempt[] }> {
   const txns: Txn[] = []
   for (let offset = 0; offset < 1000; offset += 100) {
     const j = await getJSON(
@@ -656,12 +700,19 @@ export async function paymentAttempts(
     if (batch.length < 100) break
   }
   const ours = (t: Txn) => !includeSources.length || includeSources.some((x) => (t.entitySourceName ?? '').toLowerCase().includes(x.toLowerCase()))
-  const paidEver = new Set(txns.filter((t) => ours(t) && t.status === 'succeeded' && t.contactId).map((t) => t.contactId!))
+  // First successful payment per contact, ever.
+  const paidAt = new Map<string, string>()
+  for (const t of txns)
+    if (ours(t) && t.status === 'succeeded' && t.contactId && (!paidAt.has(t.contactId) || t.createdAt < paidAt.get(t.contactId)!))
+      paidAt.set(t.contactId, t.createdAt)
+  const asOf = asOfISO ?? new Date().toISOString()
+  const paidEver = new Set([...paidAt].filter(([, at]) => at <= asOf).map(([id]) => id))
   const since = Date.parse(sinceISO)
+  const until = Date.parse(asOf)
   const latest = new Map<string, CheckoutAttempt>()
   for (const t of txns) {
     if (!ours(t) || !t.contactId || t.status === 'succeeded' || paidEver.has(t.contactId)) continue
-    if (Date.parse(t.createdAt) < since) continue
+    if (Date.parse(t.createdAt) < since || Date.parse(t.createdAt) > until) continue
     const cur = latest.get(t.contactId)
     if (!cur || t.createdAt > cur.at)
       latest.set(t.contactId, {
@@ -673,7 +724,7 @@ export async function paymentAttempts(
         amount: t.amount ?? null,
       })
   }
-  return { paidEver, unpaid: [...latest.values()].sort((a, b) => b.at.localeCompare(a.at)) }
+  return { paidEver, paidAt, unpaid: [...latest.values()].sort((a, b) => b.at.localeCompare(a.at)) }
 }
 
 // ---------------------------------------------------------------- first touch
@@ -692,9 +743,12 @@ export type FirstTouch = {
 
 export async function contactFirstTouch(locationId: string, token: string, contactId: string): Promise<FirstTouch> {
   const j = await getJSON(`${API}/contacts/${encodeURIComponent(contactId)}`, token)
-  const c = (j.contact ?? j) as Record<string, unknown>
-  const a = (c.attributionSource ?? {}) as Record<string, string | null | undefined>
   void locationId // the token is scoped to the location; kept for a uniform call shape
+  return firstTouchOf((j.contact ?? j) as Record<string, unknown>)
+}
+
+function firstTouchOf(c: Record<string, unknown>): FirstTouch {
+  const a = (c.attributionSource ?? {}) as Record<string, string | null | undefined>
   return {
     dateAdded: (c.dateAdded as string) ?? null,
     sessionSource: a.sessionSource ?? null,

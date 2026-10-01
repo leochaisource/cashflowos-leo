@@ -38,6 +38,7 @@ import {
   type Followups,
   type AssignedTask,
 } from '@/lib/followups'
+import { hotLeadRows, pushHotLeads, paidList } from '@/lib/hot-leads-sheet'
 import { loadAdRows } from '@/lib/metrics'
 import { focusProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
@@ -1024,9 +1025,32 @@ async function runClient(client: AdClient, records: Rec[]) {
           `📋 ${who.name}: ` +
           (progress ? `${progress.done}/${progress.total} follow-ups done yesterday` : 'no tasks from yesterday to check') +
           ` · today ${tasks.length} task${tasks.length === 1 ? '' : 's'} in GHL (${count('hot')} hot · ${count('warm')} warm · ${count('unpaid')} unpaid)`
-      } else {
-        followupsPrivate = renderPrivateFollowups(f, process.env[g.locationEnv]!.trim(), client.client ?? client.name)
       }
+      // The hot leads also go into the shared "Leads Follow Up List" Google
+      // Sheet (owner, 2026-10-01) — via the sheet's Apps Script.
+      const sheetUrl = process.env.SHEETS_HOTLEADS_URL?.trim()
+      const sheetSecret = process.env.SHEETS_HOTLEADS_SECRET?.trim()
+      if (sheetUrl && sheetSecret && client.deal) {
+        try {
+          const rows = await hotLeadRows({
+            f,
+            project: client.id,
+            locationId: process.env[g.locationEnv]!.trim(),
+            token,
+            agreementDate: client.deal.agreementDate,
+            assignee: who?.name ?? null,
+            funnels: g.funnels.map((x) => ({ formId: x.formId, label: x.label })),
+            db: supabase,
+          })
+          const res = await pushHotLeads(sheetUrl, sheetSecret, rows, paidList(f))
+          if (!res.ok) notes.push(`Hot leads sheet not updated: ${res.error ?? 'unknown error'}`)
+          else if (followupsOwnerLine) followupsOwnerLine += ` · ${rows.length} hot lead${rows.length === 1 ? '' : 's'} added to the sheet`
+        } catch (e) {
+          notes.push(`Hot leads sheet not updated: ${(e as Error).message}`)
+        }
+      }
+      // No follow-up owner: the owner gets the full list privately, as before.
+      if (!who) followupsPrivate = renderPrivateFollowups(f, process.env[g.locationEnv]!.trim(), client.client ?? client.name)
       perf.followups = {
         text: renderGroupFollowups(f, who?.name),
         unpaid: f.unpaid.length,
@@ -1208,7 +1232,11 @@ export async function GET(req: Request) {
   // call it 40-70s — and four in a row runs at the 300s ceiling, where the last
   // client's brief silently never sends. All-at-once instead risks rate limits.
   // Pairs halve the wall time and keep concurrent load where it already was.
-  const CONCURRENCY = 2
+  // ALL AT ONCE since 2026-10-01: Claude Malaysia's run grew to ~3 min (follow-up
+  // judging, GHL tasks, the hot-leads sheet), and a client queued behind it in a
+  // pair finished at ~3.6 of the 5 allowed minutes. In parallel the total is the
+  // slowest client, not a pair plus one. Three focus clients — revisit at more.
+  const CONCURRENCY = 3
   for (let i = 0; i < runnable.length; i += CONCURRENCY) {
     const batch = runnable.slice(i, i + CONCURRENCY)
     const settled = await Promise.all(
