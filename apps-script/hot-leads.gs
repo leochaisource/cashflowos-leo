@@ -1,6 +1,6 @@
 /**
  * HOT LEADS — receives each morning's hot leads from the CashFlowOS 8am run
- * (cashflowos-leo: lib/sheets.ts) and keeps them in the "Hot leads" tab.
+ * (cashflowos-leo: lib/hot-leads-sheet.ts) and keeps them in the "Hot leads" tab.
  *
  * Setup (once): Project Settings → Script properties → add SECRET = the value
  * of SHEETS_HOTLEADS_SECRET. Deploy → New deployment → Web app, execute as
@@ -77,11 +77,38 @@ function doPost(e) {
       }
     })
 
-    // 2. New rows go in at the top, newest first.
+    // 2. New rows go in at the top, newest first. Rows inserted under the
+    //    header inherit its dark fill and bold — reset them to plain.
     if (fresh.length) {
       sh.insertRowsAfter(1, fresh.length)
       sh.getRange(2, 1, fresh.length, HEADERS.length).setValues(fresh)
       sh.getRange(2, AUTO.length + 1, fresh.length, 1).setDataValidation(statusRule_())
+      plain_(sh, 2, fresh.length)
+    }
+    if (body.restyle && sh.getLastRow() > 1) plain_(sh, 2, sh.getLastRow() - 1)
+
+    // 2b. Contacts that turned out not to be leads (our own test contacts): drop every row of theirs.
+    let removed = 0
+    const drop = {}
+    ;(body.remove || []).forEach(function (id) {
+      drop[id] = true
+    })
+    if (Object.keys(drop).length) {
+      index = keyIndex()
+      Object.keys(index)
+        .filter(function (key) {
+          return drop[String(key).split('|')[1]]
+        })
+        .map(function (key) {
+          return index[key]
+        })
+        .sort(function (a, b) {
+          return b - a // bottom up, so row numbers stay valid
+        })
+        .forEach(function (r) {
+          sh.deleteRow(r)
+          removed++
+        })
     }
 
     // 3. Leads who have paid since: mark every row of theirs.
@@ -102,7 +129,7 @@ function doPost(e) {
         }
       })
     }
-    return json_({ ok: true, inserted: fresh.length, updated: updated, paidMarked: paidMarked })
+    return json_({ ok: true, inserted: fresh.length, updated: updated, paidMarked: paidMarked, removed: removed })
   } catch (err) {
     return json_({ ok: false, error: String(err) })
   } finally {
@@ -132,6 +159,11 @@ function sheet_() {
   sh.getRange(1, AUTO.length + 1, 1, MANUAL.length).setBackground('#b5573a') // the team's columns
   sh.hideColumns(HEADERS.indexOf(KEY) + 1)
   return sh
+}
+
+function plain_(sh, row, n) {
+  sh.getRange(row, 1, n, HEADERS.length).setBackground(null).setFontColor('#000000').setFontWeight('normal')
+  sh.getRange(row, AUTO.length + 1, n, MANUAL.length).setBackground('#fbf1ec') // the team's columns, lightly tinted
 }
 
 function statusRule_() {

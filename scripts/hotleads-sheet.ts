@@ -61,6 +61,7 @@ for (let day = from; day <= to; day = addDay(day, 1)) {
       `${client.client ?? client.name} one-day Claude AI workshop on ${w.to}, tickets ` +
       `RM${client.deal.ticketPrices.general} General / RM${client.deal.ticketPrices.vip} VIP`,
     anthropic,
+    notLeads: g.notLeads,
   })
   const rows = await hotLeadRows({
     f,

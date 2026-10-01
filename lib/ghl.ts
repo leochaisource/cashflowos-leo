@@ -661,7 +661,7 @@ export type CheckoutAttempt = { contactId: string; name: string | null; email: s
  */
 export async function teamMembers(locationId: string, token: string): Promise<{ emails: Set<string>; names: Set<string> }> {
   const j = await getJSON(`${API}/users/?locationId=${encodeURIComponent(locationId)}`, token)
-  const norm = (s: string) => s.toLowerCase().replace(/s+/g, ' ').trim()
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim()
   const emails = new Set<string>()
   const names = new Set<string>()
   for (const u of (j.users as Record<string, unknown>[] | undefined) ?? []) {

@@ -47,6 +47,7 @@ const f = await buildFollowups({
   includeSources: g.includeOrderSources ?? [],
   product: followupProduct(),
   anthropic: process.argv.includes('--ai') ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.trim() }) : null,
+  notLeads: g.notLeads,
 })
 
 function followupProduct() {

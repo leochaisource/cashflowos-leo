@@ -168,6 +168,12 @@ export type AdClient = {
      */
     followupAssignee?: { userId: string; name: string }
     /**
+     * GHL contact ids that are never leads, on top of the location's own users:
+     * people on our side whose test contacts carry a different email than
+     * their GHL user (the owner's "leo chai" test chats, 2026-10-01).
+     */
+    notLeads?: string[]
+    /**
      * Count WhatsApp conversation windows opened on the report day. Every new
      * lead gets an outbound WhatsApp template, but the 24-hour window in which
      * the team can chat freely only opens when the lead REPLIES — so this is
@@ -320,6 +326,7 @@ export const AD_CLIENTS: AdClient[] = [
       whatsappWindows: true, // the Claude Malaysia line, +60 17-598 7155
       followups: true, // unpaid checkouts + yesterday's WhatsApp chats by buying intent (owner, 2026-09-28)
       followupAssignee: { userId: 'EaYYLKFAWMRPqVZXgm3c', name: 'Ariella' }, // GHL user "Ariella A" (owner, 2026-09-29)
+      notLeads: ['6akNAWbnfjqG1vdETYkD', 'GudJcCRfbHpowedbHmgp', 'eigz0oA4vbkGHESFMel5'], // the owner's own "leo chai" contacts
     },
     watchPages: [
       { name: 'Hustle Malaysia', pageId: '791929197338366' }, // "Certified Claude AI Professional" — the direct competitor

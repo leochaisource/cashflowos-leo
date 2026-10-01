@@ -537,6 +537,7 @@ async function runClient(client: AdClient, records: Rec[]) {
                       `${client.client ?? client.name} one-day Claude AI workshop on ${next.to}, tickets ` +
                       `RM${client.deal.ticketPrices.general} General / RM${client.deal.ticketPrices.vip} VIP`,
                     anthropic: key ? new Anthropic({ apiKey: key }) : null,
+                    notLeads: g.notLeads,
                   }).catch((e) => {
                     notes.push(`Follow-ups unavailable: ${(e as Error).message}`)
                     return null

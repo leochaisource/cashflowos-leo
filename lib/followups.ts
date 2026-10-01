@@ -181,7 +181,10 @@ export async function buildFollowups(args: {
   includeSources: string[]
   product: string
   anthropic: Anthropic | null
+  /** Contact ids that are never leads (our own test contacts). */
+  notLeads?: string[]
 }): Promise<Followups> {
+  const notLeads = new Set(args.notLeads ?? [])
   const { paidEver, paidAt, unpaid: attempts } = await paymentAttempts(
     args.locationId,
     args.token,
@@ -192,8 +195,8 @@ export async function buildFollowups(args: {
   // The client's own team is never a lead (test checkouts, internal chats).
   const team = await teamMembers(args.locationId, args.token).catch(() => ({ emails: new Set<string>(), names: new Set<string>() }))
   const isTeam = (name: string | null, email: string | null) =>
-    (!!email && team.emails.has(email)) || (!!name && team.names.has(name.toLowerCase().replace(/s+/g, ' ').trim()))
-  const unpaid = attempts.filter((u) => !isTeam(u.name, u.email))
+    (!!email && team.emails.has(email)) || (!!name && team.names.has(name.toLowerCase().replace(/\s+/g, ' ').trim()))
+  const unpaid = attempts.filter((u) => !notLeads.has(u.contactId) && !isTeam(u.name, u.email))
 
   // Yesterday plus the 24h before it: context for the model, and the test for a newly opened window.
   const dayStart = Date.parse(args.dayStartISO)
@@ -204,7 +207,7 @@ export async function buildFollowups(args: {
 
   const chats: ChatLead[] = []
   for (const [contactId, list] of byContact) {
-    if (paidEver.has(contactId)) continue
+    if (paidEver.has(contactId) || notLeads.has(contactId)) continue
     const inbound = list.filter((m) => m.direction === 'inbound').map((m) => Date.parse(m.dateAdded))
     const yesterday = inbound.filter((t) => t >= dayStart && t <= dayEnd)
     if (!yesterday.length) continue // only people who messaged us yesterday
