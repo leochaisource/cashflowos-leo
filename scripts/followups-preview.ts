@@ -11,7 +11,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
 import { AD_CLIENTS } from '../lib/ad-clients.ts'
-import { dayBounds, saleRows, perfWindow, ghlPerformance, renderPerformance } from '../lib/ghl.ts'
+import { campaignMatches, dayBounds, saleRows, perfWindow, ghlPerformance, renderPerformance } from '../lib/ghl.ts'
 import { eventFor } from '../lib/deal.ts'
 import { buildPace } from '../lib/deal-estimate.ts'
 import { buildFollowups, renderGroupFollowups, renderPrivateFollowups, assignFollowups } from '../lib/followups.ts'
@@ -67,7 +67,7 @@ for (let at = 0; ; at += 1000) {
   if (!data || data.length < 1000) break
 }
 const spendByCampaign = (campaign: string, from: string, to: string) =>
-  adRows.filter((r) => r.date >= from && r.date <= to && (campaign === '*' || r.campaign_name === campaign)).reduce((s, r) => s + Number(r.spend), 0)
+  adRows.filter((r) => r.date >= from && r.date <= to && campaignMatches(r.campaign_name, campaign)).reduce((s, r) => s + Number(r.spend), 0)
 const perf = await ghlPerformance(client, day, spendByCampaign)
 if (perf) {
   perf.pace = pace

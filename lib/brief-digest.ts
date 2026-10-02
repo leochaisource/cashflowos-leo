@@ -164,6 +164,7 @@ export function operatorAlerts(notes: string[], max = 2): string[] {
     [/out of credits/i, () => 'Adyntel is out of credits — no competitor search today.'],
     [/^Adyntel unavailable/i, (n) => `Competitor search failed: ${short(n)}`],
     [/^Meta unavailable/i, (n) => `Meta API failed: ${short(n)}`],
+    [/^Ad spend not matched to any funnel/i, (n) => `Meta spend with no funnel: ${n.match(/RM[\d,.]+/)?.[0] ?? 'some'} — new or renamed campaign; add it in lib/ad-clients.ts.`],
     [/^Performance block failed|^GHL|GoHighLevel/i, (n) => `GHL figures incomplete: ${short(n)}`],
     [/^Master leads sheet|^Leads unreadable/i, () => 'Master leads sheet could not be read.'],
     [/^Your-share estimate unavailable/i, (n) => `Your-share estimate failed: ${short(n)}`],

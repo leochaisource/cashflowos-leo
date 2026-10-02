@@ -50,6 +50,8 @@ export type GhlPerformance = {
   /** The day these figures cover, ISO, in the ad account's timezone. */
   date: string
   funnels: GhlFunnelRow[]
+  /** Report-day spend on campaigns no funnel claims (a new or renamed campaign). */
+  otherSpend: number
   /** Seats sold on the report day itself. null = unreadable. */
   purchasesToday: number | null
   /** Money collected on the report day (tickets + upgrades). null = unreadable. */
@@ -449,6 +451,20 @@ export function perfWindow(client: AdClient, dateISO: string): { salesSince: str
   }
 }
 
+/**
+ * Whether a Meta campaign belongs to a funnel's campaign. A relaunch usually
+ * keeps the name and adds a suffix — "[SF] CM1D Direct Ticket Campaign -
+ * Purchase" (28 Sep 2026) — and an exact match read that funnel as RM0 for two
+ * mornings. So a funnel's campaign matches itself and anything extending it
+ * after a space. '*' matches every campaign.
+ */
+export function campaignMatches(name: string | null | undefined, campaign: string): boolean {
+  if (campaign === '*') return true
+  const n = (name ?? '').trim().toLowerCase()
+  const c = campaign.trim().toLowerCase()
+  return n === c || n.startsWith(c + ' ')
+}
+
 export async function ghlPerformance(
   client: AdClient,
   dateISO: string,
@@ -506,10 +522,21 @@ export async function ghlPerformance(
     problems.push(`Purchases unreadable from GHL (${(e as Error).message}) — shown as unknown, not zero.`)
   }
 
+  // Spend on the day that no funnel claims — a new or renamed campaign. Shown
+  // as its own line and flagged, so a funnel never silently reads RM0.
+  const assigned = funnels.reduce((s, f) => s + f.spend, 0)
+  const otherSpend = Math.max(0, spendByCampaign('*', dateISO, dateISO) - assigned)
+  if (otherSpend >= 0.5)
+    problems.push(
+      `Ad spend not matched to any funnel: ${rm(otherSpend)} on ${dateISO} — a new or renamed Meta campaign? ` +
+        `Add it to ${client.id}'s funnels in lib/ad-clients.ts.`,
+    )
+
   const spendTotal = spendByCampaign('*', win.spendSince, dateISO)
   return {
     date: dateISO,
     funnels,
+    otherSpend,
     purchasesToday,
     revenueToday,
     whatsappWindows,
@@ -808,6 +835,7 @@ export function renderPerformance(p: GhlPerformance): string {
       `CPL: ${f.cpl === null ? (f.leads === 0 ? 'no leads yet' : 'unavailable') : rm(f.cpl)}`,
     )
   }
+  if (p.otherSpend >= 0.5) out.push('', `Other campaigns:`, `Amount spent: ${rm(p.otherSpend)}`)
   if (p.whatsappWindows !== null || p.whatsappTracked)
     out.push('', `WhatsApp conversation windows opened: ${p.whatsappWindows === null ? 'unavailable' : p.whatsappWindows}`)
   out.push(

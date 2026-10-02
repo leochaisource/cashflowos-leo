@@ -15,6 +15,7 @@ import {
   type FreshAdvertiser,
 } from '@/lib/brief-digest'
 import {
+  campaignMatches,
   ghlPerformance,
   perfWindow,
   renderPerformance,
@@ -482,7 +483,7 @@ async function runClient(client: AdClient, records: Rec[]) {
         const rows = await loadAdRows([client.id], perfWindow(client, reportDay).spendSince)
         const spendByCampaign = (campaign: string, from: string, to: string) =>
           rows
-            .filter((r) => r.date >= from && r.date <= to && (campaign === '*' || r.campaign_name === campaign))
+            .filter((r) => r.date >= from && r.date <= to && campaignMatches(r.campaign_name, campaign))
             .reduce((s, r) => s + r.spend, 0)
         perf = await ghlPerformance(client, reportDay, spendByCampaign)
 

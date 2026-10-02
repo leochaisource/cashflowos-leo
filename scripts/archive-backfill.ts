@@ -18,7 +18,7 @@
 // fiction in the one place meant to be the record of what actually happened.
 import { createClient } from '@supabase/supabase-js'
 import { AD_CLIENTS, isConfigured } from '../lib/ad-clients.ts'
-import { ghlPerformance, formSubmissionRows, saleRows, dayBounds, ghlConfigured } from '../lib/ghl.ts'
+import { campaignMatches, ghlPerformance, formSubmissionRows, saleRows, dayBounds, ghlConfigured } from '../lib/ghl.ts'
 import { funnelDailyRows, ghlLeadRows, ghlSaleRows, registryRow } from '../lib/archive-rows.ts'
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.split('=')[1]
@@ -69,7 +69,7 @@ const { data: adRows, error: adErr } = await db
 if (adErr) throw new Error(`ad_daily: ${adErr.message}`)
 const spendByCampaign = (campaign: string, f: string, t: string) =>
   (adRows ?? [])
-    .filter((r) => r.date >= f && r.date <= t && (campaign === '*' || r.campaign_name === campaign))
+    .filter((r) => r.date >= f && r.date <= t && campaignMatches(r.campaign_name, campaign))
     .reduce((s, r) => s + Number(r.spend), 0)
 
 const tz = client.ghl.timeZone ?? 'Asia/Kuala_Lumpur'
