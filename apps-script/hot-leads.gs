@@ -161,6 +161,39 @@ function sheet_() {
   return sh
 }
 
+// DAYTIME REFRESH (owner, 2026-10-02) — at 9am, 12pm and 6pm Kuala Lumpur time
+// this asks CashFlowOS to judge TODAY's chats so far and push them in here
+// (through doPost above). Vercel's free plan can't run a cron three times a
+// day, so the clock lives here. Google fires a daily trigger within about
+// 15 minutes of the hour. Run installSyncTriggers() once to set them up.
+const SYNC_URL = 'https://cashflowos-leo.vercel.app/api/hotleads-sync'
+const SYNC_HOURS = [9, 12, 18]
+
+function syncHotLeads() {
+  const secret = PropertiesService.getScriptProperties().getProperty('SECRET')
+  const res = UrlFetchApp.fetch(SYNC_URL, {
+    method: 'post',
+    headers: { Authorization: 'Bearer ' + secret },
+    muteHttpExceptions: true,
+  })
+  console.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 300))
+}
+
+/** Run once from the editor: (re)creates the three daily triggers. */
+function installSyncTriggers() {
+  ScriptApp.getProjectTriggers()
+    .filter(function (t) {
+      return t.getHandlerFunction() === 'syncHotLeads'
+    })
+    .forEach(function (t) {
+      ScriptApp.deleteTrigger(t)
+    })
+  SYNC_HOURS.forEach(function (h) {
+    ScriptApp.newTrigger('syncHotLeads').timeBased().atHour(h).nearMinute(0).everyDays(1).inTimezone('Asia/Kuala_Lumpur').create()
+  })
+  console.log('triggers: ' + ScriptApp.getProjectTriggers().length)
+}
+
 function plain_(sh, row, n) {
   sh.getRange(row, 1, n, HEADERS.length).setBackground(null).setFontColor('#000000').setFontWeight('normal')
   sh.getRange(row, AUTO.length + 1, n, MANUAL.length).setBackground('#fbf1ec') // the team's columns, lightly tinted
