@@ -83,6 +83,19 @@ export const AGENTS: AgentMeta[] = [
     emoji: '🏠',
     autonomyNote: '🟡 After a viewing: drafts the follow-up. You send it.',
   },
+  // ---- Inbox (fed by /inbox-digest on your laptop, via scripts/inbox.mjs — see docs/inbox-digest.md) ----
+  {
+    key: 'inbox-digest',
+    label: 'Inbox Digest',
+    emoji: '📬',
+    autonomyNote: '🟢 Saturday: Claude on your laptop reads your Gmail and posts the week here. Read-only — never replies to anyone.',
+  },
+  {
+    key: 'job_apply',
+    label: 'Job Shortlist',
+    emoji: '💼',
+    autonomyNote: '🟡 Saturday: shortlists jobs for your ✅. Approved ones are applied on Sunday in your own browser.',
+  },
 ]
 
 // ------------------------------------------------------------
@@ -267,6 +280,22 @@ async function draftOnly(agentKey: string, payload: any): Promise<any> {
   return result
 }
 
+// ---- queueJob: the Job Shortlist ✅ ------------------------------------------
+// Approving a job does NOT apply. It only marks it queued; the Sunday routine on
+// the owner's laptop applies in their own browser and reports back with
+// `npm run inbox -- result`. No network call here, nothing leaves the building.
+async function queueJob(payload: any): Promise<any> {
+  const result = {
+    kind: 'job_queued' as const,
+    job_id: payload?.id,
+    title: payload?.title,
+    company: payload?.company,
+    queued_at: new Date().toISOString(),
+  }
+  await logRun('job_apply', 'ok', { queued: payload?.id })
+  return result
+}
+
 export const EXECUTORS: Record<string, Executor> = {
   // The two that write money/docs (Vault = the photo pipeline, Expense = its
   // threshold specialisation). Both file into the ONE records table.
@@ -289,6 +318,8 @@ export const EXECUTORS: Record<string, Executor> = {
   'leave-claim': (p) => draftOnly('leave-claim', p),
   'renewal-nudge': (p) => draftOnly('renewal-nudge', p),
   'viewing-followup': (p) => draftOnly('viewing-followup', p),
+  // Job Shortlist — approval only queues; applying happens later in your browser.
+  job_apply: (p) => queueJob(p),
 }
 
 // ============================================================

@@ -156,6 +156,10 @@ export function summarizeResult(result: any): string {
   if (result.kind === 'record_updated') {
     return `✅ Updated ${result.title} → ${result.status}${result.record_id ? ` (#${result.record_id})` : ''}`
   }
+  // Job Shortlist — approval only queues the job for the Sunday run.
+  if (result.kind === 'job_queued') {
+    return '🗓 Queued — Claude applies on Sunday in your own browser. Nothing has been submitted yet.'
+  }
   return 'Done ✅'
 }
 

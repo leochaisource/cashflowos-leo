@@ -8,7 +8,8 @@
     "start": "next start",
     "webhook:set": "node --env-file-if-exists=.env scripts/set-webhook.mjs",
     "webhook:info": "node --env-file-if-exists=.env scripts/webhook-info.mjs",
-    "import": "node --env-file-if-exists=.env scripts/import.mjs"
+    "import": "node --env-file-if-exists=.env scripts/import.mjs",
+    "inbox": "node --env-file-if-exists=.env scripts/inbox.mjs"
   },
   "engines": {
     "node": ">=20"

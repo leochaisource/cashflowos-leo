@@ -1,0 +1,164 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns='http://www.w3.org/2005/Atom' xmlns:apps='http://schemas.google.com/apps/2006'>
+<title>Mail Filters — inbox clean-up (see docs/inbox-digest.md)</title>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="jobalerts-noreply@linkedin.com OR jobs-noreply@linkedin.com OR jobs-listings@linkedin.com OR hit-reply@linkedin.com OR glassdoor.com OR jobstreet.com OR indeed.com OR jobleads.com OR jobleadsgmbh.zendesk.com OR flexjobs.com OR michaelpage.com.sg OR jobs2web.com OR icims.com OR icims.eu OR myworkday.com OR successfactors.eu OR greenhouse-jobs.com OR wise.jobs"/>
+  <apps:property name='hasTheWord' value='-subject:(interview OR assessment OR "next steps" OR shortlisted OR invitation OR offer)'/>
+  <apps:property name='label' value="Jobs"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="recruitee-mailbox.com OR hiredly.com OR ajobthing.email OR randstad.com.sg OR talentbank.group OR intch.org OR jobalerts.abbott.com OR careers.grab.com OR recruitment.americanexpress.com OR hr.singtel.com OR hr.shopee.com OR remotejobsfinder.co OR joinour-mt.com OR peopleforce.io OR payproglobal.com OR wppmedia.com"/>
+  <apps:property name='hasTheWord' value='-subject:(interview OR assessment OR "next steps" OR shortlisted OR invitation OR offer)'/>
+  <apps:property name='label' value="Jobs"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="myworkday.com OR icims.com OR icims.eu OR greenhouse-jobs.com OR successfactors.eu OR recruitee-mailbox.com OR wise.jobs OR hr.singtel.com OR hr.shopee.com OR careers.grab.com OR michaelpage.com.sg OR hit-reply@linkedin.com"/>
+  <apps:property name='label' value="Jobs/Action"/>
+  <apps:property name='shouldStar' value="true"/>
+  <apps:property name='shouldNeverSpam' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="noreply@gohighlevel.com OR noreply@aff.gohighlevel.com OR affiliate@gohighlevel.com OR e.bluehost.com OR hostinger.com OR send.calendly.com OR e.zoom.us OR mail.notion.so OR mail.notion.com OR updates.notion.so OR mail.adobe.com OR email.capcut.com OR vimeo@vimeo.com OR lottiefiles.com OR hello@gamma.app OR mail.miro.com OR announcements@figma.com OR mail.clickup.com"/>
+  <apps:property name='label' value="Tools"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="email.1.asana.com OR higgsfield.ai OR info.vercel.com OR fathom.video OR mail.restream.io OR community.pexels.com OR rebrandly.com OR gtmetrix.com OR mailsuite.com OR email.mentimeter.com OR email.grok.com OR picwish.com OR email.claude.com OR gemini-notes@google.com OR meetings-noreply@google.com OR welcome@supabase.com OR email.openai.com OR wordfence.com"/>
+  <apps:property name='label' value="Tools"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="fred@fireflies.ai OR no-reply@zoom.us OR messaging.metamail.com OR global.metamail.com OR hello@cal.com OR noreply@github.com OR googlecloud@google.com OR addcal.co OR sc-noreply@google.com OR notifications@vercel.com OR notifications@gamma.app OR team@gohighlevel.com OR nearu.io OR googleplay-noreply@google.com OR teamzoom@e.zoom.us"/>
+  <apps:property name='label' value="Tools"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="abcsalesbot.com"/>
+  <apps:property name='hasTheWord' value="subject:(automation OR report OR subscribed OR tagging)"/>
+  <apps:property name='label' value="Tools"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="wordpress@tariqjagmag.com"/>
+  <apps:property name='label' value="Tools/Wordfence"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="patrickdang.com OR neilpatel.com OR closerking.ai OR accelscaling.com OR dailycmo.net OR atcmarketing.org OR kimperell.com OR thelead.io OR substack.com OR adleaks.com OR cmoaiconsulting.com OR email.braze.com OR activecampaign.com OR aitraining2u.com OR adshelper.com OR etbrandequity.com OR wisenet.co OR aigoal.ai"/>
+  <apps:property name='label' value="Newsletters"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="qiai.tech OR influencity.com OR brevosend.com OR 10times.com OR hktdc.org OR theautomatedacademy.com OR thenuggetsacademy.com OR atheonos.com OR yyc.my OR tribeup.my OR adcreativeacademy.com OR team.semrush.com OR dynata.com OR adyntel.com OR aialphavideos.cloud OR starcityglobal.com OR trustedmalaysia.com OR makenotionforstartups.com"/>
+  <apps:property name='label' value="Newsletters"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="jcimalaysia-areacentral.org OR weareinfluenced.com OR myeg.com.my"/>
+  <apps:property name='label' value="Newsletters"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="no-reply@grab.com OR airasia.com OR trip.com OR sleepdoctor.com OR pizzahut.com.my OR netflix.com OR tgv.com.my OR iqos.com OR celebrityfitness.com OR ergolab.com.my OR andsons.com.sg OR decathlon.com OR hoyoverse.com OR pubgmobile.com OR chess.com OR surfshark.com OR lazada.com.my OR shopifyemail.com"/>
+  <apps:property name='label' value="Shopping"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="luckincoffee.com OR playstation.com OR eldorado.gg OR mformulamy.com OR abbottnutrition.com OR tradingview.com OR airbnb.com OR simedarbyproperty.com OR askvenue.com.my OR mydramawave.com OR e.regus.com OR pos.com.my OR unsplash.com OR sidec.com.my OR message.hsbc.com.my OR maybankard@maybank.com.my OR bigpayme.com OR message.atome.my"/>
+  <apps:property name='label' value="Shopping"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="hlaloyalty.com OR marketing.my.moomoo.com OR bjak.my OR e.iqos.com OR ironman.com OR uber.com OR waze.com"/>
+  <apps:property name='label' value="Shopping"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="asb.edu.my OR hult.edu OR insead.edu OR ntu.edu.sg OR sf_crm@sim.edu.sg OR emeritus.org OR eneb.es OR txedugroup.com OR eduk8u.com OR durham.ac.uk OR hbs.edu OR cuhk.edu.hk OR sbs.ox.ac.uk OR must.edu.my OR esade.edu OR binghamton.edu OR topuniversities.com OR sauder.ubc.ca"/>
+  <apps:property name='label' value="Education-MBA"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="myskillsacademy.pro OR eigensolution.org"/>
+  <apps:property name='label' value="Education-MBA"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="messages-noreply@linkedin.com OR newsletters-noreply@linkedin.com OR updates-noreply@linkedin.com OR invitations@linkedin.com OR messaging-digest-noreply@linkedin.com OR groups-noreply@linkedin.com OR notifications-noreply@linkedin.com OR em.linkedin.com OR mail.instagram.com OR priority.instagram.com OR facebookmail.com OR discover.pinterest.com OR redditmail.com OR business-marketing.facebook.com OR editors-noreply@linkedin.com"/>
+  <apps:property name='label' value="Social media"/>
+  <apps:property name='shouldArchive' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="abcsalesbot.com"/>
+  <apps:property name='hasTheWord' value="-subject:(automation OR report OR subscribed OR tagging)"/>
+  <apps:property name='label' value="Leads"/>
+  <apps:property name='shouldStar' value="true"/>
+  <apps:property name='shouldNeverSpam' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="notifications@calendly.com"/>
+  <apps:property name='label' value="Leads"/>
+  <apps:property name='shouldNeverSpam' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="stripe.com OR invoice+statements@gohighlevel.com OR receipts@gohighlevel.com OR invoice+statements@mail.anthropic.com OR invoice+statements@gamma.app OR billing@clickfunnels.com OR payments-noreply@google.com OR wise.com OR colln@maybank.com OR m2u@maybank.com.my OR unialerts@uob.com.my OR hsbc.malaysia.notifications@hsbc.com.my OR informationservices.hsbc.com.my OR maxis.com.my OR tnb.com.my OR airselangor.com OR hasil.gov.my OR ssm.com.my"/>
+  <apps:property name='label' value="Money"/>
+  <apps:property name='shouldNeverSpam' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="clicktopay.visa.com OR stmt.my.moomoo.com OR lonpac.com OR bjak.ai OR billing-noreply@linkedin.com OR autocountsoft.com OR factureaza.ro OR adaptispay.com OR notifications@link.com OR notification.my.moomoo.com"/>
+  <apps:property name='label' value="Money"/>
+  <apps:property name='shouldNeverSpam' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+<entry><category term='filter'></category><title>Mail Filter</title><content></content>
+  <apps:property name='from' value="replies.acct-mgmt.com OR donotreply.acct-mgmt.com OR claudemalaysia.com OR noreply@business.facebook.com OR noreply@email.meta.com OR no-reply@accounts.google.com OR support.whatsapp.com OR business.whatsapp.com OR security@fireflies.ai OR workspace-noreply@google.com OR namecheap.com OR namesilo.com OR account.bluehost.com OR developers.facebook.com"/>
+  <apps:property name='label' value="Account alerts"/>
+  <apps:property name='shouldNeverSpam' value="true"/>
+  <apps:property name='sizeOperator' value="s_sl"/>
+  <apps:property name='sizeUnit' value="s_smb"/>
+</entry>
+</feed>
