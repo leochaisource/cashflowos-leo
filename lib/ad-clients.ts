@@ -340,7 +340,8 @@ export const AD_CLIENTS: AdClient[] = [
       includeOrderSources: ['Claude 1 Day Workshop', 'CM1D', 'VIP Ticket Upgrade'], // not Forex / Brain Health / CloserKing
       whatsappWindows: true, // the Claude Malaysia line, +60 17-598 7155
       followups: true, // unpaid checkouts + yesterday's WhatsApp chats by buying intent (owner, 2026-09-28)
-      followupAssignee: { userId: 'EaYYLKFAWMRPqVZXgm3c', name: 'Ariella' }, // GHL user "Ariella A" (owner, 2026-09-29)
+      // GHL user "Ariella A" (owner, 2026-09-29); Telegram = her private chat with the bot, for the 9am closing coach (2026-10-08).
+      followupAssignee: { userId: 'EaYYLKFAWMRPqVZXgm3c', name: 'Ariella', telegramChatId: '8867468846' },
       notLeads: ['6akNAWbnfjqG1vdETYkD', 'GudJcCRfbHpowedbHmgp', 'eigz0oA4vbkGHESFMel5'], // the owner's own "leo chai" contacts
     },
     watchPages: [
