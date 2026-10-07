@@ -97,19 +97,27 @@ export async function runCloserCoach(args: {
     }
   }
 
+  const sendAll = async (chatId: string, body: string): Promise<string | null> => {
+    for (const piece of chunk(body)) {
+      const r = await sendMessage(chatId, piece, { noPreview: true })
+      if (!r.ok) return r.error ?? 'send failed'
+    }
+    return null
+  }
   const sentTo: string[] = []
   let sendError: string | null = null
   for (const chatId of recipients) {
-    let ok = true
-    for (const piece of chunk(text)) {
-      const r = await sendMessage(chatId, piece, { noPreview: true })
-      if (!r.ok) {
-        ok = false
-        sendError = r.error ?? 'send failed'
-        break
-      }
-    }
-    if (ok) sentTo.push(chatId)
+    const err = await sendAll(chatId, text)
+    if (err) sendError = err
+    else sentTo.push(chatId)
+  }
+
+  // The owner gets a copy of what the closer got (owner, 2026-10-08), marked as
+  // such. A failed copy never counts against the closer's send.
+  if (args.to === 'closer' && closer.telegramChatId && sentTo.includes(closer.telegramChatId) && owner && owner !== closer.telegramChatId) {
+    const at = new Date().toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit' })
+    const copyErr = await sendAll(owner, `📋 <i>Copy — sent to ${closer.name} on Telegram at ${at}.</i>\n\n${text}`)
+    if (!copyErr) sentTo.push(owner)
   }
 
   if (args.to === 'closer' && sentTo.length && args.db && row?.id) {
