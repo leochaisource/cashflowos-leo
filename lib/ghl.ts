@@ -556,7 +556,18 @@ export async function ghlPerformance(
 
 // ---------------------------------------------------------------- follow-up inputs
 
-export type WaMessage = { id: string; direction: 'inbound' | 'outbound'; body: string; contactId: string; dateAdded: string }
+export type WaMessage = {
+  id: string
+  direction: 'inbound' | 'outbound'
+  body: string
+  contactId: string
+  dateAdded: string
+  conversationId?: string | null
+  /** The GHL user who sent it by hand; absent for the AI bot, workflows and the lead. */
+  userId?: string | null
+  /** "workflow" for automations, "app" for the AI bot and for team members typing in GHL. */
+  source?: string | null
+}
 
 /**
  * Every WhatsApp message (both directions) in a window, oldest first.
@@ -586,15 +597,59 @@ export async function whatsappMessages(locationId: string, token: string, fromIS
       for (const m of msgs) {
         const direction = m.direction === 'inbound' ? 'inbound' : m.direction === 'outbound' ? 'outbound' : null
         if (!direction || !m.contactId || !m.dateAdded) continue
-        out.push({ id: String(m.id), direction, body: String(m.body ?? ''), contactId: String(m.contactId), dateAdded: String(m.dateAdded) })
+        out.push({
+          id: String(m.id),
+          direction,
+          body: String(m.body ?? ''),
+          contactId: String(m.contactId),
+          dateAdded: String(m.dateAdded),
+          conversationId: m.conversationId ? String(m.conversationId) : null,
+          userId: m.userId ? String(m.userId) : null,
+          source: m.source ? String(m.source) : null,
+        })
       }
       cursor = (j.nextCursor as string | undefined) ?? null
       if (!cursor || msgs.length < 100) break
     }
-    if (total === null || received >= total * 0.95) return out.sort((a, b) => a.dateAdded.localeCompare(b.dateAdded))
-    last = `WhatsApp export incomplete — got ${received} of ${total} messages`
+    const complete = total === null || received >= total * 0.95
+    // The export has also answered "total 0, no messages" for a day with
+    // hundreds (6 Oct, 2026-10-07) — so an empty day is asked again before
+    // it is believed. A genuinely quiet day costs two extra calls.
+    if (complete && (received > 0 || attempt === 2)) return out.sort((a, b) => a.dateAdded.localeCompare(b.dateAdded))
+    last = complete ? 'WhatsApp export came back empty' : `WhatsApp export incomplete — got ${received} of ${total} messages`
   }
   throw new Error(last)
+}
+
+/**
+ * One conversation's latest messages (up to `limit`, oldest first), with who
+ * sent each — the closing coach reads whole threads, not one day's slice.
+ */
+export async function conversationMessages(
+  token: string,
+  conversationId: string,
+  limit = 40,
+): Promise<(WaMessage & { messageType: string })[]> {
+  const j = await getJSON(`${API}/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`, token, '2021-04-15')
+  const box = j.messages as { messages?: Record<string, unknown>[] } | Record<string, unknown>[] | undefined
+  const list = (Array.isArray(box) ? box : box?.messages) ?? []
+  const out: (WaMessage & { messageType: string })[] = []
+  for (const m of list) {
+    const direction = m.direction === 'inbound' ? 'inbound' : m.direction === 'outbound' ? 'outbound' : null
+    if (!direction || !m.dateAdded) continue
+    out.push({
+      id: String(m.id),
+      direction,
+      body: String(m.body ?? ''),
+      contactId: String(m.contactId ?? ''),
+      dateAdded: String(m.dateAdded),
+      conversationId,
+      userId: m.userId ? String(m.userId) : null,
+      source: m.source ? String(m.source) : null,
+      messageType: String(m.messageType ?? ''),
+    })
+  }
+  return out.sort((a, b) => a.dateAdded.localeCompare(b.dateAdded))
 }
 
 export type ContactBasics = {

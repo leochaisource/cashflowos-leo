@@ -4,6 +4,7 @@ import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { AD_CLIENTS } from '@/lib/ad-clients'
 import { syncHotLeadsDay, localDay } from '@/lib/hot-leads-sync'
 import { sendMessage } from '@/lib/telegram'
+import { APP_URL } from '@/lib/brief-digest'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300 // WhatsApp export + the model's judging take 1–3 minutes
@@ -71,9 +72,28 @@ async function runAndReport() {
   return result
 }
 
+/**
+ * The 9am run also starts the closing coach (/api/closer-coach) — this trigger
+ * is the only morning clock with room. It runs as its own request, so the
+ * sheet and the coach each get the full time limit; it sends once per day.
+ */
+function startCoachIfMorning() {
+  const hour = Number(new Date().toLocaleString('en-GB', { timeZone: 'Asia/Kuala_Lumpur', hour: '2-digit', hour12: false }))
+  const secret = process.env.SHEETS_HOTLEADS_SECRET?.trim()
+  if (hour < 8 || hour > 10 || !secret) return
+  after(() =>
+    fetch(`${APP_URL}/api/closer-coach`, { method: 'POST', headers: { Authorization: `Bearer ${secret}` } })
+      .then((r) => {
+        if (r.status !== 202) console.error('closer-coach did not start:', r.status)
+      })
+      .catch((e) => console.error('closer-coach did not start:', (e as Error).message)),
+  )
+}
+
 export async function POST(req: Request) {
   if (!authed(req)) return new Response('forbidden', { status: 401 })
   if (new URL(req.url).searchParams.get('wait') === '1') return Response.json(await runAndReport())
+  startCoachIfMorning()
   after(runAndReport)
   return Response.json({ ok: true, started: true }, { status: 202 })
 }

@@ -171,7 +171,16 @@ export type AdClient = {
      * assigned to this GHL user, and everyone judged gets an intent tag. The
      * owner then gets one progress line instead of the full list.
      */
-    followupAssignee?: { userId: string; name: string }
+    followupAssignee?: {
+      userId: string
+      name: string
+      /**
+       * Their private Telegram chat id — the 9am closing coach goes here
+       * (lib/closer-coach.ts). They must /start the bot first; /chatid in
+       * that chat shows the number. Unset = the coach goes to the owner.
+       */
+      telegramChatId?: string
+    }
     /**
      * GHL contact ids that are never leads, on top of the location's own users:
      * people on our side whose test contacts carry a different email than
