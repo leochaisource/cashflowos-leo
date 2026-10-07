@@ -146,7 +146,12 @@ export type AdClient = {
     tokenEnv: string
     /** Must match the AD ACCOUNT's timezone, or leads and spend describe different days. */
     timeZone?: string
-    funnels: { label: string; campaign: string; formId: string; formName: string }[]
+    /**
+     * `campaign`: the exact Meta campaign name(s) whose spend is this funnel's.
+     * List every campaign that feeds it; spend on any campaign no funnel lists
+     * shows as "Other campaigns" in the brief and raises an alert.
+     */
+    funnels: { label: string; campaign: string | string[]; formId: string; formName: string }[]
     /** Purchases are counted from this date — the day of the last class. UPDATE AFTER EACH CLASS. */
     salesSince: string
     /** Total spend is counted from this date — the campaign start. UPDATE EACH LAUNCH. */
@@ -308,13 +313,14 @@ export const AD_CLIENTS: AdClient[] = [
       funnels: [
         {
           label: 'Webinar Funnel',
-          campaign: '[SF] CM1D Webinar Campaign',
+          campaign: ['[SF] CM1D Webinar Campaign'], // owner, 2026-10-07
           formId: '9r56tePxQyvNJQf9BT1v',
           formName: 'Claude Webinar - Optin Form',
         },
         {
           label: 'Direct Ticket Funnel',
-          campaign: '[SF] CM1D Direct Ticket Campaign',
+          // The 28 Sep relaunch ("- Purchase") and the original, now paused (owner, 2026-10-07).
+          campaign: ['[SF] CM1D Direct Ticket Campaign - Purchase', '[SF] CM1D Direct Ticket Campaign'],
           formId: 'T0w36ch9wZGLtd6DSb0X',
           formName: 'Claude 1 Day Workshop - Opt in Form',
         },

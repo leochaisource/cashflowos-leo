@@ -452,18 +452,22 @@ export function perfWindow(client: AdClient, dateISO: string): { salesSince: str
 }
 
 /**
- * Whether a Meta campaign belongs to a funnel's campaign. A relaunch usually
- * keeps the name and adds a suffix — "[SF] CM1D Direct Ticket Campaign -
- * Purchase" (28 Sep 2026) — and an exact match read that funnel as RM0 for two
- * mornings. So a funnel's campaign matches itself and anything extending it
- * after a space. '*' matches every campaign.
+ * Whether a Meta campaign is the named one — exact name, ignoring case and
+ * spacing. A funnel lists every campaign that feeds it (owner, 2026-10-07:
+ * Direct Ticket = "… Campaign - Purchase" OR "… Campaign"); a prefix match
+ * would count the "- Purchase" one twice. A campaign no funnel lists is never
+ * dropped: its spend shows as "Other campaigns" and raises an alert (the
+ * 28 Sep relaunch read RM0 for two mornings before that existed).
+ * '*' matches every campaign.
  */
 export function campaignMatches(name: string | null | undefined, campaign: string): boolean {
   if (campaign === '*') return true
-  const n = (name ?? '').trim().toLowerCase()
-  const c = campaign.trim().toLowerCase()
-  return n === c || n.startsWith(c + ' ')
+  const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase()
+  return norm(name ?? '') === norm(campaign)
 }
+
+/** A funnel's campaigns as a list — config may give one name or several. */
+export const funnelCampaigns = (c: string | string[]) => (Array.isArray(c) ? c : [c])
 
 export async function ghlPerformance(
   client: AdClient,
@@ -481,7 +485,7 @@ export async function ghlPerformance(
 
   const funnels: GhlFunnelRow[] = []
   for (const f of cfg.funnels) {
-    const spend = spendByCampaign(f.campaign, dateISO, dateISO)
+    const spend = funnelCampaigns(f.campaign).reduce((s, c) => s + spendByCampaign(c, dateISO, dateISO), 0)
     let leads: number | null = null
     try {
       leads = await formSubmissions(locationId, token, f.formId, start, end)
@@ -490,7 +494,7 @@ export async function ghlPerformance(
     }
     funnels.push({
       label: f.label,
-      campaign: f.campaign,
+      campaign: funnelCampaigns(f.campaign).join(' / '),
       spend,
       leads,
       cpl: leads && leads > 0 ? spend / leads : null,
