@@ -160,6 +160,13 @@ export function summarizeResult(result: any): string {
   if (result.kind === 'job_queued') {
     return '🗓 Queued — Claude applies on Sunday in your own browser. Nothing has been submitted yet.'
   }
+  // LinkedIn Ideas — approval only queues the angle for /linkedin-posts.
+  if (result.kind === 'linkedin_idea_queued') {
+    return '✍️ Queued for your next /linkedin-posts session. Nothing has been written or posted yet.'
+  }
+  if (result.kind === 'linkedin_failure_ack') {
+    return '👍 Noted. Re-post it from GHL → Social Planner, or by hand.'
+  }
   return 'Done ✅'
 }
 
