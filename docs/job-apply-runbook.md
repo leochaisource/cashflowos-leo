@@ -1,7 +1,9 @@
-# 💼 Sunday job-apply runbook
+# 💼 Job applying — moved out (8 Oct 2026)
 
-The runbook now lives in the **`/apply-jobs`** command: [`.claude/commands/apply-jobs.md`](../.claude/commands/apply-jobs.md).
-Setup (the Sunday Local routine, Chrome, your job profile) is in [`docs/inbox-digest.md`](inbox-digest.md), steps 4–6.
+Job hunting and job applications are now done by the owner's **separate job-hunting bot**, not by
+CashFlowOS. Everything CashFlowOS used to do — reading job alerts in Gmail, the shortlisting rules,
+the ✅/❌ cards, the application rules and the hand-over list — is written up in
+[`job-inbox-sop.md`](job-inbox-sop.md) for that bot.
 
-In short: Claude applies **only** to the jobs you ✅'d in Telegram, at most 10 a week, in your own Chrome, answering
-**only** from `profile/job-profile.md`. Anything else becomes "needs you" in the Sunday summary.
+`/apply-jobs` in this folder is retired and does nothing. `/inbox-digest` still sends the weekly email
+digest, without job cards.

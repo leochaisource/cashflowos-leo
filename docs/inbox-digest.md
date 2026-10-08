@@ -1,5 +1,7 @@
 # 📬 Inbox Digest + 💼 Job Shortlist (runs on your laptop)
 
+> **8 Oct 2026:** the job part (shortlisting job alerts, ✅/❌ job cards, Sunday applying) has moved to the owner's separate job-hunting bot. Its SOP is [`job-inbox-sop.md`](job-inbox-sop.md). This page still covers the weekly inbox digest; the Sunday **Apply to jobs** routine is no longer needed.
+
 Your inbox gets ~39 threads a day and only ~1 in 65 is from a real person. This setup:
 
 1. **Filters** the noise out of the inbox as it arrives (labels, nothing deleted).
