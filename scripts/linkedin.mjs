@@ -118,6 +118,9 @@ async function leoLinkedIn() {
         '   Refusing to post as someone else. Nothing was sent.',
     )
   }
+  // Personal profile only (owner's call, 2026-10-08): the SpeakFunnels company page
+  // is connected in the same sub-account, and posts must never land there.
+  if (acct.type !== 'profile') fail(`Account "${acct.name}" is a LinkedIn ${acct.type}, not your personal profile. Nothing was sent.`)
   if (acct.isExpired) fail(`LinkedIn connection for "${acct.name}" has EXPIRED. Reconnect it in GHL → Social Planner.`)
   return acct
 }
