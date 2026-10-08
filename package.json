@@ -9,7 +9,8 @@
     "webhook:set": "node --env-file-if-exists=.env scripts/set-webhook.mjs",
     "webhook:info": "node --env-file-if-exists=.env scripts/webhook-info.mjs",
     "import": "node --env-file-if-exists=.env scripts/import.mjs",
-    "inbox": "node --env-file-if-exists=.env scripts/inbox.mjs"
+    "inbox": "node --env-file-if-exists=.env scripts/inbox.mjs",
+    "linkedin": "node --env-file-if-exists=.env scripts/linkedin.mjs"
   },
   "engines": {
     "node": ">=20"

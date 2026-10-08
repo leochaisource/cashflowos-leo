@@ -96,6 +96,13 @@ export const AGENTS: AgentMeta[] = [
     emoji: '💼',
     autonomyNote: '🟡 Saturday: shortlists jobs for your ✅. Approved ones are applied on Sunday in your own browser.',
   },
+  {
+    key: 'linkedin-ideas',
+    label: 'LinkedIn Ideas',
+    emoji: '✍️',
+    autonomyNote:
+      '🟡 Sunday 9am: pitches 3–5 post angles from your week. ✅ only queues one for /linkedin-posts on your laptop — nothing is posted from here. Also flags any post that failed to publish.',
+  },
 ]
 
 // ------------------------------------------------------------
@@ -296,6 +303,27 @@ async function queueJob(payload: any): Promise<any> {
   return result
 }
 
+// ---- queueLinkedIn: the LinkedIn Ideas ✅ -----------------------------------
+// Approving an angle does NOT write or publish a post. It only marks the angle
+// queued; /linkedin-posts on the owner's laptop reads the queue with
+// `npm run linkedin -- ideas` and writes the post WITH him. A failed-post card's
+// ✅ is just "seen". No network call here, nothing leaves the building.
+async function queueLinkedIn(payload: any): Promise<any> {
+  const failed = payload?.kind === 'failed_post'
+  const result = failed
+    ? { kind: 'linkedin_failure_ack' as const, ghl_post_id: payload?.ghl_post_id, acked_at: new Date().toISOString() }
+    : {
+        kind: 'linkedin_idea_queued' as const,
+        week: payload?.week,
+        hook: payload?.hook,
+        angle: payload?.angle,
+        client_data: !!payload?.client_data,
+        queued_at: new Date().toISOString(),
+      }
+  await logRun('linkedin-ideas', 'ok', failed ? { acked: payload?.ghl_post_id } : { queued: payload?.hook })
+  return result
+}
+
 export const EXECUTORS: Record<string, Executor> = {
   // The two that write money/docs (Vault = the photo pipeline, Expense = its
   // threshold specialisation). Both file into the ONE records table.
@@ -320,6 +348,8 @@ export const EXECUTORS: Record<string, Executor> = {
   'viewing-followup': (p) => draftOnly('viewing-followup', p),
   // Job Shortlist — approval only queues; applying happens later in your browser.
   job_apply: (p) => queueJob(p),
+  // LinkedIn Ideas — approval only queues an angle; the post is written with you in /linkedin-posts.
+  'linkedin-ideas': (p) => queueLinkedIn(p),
 }
 
 // ============================================================
@@ -340,6 +370,8 @@ import { rm } from '@/lib/records'
 import { baseline, findings } from './marketing/definition'
 import { loadAdAggregates } from './marketing/load'
 import { headline as marketingHeadline, suggest as marketingSuggest } from './marketing/prompt'
+import Anthropic from '@anthropic-ai/sdk'
+import { linkedinDrafts } from './linkedin/run'
 
 // `auto: true` = this one is 🟢 graduated (autopilot: run it, then just tell me).
 // Omitted/false = 🟡 ask first (the safe default every agent starts on).
@@ -435,4 +467,23 @@ const marketingTriageCheck: ScheduledCheck = {
   },
 }
 
-export const SCHEDULED: ScheduledCheck[] = [overdueInvoiceCheck, marketingTriageCheck]
+// Marketing · LinkedIn Ideas: Sundays, 3–5 post angles from the week's briefs,
+// event sales, agent decisions and competitor moves; any day, a card for a post
+// that failed to publish. Always 🟡 — ✅ only queues (queueLinkedIn above). The
+// keys are per ISO week + position, so a re-run never sends the menu twice.
+const linkedinIdeasCheck: ScheduledCheck = {
+  key: 'linkedin-ideas',
+  label: 'LinkedIn Ideas',
+  check: async () => {
+    const key = process.env.ANTHROPIC_API_KEY?.trim()
+    const { drafts, notes } = await linkedinDrafts({
+      db: supabaseConfigured ? supabase : null,
+      anthropic: key ? new Anthropic({ apiKey: key, timeout: 40_000, maxRetries: 0 }) : null,
+      now: new Date(),
+    })
+    if (notes.length) console.log('[CFO] linkedin-ideas:', notes.join(' · '))
+    return drafts
+  },
+}
+
+export const SCHEDULED: ScheduledCheck[] = [overdueInvoiceCheck, marketingTriageCheck, linkedinIdeasCheck]
