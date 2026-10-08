@@ -59,6 +59,8 @@ export type Followups = {
   intentError: string | null
   /** First successful payment per contact, ever — the sheet's "Paid?" column. */
   paidAt: Map<string, string>
+  /** Every WhatsApp message read (the report day and the day before), with who sent it. */
+  messages: WaMessage[]
 }
 
 type Verdict = { intent: Intent; reason: string; next: string; interest: string | null; objection: string | null; event: string | null }
@@ -259,7 +261,7 @@ export async function buildFollowups(args: {
     }
   } else if (!args.anthropic) intentError = 'no Anthropic key — intent not judged'
 
-  return { day: args.day, unpaid, chats: leads, intentError, paidAt }
+  return { day: args.day, unpaid, chats: leads, intentError, paidAt, messages: msgs }
 }
 
 // ---------------------------------------------------------------- rendering
@@ -369,7 +371,7 @@ const UNPAID_TAG = 'payment-not-completed'
 /** How our tasks are recognised (so a lead chatting two days running gets one task, refreshed). */
 const MARK = '— CashFlowOS follow-up'
 
-export type AssignedTask = { contactId: string; taskId: string; kind: 'hot' | 'warm' | 'unpaid' }
+export type AssignedTask = { contactId: string; taskId: string; kind: 'hot' | 'warm' | 'unpaid'; name?: string | null }
 export type Assignment = { tasks: AssignedTask[]; created: number; refreshed: number; tagged: number; errors: string[] }
 
 const klTime = (iso: string) => {
@@ -385,7 +387,7 @@ export async function assignFollowups(
   const chatOf = new Map(f.chats.map((c) => [c.contactId, c]))
 
   // One task per person: an unpaid checkout outranks the chat it may also have.
-  type Todo = { contactId: string; kind: AssignedTask['kind']; title: string; body: string }
+  type Todo = { contactId: string; kind: AssignedTask['kind']; title: string; body: string; name: string | null }
   const todos: Todo[] = []
   const seen = new Set<string>()
   for (const u of f.unpaid) {
@@ -393,6 +395,7 @@ export async function assignFollowups(
     seen.add(u.contactId)
     todos.push({
       contactId: u.contactId,
+      name: u.name ?? c?.name ?? null,
       kind: 'unpaid',
       title: `💳 Payment not completed — follow up today`,
       body: [
@@ -409,6 +412,7 @@ export async function assignFollowups(
     if (seen.has(c.contactId) || (c.intent !== 'hot' && c.intent !== 'warm')) continue
     todos.push({
       contactId: c.contactId,
+      name: c.name,
       kind: c.intent,
       title: `${c.intent === 'hot' ? '🔥 Hot' : '🙂 Warm'} lead — follow up today`,
       body: [
@@ -432,11 +436,11 @@ export async function assignFollowups(
           if (open) {
             await updateTask(opts.token, t.contactId, open.id, input)
             out.refreshed++
-            out.tasks.push({ contactId: t.contactId, taskId: open.id, kind: t.kind })
+            out.tasks.push({ contactId: t.contactId, taskId: open.id, kind: t.kind, name: t.name })
           } else {
             const id = await createTask(opts.token, t.contactId, input)
             out.created++
-            out.tasks.push({ contactId: t.contactId, taskId: id, kind: t.kind })
+            out.tasks.push({ contactId: t.contactId, taskId: id, kind: t.kind, name: t.name })
           }
         } catch (e) {
           out.errors.push((e as Error).message)
@@ -470,19 +474,90 @@ export async function assignFollowups(
 }
 
 /** How many of a morning's tasks have been ticked off since. */
-export async function followupProgress(token: string, tasks: AssignedTask[]): Promise<{ done: number; total: number; unreadable: number }> {
-  let done = 0
-  let unreadable = 0
-  for (let i = 0; i < tasks.length; i += 5)
+export type FollowupReview = {
+  contactId: string
+  name: string
+  kind: AssignedTask['kind']
+  /** The follow-up owner's first WhatsApp message to them after the task was set. */
+  ownerMessagedAt: string | null
+  /** Ari (the AI bot) messaged them after the task was set. */
+  ariMessaged: boolean
+  /** They replied after the task was set. */
+  replied: boolean
+  paidAt: string | null
+}
+
+/**
+ * Did the follow-up owner actually follow up yesterday's leads, and did they
+ * close? (owner, 2026-10-08 — a ticked GHL task said nothing about either.)
+ * Read from the WhatsApp messages already fetched for the follow-ups and the
+ * payments: no extra calls except a name lookup for tasks set before names
+ * were stored on them.
+ */
+export async function reviewFollowups(args: {
+  token: string
+  tasks: AssignedTask[]
+  assigneeId: string
+  /** When the tasks were set (the previous brief's send time) … */
+  sinceISO: string
+  /** … through the end of the report day. */
+  untilISO: string
+  messages: WaMessage[]
+  paidAt: Map<string, string>
+}): Promise<FollowupReview[]> {
+  const since = Date.parse(args.sinceISO)
+  const until = Date.parse(args.untilISO)
+  const out: FollowupReview[] = []
+  for (let i = 0; i < args.tasks.length; i += 5)
     await Promise.all(
-      tasks.slice(i, i + 5).map(async (t) => {
-        try {
-          const task = await getTask(token, t.contactId, t.taskId)
-          if (task?.completed) done++
-        } catch {
-          unreadable++ // deleted, or unreadable — not counted as done
-        }
+      args.tasks.slice(i, i + 5).map(async (t) => {
+        const after = args.messages.filter((m) => m.contactId === t.contactId && Date.parse(m.dateAdded) > since && Date.parse(m.dateAdded) <= until)
+        const mine = after.filter((m) => m.direction === 'outbound' && m.userId === args.assigneeId)
+        const name = t.name ?? (await contactBasics(args.token, t.contactId).then((b) => b.name).catch(() => null)) ?? 'Unnamed lead'
+        const paid = args.paidAt.get(t.contactId) ?? null
+        out.push({
+          contactId: t.contactId,
+          name,
+          kind: t.kind,
+          ownerMessagedAt: mine[0]?.dateAdded ?? null,
+          ariMessaged: after.some((m) => m.direction === 'outbound' && !m.userId && !/workflow|campaign|bulk/i.test(m.source ?? '')),
+          replied: after.some((m) => m.direction === 'inbound'),
+          paidAt: paid && Date.parse(paid) > since ? paid : null,
+        })
       }),
     )
-  return { done, total: tasks.length, unreadable }
+  const rank = { unpaid: 0, hot: 1, warm: 2 } as const
+  return out.sort((a, b) => rank[a.kind] - rank[b.kind] || a.name.localeCompare(b.name))
 }
+
+/**
+ * The owner's lines, e.g.
+ *   📋 Ariella — yesterday's leads: 5 (2 hot · 1 unpaid · 2 warm) · followed up 3 · closed 1
+ *   💳 Lara low — ✅ messaged 09:12 · replied · 💰 paid
+ *   🔥 Joel T — ✅ messaged 10:42 · replied · not paid
+ *   🔥 Eda Jamil — ❌ not messaged (Ari replied) · not paid
+ *   🙂 Hon Mun — ✅ messaged 15:03 · not paid
+ *   Today: 9 tasks in GHL (3 hot · 4 warm · 2 unpaid)
+ */
+export function renderFollowupReview(owner: string, reviews: FollowupReview[] | null, today: string): string {
+  const hhmm = (iso: string) => {
+    const d = new Date(Date.parse(iso) + 8 * 3600e3)
+    return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+  }
+  if (!reviews?.length) return `📋 ${owner} — no leads were assigned yesterday to check.\n${today}`
+  const n = (k: AssignedTask['kind']) => reviews.filter((r) => r.kind === k).length
+  const mix = [n('hot') && `${n('hot')} hot`, n('unpaid') && `${n('unpaid')} unpaid`, n('warm') && `${n('warm')} warm`].filter(Boolean).join(' · ')
+  const lines = [
+    `📋 ${owner} — yesterday's leads: ${reviews.length} (${mix}) · followed up ${reviews.filter((r) => r.ownerMessagedAt).length} · closed ${reviews.filter((r) => r.paidAt).length}`,
+  ]
+  const MAX = 12 // hot and unpaid first — reviewFollowups sorts them so
+  const icon = { unpaid: '💳', hot: '🔥', warm: '🙂' } as const
+  for (const r of reviews.slice(0, MAX)) {
+    const did = r.ownerMessagedAt ? `✅ messaged ${hhmm(r.ownerMessagedAt)}` : `❌ not messaged${r.ariMessaged ? ' (Ari replied)' : ''}`
+    lines.push(`${icon[r.kind]} ${r.name} — ${did}${r.replied ? ' · replied' : ''} · ${r.paidAt ? '💰 paid' : 'not paid'}`)
+  }
+  if (reviews.length > MAX) lines.push(`  …and ${reviews.length - MAX} more`)
+  lines.push(today)
+  return lines.join('\n')
+}
+

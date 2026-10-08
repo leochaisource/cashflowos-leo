@@ -35,7 +35,8 @@ import {
   renderGroupFollowups,
   renderPrivateFollowups,
   assignFollowups,
-  followupProgress,
+  reviewFollowups,
+  renderFollowupReview,
   type Followups,
   type AssignedTask,
 } from '@/lib/followups'
@@ -1017,16 +1018,34 @@ async function runClient(client: AdClient, records: Rec[]) {
         const a = await assignFollowups(f, { token, assigneeId: who.userId, dueISO: new Date(`${today}T18:00:00+08:00`).toISOString() })
         tasks = a.tasks
         if (a.errors.length) notes.push(`Follow-up tasks: ${a.errors.length} failed in GHL — ${a.errors[0]}`)
-        // Yesterday's tasks, ticked off since? (their ids are in yesterday's brief_daily payload)
+        // The leads handed to her yesterday morning (yesterday's brief_daily
+        // payload): did she actually message them on WhatsApp, and did they pay?
+        // (owner, 2026-10-08 — the old "X/Y tasks ticked" said neither.)
         const yesterday = new Date(Date.parse(`${perf.date}T00:00:00Z`) - 864e5).toISOString().slice(0, 10)
-        const prev = await supabase.from('brief_daily').select('payload').eq('project', client.id).eq('date', yesterday).maybeSingle()
+        const prev = await supabase.from('brief_daily').select('payload, sent_at').eq('project', client.id).eq('date', yesterday).maybeSingle()
         const prevTasks = ((prev.data?.payload as { followups?: { tasks?: AssignedTask[] } } | null)?.followups?.tasks ?? []) as AssignedTask[]
-        const progress = prevTasks.length ? await followupProgress(token, prevTasks) : null
+        const tz = g.timeZone ?? 'Asia/Kuala_Lumpur'
+        const reportDay = dayBounds(perf.date, tz)
+        const reviews = prevTasks.length
+          ? await reviewFollowups({
+              token,
+              tasks: prevTasks,
+              assigneeId: who.userId,
+              sinceISO: (prev.data?.sent_at as string | null) ?? reportDay.start,
+              untilISO: reportDay.end,
+              messages: f.messages,
+              paidAt: f.paidAt,
+            }).catch((e) => {
+              notes.push(`Follow-up review failed: ${(e as Error).message}`)
+              return null
+            })
+          : null
         const count = (k: AssignedTask['kind']) => tasks.filter((t) => t.kind === k).length
-        followupsOwnerLine =
-          `📋 ${who.name}: ` +
-          (progress ? `${progress.done}/${progress.total} follow-ups done yesterday` : 'no tasks from yesterday to check') +
-          ` · today ${tasks.length} task${tasks.length === 1 ? '' : 's'} in GHL (${count('hot')} hot · ${count('warm')} warm · ${count('unpaid')} unpaid)`
+        followupsOwnerLine = renderFollowupReview(
+          who.name,
+          reviews,
+          `Today: ${tasks.length} task${tasks.length === 1 ? '' : 's'} in GHL (${count('hot')} hot · ${count('warm')} warm · ${count('unpaid')} unpaid)`,
+        )
       }
       // The hot leads also go into the shared "Leads Follow Up List" Google
       // Sheet (owner, 2026-10-01) — via the sheet's Apps Script.

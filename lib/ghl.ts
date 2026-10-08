@@ -186,24 +186,15 @@ export async function whatsappWindowsOpened(
   const dayStart = Date.parse(dayStartISO)
   const dayEnd = Date.parse(dayEndISO)
   const from = new Date(dayStart - 864e5).toISOString()
-  type Msg = { contactId?: string; direction?: string; dateAdded?: string }
+  // Through whatsappMessages(), not a loop of its own: the export sometimes
+  // answers "total 0" for a busy day, and only that reader asks again. This
+  // count read 0 for 7 Oct (brief of 8 Oct) with its own copy of the loop.
   const byContact = new Map<string, number[]>()
-  let cursor: string | null = null
-  for (let page = 0; page < 100; page++) {
-    const url =
-      `${API}/conversations/messages/export?locationId=${encodeURIComponent(locationId)}&channel=WhatsApp&limit=100` +
-      `&startDate=${encodeURIComponent(from)}&endDate=${encodeURIComponent(dayEndISO)}` +
-      (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')
-    const j = await getJSON(url, token, '2021-04-15')
-    const msgs = (j.messages as Msg[] | undefined) ?? []
-    for (const m of msgs) {
-      if (m.direction !== 'inbound' || !m.contactId || !m.dateAdded) continue
-      const t = Date.parse(m.dateAdded)
-      if (!Number.isFinite(t)) continue
-      ;(byContact.get(m.contactId) ?? byContact.set(m.contactId, []).get(m.contactId)!).push(t)
-    }
-    cursor = (j.nextCursor as string | undefined) ?? null
-    if (!cursor || msgs.length < 100) break
+  for (const m of await whatsappMessages(locationId, token, from, dayEndISO)) {
+    if (m.direction !== 'inbound') continue
+    const t = Date.parse(m.dateAdded)
+    if (!Number.isFinite(t)) continue
+    ;(byContact.get(m.contactId) ?? byContact.set(m.contactId, []).get(m.contactId)!).push(t)
   }
   let opened = 0
   for (const times of byContact.values()) {
