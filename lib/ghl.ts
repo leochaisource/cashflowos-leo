@@ -603,13 +603,57 @@ export async function whatsappMessages(locationId: string, token: string, fromIS
       if (!cursor || msgs.length < 100) break
     }
     const complete = total === null || received >= total * 0.95
-    // The export has also answered "total 0, no messages" for a day with
-    // hundreds (6 Oct, 2026-10-07) — so an empty day is asked again before
-    // it is believed. A genuinely quiet day costs two extra calls.
-    if (complete && (received > 0 || attempt === 2)) return out.sort((a, b) => a.dateAdded.localeCompare(b.dateAdded))
+    if (complete && received > 0) return out.sort((a, b) => a.dateAdded.localeCompare(b.dateAdded))
+    // The export also answers "total 0, no messages" for busy days — and it
+    // can stay blank for many minutes (8 Oct: 662 messages, blank at 9:07am
+    // on all three tries, fine at 8:37am and in the evening). After the
+    // retries, an empty answer is checked against a different index: the
+    // conversation list. Only if THAT is empty too is the day really quiet.
+    if (complete && attempt === 2) return whatsappMessagesViaConversations(locationId, token, fromISO, toISO)
     last = complete ? 'WhatsApp export came back empty' : `WhatsApp export incomplete — got ${received} of ${total} messages`
   }
   throw new Error(last)
+}
+
+/**
+ * The same messages, read conversation by conversation: every conversation
+ * active since `fromISO` (newest first, paged by last-message time), then its
+ * messages in the window. Slower than the export, so only the fallback.
+ */
+export async function whatsappMessagesViaConversations(locationId: string, token: string, fromISO: string, toISO: string): Promise<WaMessage[]> {
+  const from = Date.parse(fromISO)
+  const to = Date.parse(toISO)
+  const ids: string[] = []
+  let after: number | null = null
+  for (let page = 0; page < 50; page++) {
+    const url =
+      `${API}/conversations/search?locationId=${encodeURIComponent(locationId)}&limit=100&sort=desc&sortBy=last_message_date` +
+      (after ? `&startAfterDate=${after}` : '')
+    const j = await getJSON(url, token, '2021-04-15')
+    const list = (j.conversations as Record<string, unknown>[] | undefined) ?? []
+    // Every conversation active in the window; the channel is checked per
+    // message below (the list's own `messageTypes` are numeric codes, e.g. [19]).
+    for (const c of list) if (Number(c.lastMessageDate) >= from) ids.push(String(c.id))
+    const oldest = Number(list.at(-1)?.lastMessageDate)
+    if (list.length < 100 || !Number.isFinite(oldest) || oldest < from) break
+    after = oldest
+  }
+  const out: WaMessage[] = []
+  for (let i = 0; i < ids.length; i += 6)
+    await Promise.all(
+      ids.slice(i, i + 6).map(async (id) => {
+        const msgs = await conversationMessages(token, id, 100).catch(() => [])
+        for (const m of msgs) {
+          const t = Date.parse(m.dateAdded)
+          if (/WHATSAPP/i.test(m.messageType) && m.contactId && t >= from && t <= to) {
+            const { messageType: _drop, ...wa } = m
+            out.push(wa)
+          }
+        }
+      }),
+    )
+  const seen = new Set<string>()
+  return out.filter((m) => !seen.has(m.id) && seen.add(m.id)).sort((a, b) => a.dateAdded.localeCompare(b.dateAdded))
 }
 
 /**
