@@ -27,6 +27,7 @@ Rules:
 - Use only facts given. Never invent numbers, stories or outcomes. If a number isn't in the facts, don't use one.
 - Prefer lessons over brags: what went wrong, what a number revealed, what Leo decided and why.
 - Build-in-public angles about Leo's own agents are especially welcome (no client data needed).
+- RECENT LINKEDIN POSTS (if listed) is what Leo already posted or has queued. Don't pitch an angle that repeats one of them: not the same story, number or lesson, and no hook that reads like one already used. Lean toward topics those posts haven't covered.
 - No money terms, revenue shares or deal terms between Leo and clients. No lead or attendee names. Nothing about job hunting.`
 
 const SCHEMA = {

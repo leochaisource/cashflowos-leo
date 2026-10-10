@@ -25,6 +25,8 @@ export const IDEAS_WEEKDAY = 0
 export const MAX_ANGLES = 5
 /** How far back "this week" reaches. */
 export const LOOKBACK_DAYS = 7
+/** How far back Leo's own posts count as "recent" (no repeating these). */
+export const RECENT_POSTS_DAYS = 30
 
 const MYT_MS = 8 * 3600_000 // Malaysia is UTC+8 all year, no DST.
 

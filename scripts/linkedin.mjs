@@ -14,6 +14,8 @@
 //   npm run linkedin -- delete <ghlPostId>            delete a DRAFT (cleans up a test)
 //   npm run linkedin -- ideas                         ideas you ✅'d on Telegram, not used yet
 //   npm run linkedin -- ideas used <actionId>         mark one used once it became a post
+//   npm run linkedin -- sync                          mirror linkedin/posts/*.md into the database
+//                                                     (runs after every schedule; the Sunday agent reads it)
 //
 // Called by the /linkedin-posts skill. Never prints a secret.
 //
@@ -22,8 +24,8 @@
 // name. So: refuse if the location IS the Claude Malaysia one, refuse unless the
 // target account is a LinkedIn account whose name matches GHL_LEO_LINKEDIN_NAME.
 
-import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
-import { resolve, basename, dirname } from 'node:path'
+import { readFileSync, writeFileSync, existsSync, statSync, readdirSync } from 'node:fs'
+import { resolve, basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const API = 'https://services.leadconnectorhq.com'
@@ -131,16 +133,22 @@ function resolvePath(p) {
   return tries.find((t) => existsSync(t)) ?? tries[0]
 }
 
-function readPost(path) {
-  const raw = readFileSync(path, 'utf8')
+// null = no frontmatter block.
+function parsePost(raw) {
   const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
-  if (!m) fail(`${basename(path)} has no frontmatter block (--- … ---).`)
+  if (!m) return null
   const fm = {}
   for (const line of m[1].split(/\r?\n/)) {
     const kv = line.match(/^([a-z_]+):\s*(.*)$/)
     if (kv) fm[kv[1]] = kv[2].replace(/^["']|["']$/g, '').trim()
   }
   return { fm, body: m[2].replace(/\s+$/, ''), raw }
+}
+
+function readPost(path) {
+  const post = parsePost(readFileSync(path, 'utf8'))
+  if (!post) fail(`${basename(path)} has no frontmatter block (--- … ---).`)
+  return post
 }
 
 // Rewrites ONLY the named frontmatter keys, leaving every other byte alone.
@@ -252,6 +260,13 @@ async function schedule(file, ...flags) {
   }
   writeFrontmatter(path, raw, { status: 'scheduled', ghl_post_id: id })
   console.log(`✅ ${basename(path)} scheduled for ${fm.slot} on ${acct.name}'s LinkedIn (GHL post ${id}).`)
+
+  // The post is in GHL either way; a stale mirror only means Sunday's ideas can't see it yet.
+  try {
+    await sync()
+  } catch (e) {
+    console.log(`(The post IS scheduled, but the database copy didn't update: ${e.message}\n   Run \`npm run linkedin -- sync\` later.)`)
+  }
 }
 
 async function list() {
@@ -327,11 +342,66 @@ async function ideas(sub, idArg) {
   console.log(JSON.stringify({ ideas: list }, null, 2))
 }
 
+// ---- the calendar mirror (supabase/linkedin-posts.sql) ----
+// Copies every post file's frontmatter + first line into linkedin_posts, keyed by
+// file name. The Sunday agent runs on Vercel and can't read this folder; it reads
+// the copy. The files stay the source of truth; this never writes back to them.
+async function sync() {
+  // Throw (not fail()) so a schedule that already succeeded isn't turned into an exit 1.
+  if (!SB_URL || !SB_KEY) throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing in .env.')
+  const dir = resolve(ROOT, 'linkedin', 'posts')
+  const files = readdirSync(dir).filter((f) => f.endsWith('.md') && !f.startsWith('_')).sort()
+  const now = new Date().toISOString()
+  const orNull = (v) => (v && !/^none$/i.test(v) ? v : null)
+  const rows = []
+  for (const file of files) {
+    const path = join(dir, file)
+    const post = parsePost(readFileSync(path, 'utf8'))
+    if (!post) {
+      console.log(`  skipped ${file}: no frontmatter block`)
+      continue
+    }
+    const { fm, body } = post
+    const slot = Date.parse(fm.slot || '')
+    rows.push({
+      file,
+      status: fm.status || null,
+      slot: Number.isNaN(slot) ? null : new Date(slot).toISOString(),
+      topic: fm.topic || null,
+      hook_type: fm.hook_type || null,
+      photo: orNull(fm.photo),
+      hook: body.split(/\r?\n/).find((l) => l.trim())?.trim() || null,
+      source: fm.source || null,
+      ghl_post_id: fm.ghl_post_id || null,
+      // the day it was written, so an unslotted draft still dates correctly
+      created_at: /^\d{4}-\d{2}-\d{2}$/.test(fm.created || '') ? `${fm.created}T00:00:00+08:00` : statSync(path).mtime.toISOString(),
+      updated_at: now,
+    })
+  }
+  if (!rows.length) {
+    console.log('No post files to sync.')
+    return
+  }
+  try {
+    await sb('POST', 'linkedin_posts', {
+      query: { on_conflict: 'file' },
+      body: rows,
+      prefer: 'resolution=merge-duplicates,return=minimal',
+    })
+  } catch (e) {
+    if (/linkedin_posts|HTTP 404/.test(e.message)) {
+      throw new Error(`${e.message}\n   Run supabase/linkedin-posts.sql once in the Supabase SQL editor, then sync again.`)
+    }
+    throw e
+  }
+  console.log(`🔁 ${rows.length} post(s) mirrored to the database: ${rows.map((r) => `${r.file} (${r.status ?? '?'})`).join(', ')}`)
+}
+
 // ==========================================================================
 const [cmd, ...args] = process.argv.slice(2)
-const COMMANDS = { check, accounts, schedule, list, delete: del, ideas }
+const COMMANDS = { check, accounts, schedule, list, delete: del, ideas, sync }
 if (!COMMANDS[cmd]) {
-  console.log('Usage: npm run linkedin -- <check | accounts | schedule <post.md> [--draft|--dry-run] | list | delete <id> | ideas [used <id>]>')
+  console.log('Usage: npm run linkedin -- <check | accounts | schedule <post.md> [--draft|--dry-run] | list | delete <id> | ideas [used <id>] | sync>')
   process.exit(cmd ? 1 : 0)
 }
 try {

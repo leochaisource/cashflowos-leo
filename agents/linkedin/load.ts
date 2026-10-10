@@ -1,13 +1,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 // Explicit .ts extension: shared with scripts/linkedin-ideas-dry-run.ts (Node type stripping).
-import { LOOKBACK_DAYS, type FailedPost } from './definition.ts'
+import { LOOKBACK_DAYS, RECENT_POSTS_DAYS, type FailedPost } from './definition.ts'
 
 // The LinkedIn Ideas agent's data mouth. Takes the db client as an argument
 // (no `server-only`), so the cron and the dry-run script read the SAME rows.
 //
 // It gathers the raw material of the week (what the morning briefs said, what the
 // agents recommended and Leo decided, what competitors started saying, how the
-// events are selling) as plain text for prompt.ts. Client numbers are included on
+// events are selling) as plain text for prompt.ts, plus Leo's own recent posts so
+// the pitch doesn't repeat them. Client numbers are included on
 // purpose, as the SOURCE of an angle; prompt.ts flags any angle built on them so
 // the skill anonymises it before anything is written for the public.
 //
@@ -132,8 +133,41 @@ export async function loadWeekFacts(db: SupabaseClient, now: Date): Promise<Week
     }
   }
 
+  // Everything above is the week's raw material; what follows only steers it, so a
+  // week with nothing but past posts still counts as a quiet week.
+  const sections = parts.length
+
+  // ⑥ Leo's own recent posts (slotted in the last 30 days or upcoming, or unslotted
+  // drafts written in that window), so the pitch doesn't repeat them. Mirrored from
+  // linkedin/posts/*.md by `npm run linkedin -- sync` on the laptop. Skipped posts
+  // never went out, so their angle is still fair game.
+  {
+    const recentSince = sinceISO(now, RECENT_POSTS_DAYS)
+    const { data, error } = await db
+      .from('linkedin_posts')
+      .select('status, slot, created_at, topic, hook_type, hook')
+      .neq('status', 'skipped')
+      .or(`slot.gte."${recentSince}",and(slot.is.null,created_at.gte."${recentSince}")`)
+      .order('slot', { ascending: false, nullsFirst: true })
+      .limit(30)
+    if (error) unavailable.push(`recent LinkedIn posts (${error.message})`)
+    else if (data?.length) {
+      const mytDay = (iso: string) => new Date(Date.parse(iso) + 8 * 3600_000).toISOString().slice(0, 10)
+      parts.push(
+        'RECENT LINKEDIN POSTS (do not repeat these topics or hooks):\n' +
+          data
+            .map(
+              (r: any) =>
+                `- ${r.slot ? mytDay(r.slot) : `unslotted, written ${mytDay(r.created_at)}`} [${r.status ?? '?'}] ` +
+                `${r.topic ?? '?'} · ${r.hook_type ?? '?'}: "${clip(r.hook, 200)}"`,
+            )
+            .join('\n'),
+      )
+    }
+  }
+
   if (unavailable.length) parts.push(`(Could not read: ${unavailable.join('; ')}.)`)
-  return { text: parts.join('\n\n'), sections: parts.length - (unavailable.length ? 1 : 0), unavailable }
+  return { text: parts.join('\n\n'), sections, unavailable }
 }
 
 // GHL posts on Leo's LinkedIn that failed to publish in the last 3 days. Needs
