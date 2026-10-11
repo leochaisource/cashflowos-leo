@@ -3,6 +3,7 @@ import { after } from 'next/server'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { AD_CLIENTS } from '@/lib/ad-clients'
 import { runCloserCoach } from '@/lib/closer-coach-run'
+import { runWebinarReminder } from '@/lib/webinar-reminder'
 import { sendMessage } from '@/lib/telegram'
 
 export const dynamic = 'force-dynamic'
@@ -13,7 +14,8 @@ export const maxDuration = 300 // ~30 threads read from GHL + one long model cal
 // use instead, sent to Ariella on Telegram (lib/closer-coach.ts).
 //
 // Fired by /api/hotleads-sync's 9am run (the sheet's Apps Script trigger — the
-// only clock with a free slot), so this needs no cron of its own.
+// only clock with a free slot), so this needs no cron of its own. The same run
+// sends the webinar hype-up reminder on T-5 (lib/webinar-reminder.ts).
 //
 //   POST /api/closer-coach                   starts it, answers 202 at once
 //   ...?wait=1                               runs it and answers with the result
@@ -35,6 +37,17 @@ async function run(q: URLSearchParams) {
   const to = q.get('to') === 'owner' ? 'owner' : q.get('to') === 'none' ? 'none' : 'closer'
   const day = /^\d{4}-\d{2}-\d{2}$/.test(q.get('day') ?? '') ? q.get('day')! : undefined
   const key = process.env.ANTHROPIC_API_KEY?.trim()
+  // The real 9am run also carries the webinar hype-up reminder (T-5, owner
+  // 2026-10-11): first, short, and independent — its failure never stops the coach.
+  if (to === 'closer' && !day) {
+    try {
+      const w = await runWebinarReminder({ client, db: supabaseConfigured ? supabase : null, to: 'closer' })
+      if (!w.ok) throw new Error(w.error ?? 'not sent')
+    } catch (e) {
+      const owner = process.env.OWNER_CHAT_ID?.trim()
+      if (owner) await sendMessage(owner, `⚠️ Webinar hype-up reminder failed: ${(e as Error).message.slice(0, 300)}`).catch(() => {})
+    }
+  }
   try {
     const r = await runCloserCoach({
       client,
