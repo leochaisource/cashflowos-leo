@@ -7,7 +7,8 @@ import { sendMessage } from './telegram.ts'
 // follow-up owner (Ariella) posts the WhatsApp community hype-up sequence —
 // one post a day from T-5 to webinar day, from the "WhatsApp Community Posts"
 // tab of the CS brief sheet — and tends to forget. So on the morning of T-5 she
-// gets a Telegram reminder with the dated schedule, and the owner a copy.
+// gets a Telegram reminder with the dated schedule, then a one-line nudge each
+// morning from T-4 to webinar day; the owner gets a copy of each.
 //
 // The webinar date is GHL's custom value {{custom_values.cm1d_webinar__date}},
 // e.g. "13 October  (Tuesday)" — no year, so the year is the one where the
@@ -99,6 +100,22 @@ export function renderReminder(w: Webinar, today: string, closer: string): strin
   return lines.join('\n')
 }
 
+/**
+ * The daily one-liner, T-4 → webinar day (owner, 2026-10-11 — one T-5 message
+ * wasn't enough for a sequence she tends to forget):
+ *   📣 Ariella — WA hype-up, post 3 of 6: post T-3 today (Sat 10 Oct) in the WA community.
+ */
+export function renderNudge(w: Webinar, today: string, closer: string): string {
+  const until = dayDiff(w.date, today)
+  const n = 6 - until
+  const what = until === 0 ? 'the <b>webinar-day</b> post' : `<b>T-${until}</b>`
+  return [
+    `📣 ${esc(closer)} — WA hype-up, post ${n} of 6: post ${what} today (${label(today)}) in the WA community group.`,
+    `Webinar: <b>${esc(w.name ?? 'Claude Malaysia webinar')}</b> — ${until === 0 ? '<b>TODAY</b>' : label(w.date)}${w.time ? `, ${esc(w.time)}` : ''}`,
+    `📄 CS brief → WhatsApp Community Posts tab: ${COMMUNITY_POSTS_SHEET}`,
+  ].join('\n')
+}
+
 const LIMIT = 3800
 async function sendAll(chatId: string, text: string): Promise<string | null> {
   for (let i = 0; i < text.length; i += LIMIT) {
@@ -111,9 +128,12 @@ async function sendAll(chatId: string, text: string): Promise<string | null> {
 export type ReminderRun = { ok: boolean; skipped?: string; webinar?: string; text?: string; sentTo: string[]; error?: string }
 
 /**
- * Send the reminder if today is T-5 (or T-4 / T-3 when T-5 was missed) for the
- * webinar in GHL and it hasn't gone out for that date. `today` and `force` are
- * for previews; `to: 'owner'` sends the owner a preview only.
+ * For the webinar in GHL, today's message if any:
+ *   T-5                        → the full reminder (dated schedule + links)
+ *   T-4, T-3 with T-5 missed   → the full reminder, worded as a catch-up
+ *   T-4 … webinar day          → the one-line nudge for today's post
+ * Each once (the full reminder once per webinar, the nudge once per day).
+ * `today` and `force` are for previews; `to: 'owner'` previews to the owner.
  */
 export async function runWebinarReminder(args: {
   client: AdClient
@@ -130,21 +150,26 @@ export async function runWebinarReminder(args: {
   const w = await readWebinar(process.env[g.locationEnv]!.trim(), process.env[g.tokenEnv]!.trim(), today)
   if (!w) return { ok: true, sentTo: [], skipped: 'no webinar date in GHL' }
   const until = dayDiff(w.date, today)
-  if (!args.force && (until < 3 || until > 5)) return { ok: true, sentTo: [], webinar: w.date, skipped: `webinar is ${until} days away (sends at T-5)` }
+  if (until < 0 || until > 5) return { ok: true, sentTo: [], webinar: w.date, skipped: `webinar is ${until} days away (runs T-5 to webinar day)` }
 
-  // Once per webinar date — remembered on the latest brief_daily row.
+  // What already went out — remembered on the latest brief_daily rows.
+  type Memo = { webinarReminder?: { webinar?: string }; webinarNudge?: { webinar?: string; day?: string } }
   const recent = args.db
     ? (await args.db.from('brief_daily').select('id, date, payload').eq('project', args.client.id).order('date', { ascending: false }).limit(10)).data ?? []
     : []
-  const sentFor = recent.find((r) => (r.payload as { webinarReminder?: { webinar?: string } } | null)?.webinarReminder?.webinar === w.date)
-  if (sentFor && !args.force && args.to === 'closer') return { ok: true, sentTo: [], webinar: w.date, skipped: 'already sent for this webinar' }
+  const memo = (r: { payload: unknown }) => (r.payload ?? {}) as Memo
+  const fullSent = recent.some((r) => memo(r).webinarReminder?.webinar === w.date)
+  const nudgedToday = recent.some((r) => memo(r).webinarNudge?.webinar === w.date && memo(r).webinarNudge?.day === today)
+  const kind: 'full' | 'nudge' = until === 5 || (until >= 3 && !fullSent) ? 'full' : 'nudge'
+  if (args.to === 'closer' && !args.force && (kind === 'full' ? fullSent : nudgedToday))
+    return { ok: true, sentTo: [], webinar: w.date, skipped: kind === 'full' ? 'already sent for this webinar' : 'already nudged today' }
 
-  const text = renderReminder(w, today, closer.name)
+  const text = kind === 'full' ? renderReminder(w, today, closer.name) : renderNudge(w, today, closer.name)
   const owner = process.env.OWNER_CHAT_ID?.trim()
   const sentTo: string[] = []
   let error: string | null = null
   if (args.to === 'owner' && owner) {
-    error = await sendAll(owner, `<i>Preview — what ${esc(closer.name)} gets on T-5.</i>\n\n${text}`)
+    error = await sendAll(owner, `<i>Preview — what ${esc(closer.name)} gets on ${until === 0 ? 'webinar day' : `T-${until}`}.</i>\n\n${text}`)
     if (!error) sentTo.push(owner)
   }
   if (args.to === 'closer') {
@@ -160,7 +185,8 @@ export async function runWebinarReminder(args: {
     }
     const latest = recent[0]
     if (sentTo.length && args.db && latest?.id) {
-      const payload = { ...((latest.payload as Record<string, unknown>) ?? {}), webinarReminder: { webinar: w.date, sentAt: new Date().toISOString(), to: sentTo } }
+      const record = { webinar: w.date, day: today, sentAt: new Date().toISOString(), to: sentTo }
+      const payload = { ...((latest.payload as Record<string, unknown>) ?? {}), [kind === 'full' ? 'webinarReminder' : 'webinarNudge']: record }
       await args.db.from('brief_daily').update({ payload }).eq('id', latest.id)
     }
   }
