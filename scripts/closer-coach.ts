@@ -4,7 +4,7 @@
 //   node --env-file-if-exists=.env scripts/closer-coach.ts --day=2026-10-06
 //   ... --send=owner     a preview to the owner's Telegram
 //   ... --send=closer    the real thing (to the follow-up owner; once per day unless --force)
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '../lib/claude-usage.ts'
 import { createClient } from '@supabase/supabase-js'
 import { AD_CLIENTS } from '../lib/ad-clients.ts'
 import { runCloserCoach } from '../lib/closer-coach-run.ts'
@@ -26,7 +26,7 @@ const r = await runCloserCoach({
   day: arg('day'),
   to,
   db,
-  anthropic: key ? new Anthropic({ apiKey: key }) : null,
+  anthropic: key ? claudeClient('script-closer-coach', { apiKey: key }) : null,
   force: process.argv.includes('--force'),
 })
 console.log(r.text ?? '')

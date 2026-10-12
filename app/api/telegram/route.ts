@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '@/lib/claude-usage'
 import { after } from 'next/server'
 import { createHash } from 'crypto'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
@@ -468,7 +469,7 @@ async function answerWithTools(chatId: number, text: string, apiKey: string): Pr
   let answer = 'Sorry, I hit a snag. Check your ANTHROPIC_API_KEY has credit, then try again.'
 
   try {
-    const anthropic = new Anthropic({ apiKey })
+    const anthropic = claudeClient('jarvis-chat', { apiKey })
     for (let round = 0; round < 5; round++) {
       const res = await anthropic.messages.create({
         model: 'claude-haiku-4-5',

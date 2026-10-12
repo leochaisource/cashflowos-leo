@@ -7,7 +7,7 @@
 //   node --env-file-if-exists=.env scripts/linkedin-ideas-dry-run.ts --sunday --send [--one]
 //        …and send the cards (or just the first) to YOUR Telegram as a test (keys end
 //        "-test", so the real Sunday run still goes out). ✅ on a card queues it exactly like Sunday.
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '../lib/claude-usage.ts'
 import { createClient } from '@supabase/supabase-js'
 import { isIdeasDay, isoWeek } from '../agents/linkedin/definition.ts'
 import { loadWeekFacts } from '../agents/linkedin/load.ts'
@@ -21,7 +21,7 @@ const db = createClient(
   { auth: { persistSession: false } },
 )
 const key = process.env.ANTHROPIC_API_KEY?.trim()
-const anthropic = key ? new Anthropic({ apiKey: key, timeout: 40_000, maxRetries: 0 }) : null
+const anthropic = key ? claudeClient('script-linkedin-ideas-dry-run', { apiKey: key, timeout: 40_000, maxRetries: 0 }) : null
 
 console.log(`Week ${isoWeek(now)} · ideas day (Sunday MYT): ${isIdeasDay(now) ? 'yes' : 'no'}${has('--sunday') ? ' · forced' : ''}`)
 

@@ -370,7 +370,7 @@ import { rm } from '@/lib/records'
 import { baseline, findings } from './marketing/definition'
 import { loadAdAggregates } from './marketing/load'
 import { headline as marketingHeadline, suggest as marketingSuggest } from './marketing/prompt'
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '@/lib/claude-usage'
 import { linkedinDrafts } from './linkedin/run'
 
 // `auto: true` = this one is 🟢 graduated (autopilot: run it, then just tell me).
@@ -478,7 +478,7 @@ const linkedinIdeasCheck: ScheduledCheck = {
     const key = process.env.ANTHROPIC_API_KEY?.trim()
     const { drafts, notes } = await linkedinDrafts({
       db: supabaseConfigured ? supabase : null,
-      anthropic: key ? new Anthropic({ apiKey: key, timeout: 40_000, maxRetries: 0 }) : null,
+      anthropic: key ? claudeClient('linkedin-ideas', { apiKey: key, timeout: 40_000, maxRetries: 0 }) : null,
       now: new Date(),
     })
     if (notes.length) console.log('[CFO] linkedin-ideas:', notes.join(' · '))

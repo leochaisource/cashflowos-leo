@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '@/lib/claude-usage'
 import { after } from 'next/server'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { AD_CLIENTS } from '@/lib/ad-clients'
@@ -54,7 +54,7 @@ async function run(q: URLSearchParams) {
       day,
       to,
       db: supabaseConfigured ? supabase : null,
-      anthropic: key ? new Anthropic({ apiKey: key, maxRetries: 4 }) : null,
+      anthropic: key ? claudeClient('closer-coach', { apiKey: key, maxRetries: 4 }) : null,
       force: q.get('force') === '1',
     })
     if (!r.ok) {

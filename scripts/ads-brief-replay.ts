@@ -8,6 +8,7 @@
 import fs from 'node:fs'
 import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '../lib/claude-usage.ts'
 import { normaliseAd, competitorSection, stripLoneSurrogates, type NormalisedAd } from '../lib/adyntel.ts'
 import { AD_CLIENTS, LIVE_PROMPT, PRE_LAUNCH_PROMPT } from '../lib/ad-clients.ts'
 import { leadsSummary } from '../lib/leads-sheet.ts'
@@ -205,7 +206,7 @@ const facts = stripLoneSurrogates([
   market.text,
 ].filter((l) => l !== '').join('\n'))
 
-const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY })
+const anthropic = claudeClient('script-ads-brief-replay', { apiKey: env.ANTHROPIC_API_KEY })
 const res = await anthropic.messages.create({
   model: 'claude-opus-5-5',
   max_tokens: 3000,

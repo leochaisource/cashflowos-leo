@@ -12,7 +12,7 @@
 // performance block and notes from brief_daily. --ai feeds the model the stored
 // market facts (adyntel_runs.facts_text) — the same market section the cron
 // builds, minus that morning's delivery and leads lines.
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '../lib/claude-usage.ts'
 import { createClient } from '@supabase/supabase-js'
 import { AD_CLIENTS, BRIEF_ANALYSIS_PROMPT, BRIEF_ANALYSIS_MAX_TOKENS } from '../lib/ad-clients.ts'
 import {
@@ -109,7 +109,7 @@ for (const c of clients) {
     ]
       .filter(Boolean)
       .join('\n\n')
-    const res = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.trim() }).messages.create({
+    const res = await claudeClient('script-brief-preview', { apiKey: process.env.ANTHROPIC_API_KEY?.trim() }).messages.create({
       model: 'claude-opus-5-5',
       max_tokens: BRIEF_ANALYSIS_MAX_TOKENS,
       output_config: { effort: 'low' },

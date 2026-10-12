@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '@/lib/claude-usage'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, isRelevant, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
@@ -538,7 +539,7 @@ async function runClient(client: AdClient, records: Rec[]) {
                     product:
                       `${client.client ?? client.name} one-day Claude AI workshop on ${next.to}, tickets ` +
                       `RM${client.deal.ticketPrices.general} General / RM${client.deal.ticketPrices.vip} VIP`,
-                    anthropic: key ? new Anthropic({ apiKey: key }) : null,
+                    anthropic: key ? claudeClient('intent-judge-8am', { apiKey: key }) : null,
                     notLeads: g.notLeads,
                     db: supabase,
                     cacheKey: client.id,
@@ -744,7 +745,7 @@ async function runClient(client: AdClient, records: Rec[]) {
       const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim()
       const p = await refreshProfiles(supabase, client, {
         competitors: seenToday,
-        anthropic: anthropicKey ? new Anthropic({ apiKey: anthropicKey }) : null,
+        anthropic: anthropicKey ? claudeClient('competitor-usp', { apiKey: anthropicKey }) : null,
         maxUsp: 10,
       })
       if (p.note) notes.push(p.note)
@@ -960,7 +961,7 @@ async function runClient(client: AdClient, records: Rec[]) {
   const key = process.env.ANTHROPIC_API_KEY?.trim()
   if (key) {
     try {
-      const anthropic = new Anthropic({ apiKey: key })
+      const anthropic = claudeClient('brief-analysis', { apiKey: key })
       // Opus 5.5 since the cost pass of 2026-10-12, with the server-side
       // refusal fallback (`fallbacks` is newer than this SDK's types — beta
       // endpoint + cast, as in lib/claude-json.ts).

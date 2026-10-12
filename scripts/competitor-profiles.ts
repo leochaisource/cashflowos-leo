@@ -16,7 +16,7 @@
 // Uses lib/competitor-profiles.ts — the code the cron runs — so a profile built
 // here is identical to one built at 8am.
 import fs from 'node:fs'
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '../lib/claude-usage.ts'
 import { createClient } from '@supabase/supabase-js'
 import { AD_CLIENTS } from '../lib/ad-clients.ts'
 import {
@@ -115,7 +115,7 @@ if (EXPORT !== undefined) {
 }
 
 // ---------------------------------------------------------------- build (+ optional USPs)
-const anthropic = USP !== undefined ? new Anthropic() : null
+const anthropic = USP !== undefined ? claudeClient('script-competitor-profiles') : null
 const maxUsp = USP === undefined ? 0 : USP === '' ? 10_000 : Math.max(0, Number(USP) || 0)
 for (const c of clients) {
   const r = await refreshProfiles(db, c, { anthropic, maxUsp })

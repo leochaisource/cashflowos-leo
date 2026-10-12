@@ -8,7 +8,7 @@
 //   ... --assign            create/refresh today's GHL tasks + intent tags for the follow-up owner
 //
 // Uses lib/followups.ts and lib/deal-estimate.ts buildPace — the code the cron runs.
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '../lib/claude-usage.ts'
 import { createClient } from '@supabase/supabase-js'
 import { AD_CLIENTS } from '../lib/ad-clients.ts'
 import { campaignMatches, dayBounds, saleRows, perfWindow, ghlPerformance, renderPerformance } from '../lib/ghl.ts'
@@ -46,7 +46,7 @@ const f = await buildFollowups({
   salesSinceISO: dayBounds(w.from, tz).start,
   includeSources: g.includeOrderSources ?? [],
   product: followupProduct(),
-  anthropic: process.argv.includes('--ai') ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.trim() }) : null,
+  anthropic: process.argv.includes('--ai') ? claudeClient('script-followups-preview', { apiKey: process.env.ANTHROPIC_API_KEY?.trim() }) : null,
   notLeads: g.notLeads,
 })
 

@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '@/lib/claude-usage'
 import { after } from 'next/server'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { AD_CLIENTS } from '@/lib/ad-clients'
@@ -42,7 +42,7 @@ async function run() {
     day: localDay(tz),
     untilISO: new Date().toISOString(),
     db: supabaseConfigured ? supabase : null,
-    anthropic: key ? new Anthropic({ apiKey: key, maxRetries: 4 }) : null,
+    anthropic: key ? claudeClient('intent-judge-refresh', { apiKey: key, maxRetries: 4 }) : null,
     push: { url, secret },
   })
   if (!s) return { ok: true as const, skipped: 'no event scheduled' }

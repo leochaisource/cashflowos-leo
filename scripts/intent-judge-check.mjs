@@ -8,7 +8,7 @@
 // Spends real API credit: one judging pass per run (~$0.10-0.25 each on Opus).
 // A candidate qualifies when it keeps every lead the reference calls hot in both
 // runs, and its overall match is within ~5 points of the noise floor.
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '../lib/claude-usage.ts'
 import { AD_CLIENTS } from '../lib/ad-clients.ts'
 import { dayBounds } from '../lib/ghl.ts'
 import { eventFor } from '../lib/deal.ts'
@@ -28,7 +28,7 @@ const next = eventFor(c.deal, new Date(Date.parse(`${day}T00:00:00Z`) + 864e5).t
 const product =
   `${c.client ?? c.name} one-day Claude AI workshop on ${next.to}, tickets ` +
   `RM${c.deal.ticketPrices.general} General / RM${c.deal.ticketPrices.vip} VIP`
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY.trim() })
+const anthropic = claudeClient('script-intent-judge-check', { apiKey: process.env.ANTHROPIC_API_KEY.trim() })
 
 const runs = [['refA', reference], ['refB', reference], ...candidates.map((m) => [m, m])]
 const L = {}

@@ -9,7 +9,7 @@
 // so a lead who was hot on the 25th and paid on the 28th still appears — with
 // "Paid ✅ 2026-09-28" in the Paid? column. Re-running a day updates its rows;
 // the team's status and Notes columns are never touched.
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from '../lib/claude-usage.ts'
 import { createClient } from '@supabase/supabase-js'
 import { AD_CLIENTS } from '../lib/ad-clients.ts'
 import { syncHotLeadsDay, localDay } from '../lib/hot-leads-sync.ts'
@@ -33,7 +33,7 @@ const addDay = (iso: string, n: number) => new Date(Date.parse(`${iso}T00:00:00Z
 const yesterday = localDay(tz, new Date(Date.now() - 864e5))
 const from = TODAY ? localDay(tz) : (arg('from') ?? yesterday)
 const to = TODAY ? from : (arg('to') ?? from)
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.trim() })
+const anthropic = claudeClient('script-hotleads-sheet', { apiKey: process.env.ANTHROPIC_API_KEY?.trim() })
 
 let total = 0
 for (let day = from; day <= to; day = addDay(day, 1)) {

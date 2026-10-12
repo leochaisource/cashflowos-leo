@@ -1,5 +1,5 @@
 import 'server-only'
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeClient } from './claude-usage'
 
 // 🔒 Don't edit — this keeps your robot safe.
 // ONE vision call. A photo/PDF comes in (base64) and we ask claude-haiku-4-5 to
@@ -54,7 +54,7 @@ export async function readImage(base64: string, mime: string): Promise<VisionRes
 
   let raw = ''
   try {
-    const anthropic = new Anthropic({ apiKey })
+    const anthropic = claudeClient('receipt-reader', { apiKey })
     const res = await anthropic.messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: 400,                  // a small form — capped so a runaway can't cost much
