@@ -207,7 +207,7 @@ const facts = stripLoneSurrogates([
 
 const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY })
 const res = await anthropic.messages.create({
-  model: 'claude-opus-5',
+  model: 'claude-opus-5-5',
   max_tokens: 3000,
   system: preLaunch ? PRE_LAUNCH_PROMPT(client.name) : LIVE_PROMPT(client.name),
   messages: [{ role: 'user', content: facts }],

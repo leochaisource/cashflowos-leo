@@ -1,6 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { jsonSchemaOutputFormat } from '@anthropic-ai/sdk/helpers/json-schema'
+import { claudeJson } from './claude-json.ts'
 import type { AdClient } from './ad-clients.ts'
 // Explicit .ts extensions: this module is shared with scripts/ run by Node's
 // native TypeScript support, which resolves only exact paths.
@@ -22,7 +22,8 @@ import { clip } from './format.ts'
 // profile with no USP yet is still a useful row, and says "pending" rather
 // than pretending there is nothing to say.
 
-export const USP_MODEL = 'claude-opus-5'
+// Opus 5.5 since the cost pass of 2026-10-12 (newer, cheaper per token than Opus 5).
+export const USP_MODEL = 'claude-opus-5-5'
 /** Advertisers per model request — enough to amortise the instructions, small enough to stay precise. */
 const USP_BATCH = 8
 const LIVE_DAYS = 14
@@ -240,20 +241,24 @@ export async function writeUsps(
   for (let i = 0; i < items.length; i += USP_BATCH) {
     const batch = items.slice(i, i + USP_BATCH)
     try {
-      const res = await anthropic.messages.parse({
+      type Out = { profiles: { competitor: string; usp: string; offer: string; angle: string; is_competitor: boolean }[] }
+      const res = await claudeJson<Out>({
+        anthropic,
         model: USP_MODEL,
-        max_tokens: 4000,
+        fallbackModel: 'claude-sonnet-5-5',
         // Summarising copy that is already in front of it: low effort is plenty.
-        output_config: { effort: 'low', format: jsonSchemaOutputFormat(USP_SCHEMA) },
+        effort: 'low',
+        maxTokens: 4000,
         system: uspSystem(client),
-        messages: [{ role: 'user', content: batch.map((b) => b.dossier).join('\n\n---\n\n') }],
+        user: batch.map((b) => b.dossier).join('\n\n---\n\n'),
+        schema: USP_SCHEMA as unknown as Record<string, unknown>,
       })
-      if (res.stop_reason === 'refusal') {
+      if (res.refused) {
         error = 'the model declined one batch — those stay pending and are retried next run'
         continue
       }
       const wanted = new Set(batch.map((b) => b.competitor))
-      for (const p of res.parsed_output?.profiles ?? []) {
+      for (const p of res.data?.profiles ?? []) {
         if (!wanted.has(p.competitor) || !p.usp.trim()) continue // a renamed advertiser would orphan the row
         results.push({
           competitor: p.competitor,

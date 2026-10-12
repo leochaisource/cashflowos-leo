@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk'
-import { jsonSchemaOutputFormat } from '@anthropic-ai/sdk/helpers/json-schema'
+import type { SupabaseClient } from '@supabase/supabase-js'
 // Explicit .ts extensions: shared with scripts/followups-preview.ts (Node type stripping).
 import {
   whatsappMessages,
@@ -17,6 +17,8 @@ import {
   type WaMessage,
 } from './ghl.ts'
 import { clip } from './format.ts'
+import { claudeJson } from './claude-json.ts'
+import { loadIntentCache, saveIntentCache, verdictKey } from './intent-cache.ts'
 
 // WHO TO CHASE TODAY — for the client group's morning update (owner's ask,
 // 2026-09-28): "who still hasn't paid" and "which leads need a follow-up today".
@@ -61,12 +63,18 @@ export type Followups = {
   paidAt: Map<string, string>
   /** Every WhatsApp message read (the report day and the day before), with who sent it. */
   messages: WaMessage[]
+  /** Chats sent to the model vs verdicts reused from the cache. */
+  intentStats?: { judged: number; reused: number }
 }
 
 type Verdict = { intent: Intent; reason: string; next: string; interest: string | null; objection: string | null; event: string | null }
 
+// Model choice: see the cost pass of 2026-10-12 (lib/claude-json.ts). Bump
+// PROMPT_VERSION whenever intentSystem() changes, so cached verdicts reset.
 const INTENT_MODEL = 'claude-opus-5'
-const FALLBACK_MODEL = 'claude-sonnet-5'
+const FALLBACK_MODEL = 'claude-sonnet-5-5'
+const INTENT_EFFORT: 'low' | 'medium' | 'high' = 'low'
+const PROMPT_VERSION = 'intent-v1'
 const BATCH = 12
 const MAX_CHATS = 150
 
@@ -124,36 +132,31 @@ async function judge(
   anthropic: Anthropic,
   product: string,
   items: { id: string; text: string }[],
+  model: string,
+  effort: 'low' | 'medium' | 'high' = 'low',
 ): Promise<{ verdicts: Map<string, Verdict>; error: string | null }> {
   const verdicts = new Map<string, Verdict>()
   const batches: { id: string; text: string }[][] = []
   for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH))
   const errors: string[] = []
-  const call = (model: string, batch: { id: string; text: string }[]) =>
-    anthropic.messages.parse(
-      {
-        model,
-        max_tokens: 4000,
-        output_config: { effort: 'low', format: jsonSchemaOutputFormat(INTENT_SCHEMA) },
-        system: intentSystem(product),
-        messages: [{ role: 'user', content: batch.map((b) => `LEAD ID: ${b.id}\n${b.text}`).join('\n\n---\n\n') }],
-      },
-      { maxRetries: 4 },
-    )
+  type Out = { leads: { id: string; intent: Verdict['intent']; reason: string; next: string; interest: string; objection: string; event: string }[] }
   await Promise.all(
     batches.map(async (batch) => {
       try {
-        let res
-        try {
-          res = await call(INTENT_MODEL, batch)
-        } catch (e) {
-          // A busy API (529 overloaded, 5xx) shouldn't leave a dozen leads unjudged:
-          // one more go on the fallback model before giving up on the batch.
-          if (!/overloaded|529|50\d|timeout/i.test((e as Error).message)) throw e
-          res = await call(FALLBACK_MODEL, batch)
-        }
-        if (res.stop_reason === 'refusal') return
-        for (const l of res.parsed_output?.leads ?? [])
+        // A busy API (529 overloaded, 5xx) falls back to FALLBACK_MODEL inside
+        // claudeJson, so a dozen leads aren't left unjudged.
+        const res = await claudeJson<Out>({
+          anthropic,
+          model,
+          fallbackModel: FALLBACK_MODEL,
+          effort,
+          maxTokens: 4000,
+          system: intentSystem(product),
+          user: batch.map((b) => `LEAD ID: ${b.id}\n${b.text}`).join('\n\n---\n\n'),
+          schema: INTENT_SCHEMA as unknown as Record<string, unknown>,
+        })
+        if (res.refused) return
+        for (const l of res.data?.leads ?? [])
           verdicts.set(l.id, {
             intent: l.intent,
             reason: l.reason.trim(),
@@ -185,6 +188,12 @@ export async function buildFollowups(args: {
   anthropic: Anthropic | null
   /** Contact ids that are never leads (our own test contacts). */
   notLeads?: string[]
+  /** With both: reuse verdicts for chats unchanged since the last run (lib/intent-cache.ts). */
+  db?: SupabaseClient | null
+  cacheKey?: string
+  /** Override the judge's model / effort (comparisons only). */
+  intentModel?: string
+  intentEffort?: 'low' | 'medium' | 'high'
 }): Promise<Followups> {
   const notLeads = new Set(args.notLeads ?? [])
   const { paidEver, paidAt, unpaid: attempts } = await paymentAttempts(
@@ -248,20 +257,43 @@ export async function buildFollowups(args: {
   const leads = judged.filter((c) => !teamIds.has(c.contactId))
 
   let intentError: string | null = null
+  let reused = 0
   if (args.anthropic && leads.length) {
-    const { verdicts, error } = await judge(
-      args.anthropic,
-      args.product,
-      leads.map((c) => ({ id: c.contactId, text: transcript(byContact.get(c.contactId)!) })),
-    )
-    intentError = error
-    for (const c of leads) {
-      const v = verdicts.get(c.contactId)
-      if (v) Object.assign(c, v)
+    const model = args.intentModel ?? INTENT_MODEL
+    // Chats nobody wrote in since the last run keep their verdict — no model call.
+    const useCache = !!(args.db && args.cacheKey && !args.intentModel && !args.intentEffort)
+    const cache = useCache ? await loadIntentCache(args.db!, args.cacheKey!).catch(() => new Map()) : new Map()
+    const items = leads.map((c) => {
+      const text = transcript(byContact.get(c.contactId)!)
+      return { c, text, key: verdictKey(PROMPT_VERSION, model, args.intentEffort ?? INTENT_EFFORT, args.product, text) }
+    })
+    const todo = items.filter((it) => {
+      const hit = cache.get(it.key)
+      if (hit) Object.assign(it.c, hit.v)
+      return !hit
+    })
+    reused = items.length - todo.length
+    if (todo.length) {
+      const { verdicts, error } = await judge(
+        args.anthropic,
+        args.product,
+        todo.map((it) => ({ id: it.c.contactId, text: it.text })),
+        model,
+        args.intentEffort ?? INTENT_EFFORT,
+      )
+      intentError = error
+      const now = new Date().toISOString()
+      for (const it of todo) {
+        const v = verdicts.get(it.c.contactId)
+        if (!v) continue
+        Object.assign(it.c, v)
+        cache.set(it.key, { v, at: now })
+      }
+      if (useCache) await saveIntentCache(args.db!, args.cacheKey!, cache).catch((e) => (intentError ??= (e as Error).message))
     }
   } else if (!args.anthropic) intentError = 'no Anthropic key — intent not judged'
 
-  return { day: args.day, unpaid, chats: leads, intentError, paidAt, messages: msgs }
+  return { day: args.day, unpaid, chats: leads, intentError, paidAt, messages: msgs, intentStats: { judged: leads.length - reused, reused } }
 }
 
 // ---------------------------------------------------------------- rendering

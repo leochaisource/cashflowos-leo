@@ -110,7 +110,7 @@ for (const c of clients) {
       .filter(Boolean)
       .join('\n\n')
     const res = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.trim() }).messages.create({
-      model: 'claude-opus-5',
+      model: 'claude-opus-5-5',
       max_tokens: BRIEF_ANALYSIS_MAX_TOKENS,
       output_config: { effort: 'low' },
       system: BRIEF_ANALYSIS_PROMPT(c.name),

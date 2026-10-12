@@ -540,6 +540,8 @@ async function runClient(client: AdClient, records: Rec[]) {
                       `RM${client.deal.ticketPrices.general} General / RM${client.deal.ticketPrices.vip} VIP`,
                     anthropic: key ? new Anthropic({ apiKey: key }) : null,
                     notLeads: g.notLeads,
+                    db: supabase,
+                    cacheKey: client.id,
                   }).catch((e) => {
                     notes.push(`Follow-ups unavailable: ${(e as Error).message}`)
                     return null
@@ -959,9 +961,14 @@ async function runClient(client: AdClient, records: Rec[]) {
   if (key) {
     try {
       const anthropic = new Anthropic({ apiKey: key })
-      const res = await anthropic.messages.create({
-        model: 'claude-opus-5',
+      // Opus 5.5 since the cost pass of 2026-10-12, with the server-side
+      // refusal fallback (`fallbacks` is newer than this SDK's types — beta
+      // endpoint + cast, as in lib/claude-json.ts).
+      const params = {
+        model: 'claude-opus-5-5',
         max_tokens: BRIEF_ANALYSIS_MAX_TOKENS,
+        betas: ['server-side-fallback-2026-07-01'],
+        fallbacks: 'default',
         // Reading facts that are already in front of it: low effort keeps the
         // thinking short, so the reply isn't squeezed out.
         output_config: { effort: 'low' },
@@ -972,10 +979,11 @@ async function runClient(client: AdClient, records: Rec[]) {
             content: facts + (digest ? `\n\nCOMPETITOR SUMMARY ALREADY SENT (do not repeat it):\n${digest.replace(/<[^>]+>/g, '')}` : ''),
           },
         ],
-      })
+      }
+      const res = await anthropic.beta.messages.create(params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming)
       report = clampAnalysis(
         res.content
-          .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+          .filter((b): b is Anthropic.Beta.Messages.BetaTextBlock => b.type === 'text')
           .map((b) => b.text)
           .join('\n'),
       )

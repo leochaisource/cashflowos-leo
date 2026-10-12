@@ -74,6 +74,8 @@ export async function syncHotLeadsDay(args: {
       `RM${client.deal.ticketPrices.general} General / RM${client.deal.ticketPrices.vip} VIP`,
     anthropic: args.anthropic,
     notLeads: g.notLeads,
+    db: args.db ?? null,
+    cacheKey: client.id,
   })
   const rows = await hotLeadRows({
     f,

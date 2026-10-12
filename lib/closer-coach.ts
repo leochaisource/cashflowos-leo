@@ -1,8 +1,8 @@
 import type Anthropic from '@anthropic-ai/sdk'
-import { jsonSchemaOutputFormat } from '@anthropic-ai/sdk/helpers/json-schema'
 // Explicit .ts extensions: shared with scripts/closer-coach.ts (Node type stripping).
 import { whatsappMessages, conversationMessages, contactBasics, paymentAttempts, teamMembers, type WaMessage } from './ghl.ts'
 import { clip } from './format.ts'
+import { claudeJson } from './claude-json.ts'
 
 // THE CLOSING COACH — owner's ask (2026-10-07): every day, study how Ari (the
 // GHL Conversation AI) and Ariella (the human closer) handled the leads, find
@@ -21,8 +21,9 @@ import { clip } from './format.ts'
 
 export type Speaker = 'LEAD' | 'ARI' | 'ARIELLA' | 'TEAM' | 'AUTO'
 
-const COACH_MODEL = 'claude-opus-5'
-const FALLBACK_MODEL = 'claude-sonnet-5'
+// Opus 5.5 since the cost pass of 2026-10-12 (newer, cheaper per token than Opus 5).
+const COACH_MODEL = 'claude-opus-5-5'
+const FALLBACK_MODEL = 'claude-sonnet-5-5'
 const MAX_THREADS = 30
 const MSGS_PER_THREAD = 26
 const MAX_MSG_CHARS = 280
@@ -285,28 +286,20 @@ export async function coachReport(
     `Median reply time ${s.medianReplyMin ?? 'n/a'} min (${closer}'s own: ${s.medianReplyMinAriella ?? 'n/a'} min). ` +
     `Left without a reply at day's end: ${s.leftOnRead.join(', ') || 'none'}. Paid yesterday: ${s.paidFromThreads.join(', ') || 'none'}.`
   const body = `${facts}\n\n=== CONVERSATIONS ===\n\n${input.threads.map((t) => threadText(t, closer)).join('\n\n---\n\n')}`
-  const call = (model: string) =>
-    anthropic.messages.parse(
-      {
-        model,
-        max_tokens: 12000,
-        output_config: { effort: 'medium', format: jsonSchemaOutputFormat(COACH_SCHEMA) },
-        system: coachSystem(product, closer),
-        messages: [{ role: 'user', content: body }],
-      },
-      { maxRetries: 4 },
-    )
   try {
-    let res
-    try {
-      res = await call(COACH_MODEL)
-    } catch (e) {
-      if (!/overloaded|529|50\d|timeout/i.test((e as Error).message)) throw e
-      res = await call(FALLBACK_MODEL)
-    }
-    if (res.stop_reason === 'refusal') return { report: null, error: 'the model declined' }
-    if (!res.parsed_output) return { report: null, error: `no report (${res.stop_reason})` }
-    return { report: res.parsed_output as CoachReport, error: null }
+    const res = await claudeJson<CoachReport>({
+      anthropic,
+      model: COACH_MODEL,
+      fallbackModel: FALLBACK_MODEL,
+      effort: 'medium',
+      maxTokens: 12000,
+      system: coachSystem(product, closer),
+      user: body,
+      schema: COACH_SCHEMA as unknown as Record<string, unknown>,
+    })
+    if (res.refused) return { report: null, error: 'the model declined' }
+    if (!res.data) return { report: null, error: `no report (${res.stop})` }
+    return { report: res.data, error: null }
   } catch (e) {
     return { report: null, error: (e as Error).message }
   }
