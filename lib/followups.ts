@@ -69,13 +69,13 @@ export type Followups = {
 
 type Verdict = { intent: Intent; reason: string; next: string; interest: string | null; objection: string | null; event: string | null }
 
-// Model: Sonnet 5.5 at low effort (owner, 2026-10-12). On 11 Oct's 77 chats it
-// agreed with the old Opus 5 judge on 81% and fit the hot/warm/cold rubric best
-// (Opus 5 called leads 'hot' that hadn't asked to buy; Haiku 5.5 moved 9 warm
-// leads to cold). ~60% cheaper per token than Opus 5. Bump PROMPT_VERSION
+// Model: Opus 5.5 at low effort (owner, 2026-10-12). A cheaper judge has to give
+// the same hot/warm/cold labels first (scripts/intent-judge-check.mjs). On 11 Oct's
+// 77 chats Opus 5.5 matched its own re-run on 95%; Sonnet 5.5 matched it on
+// 66-69% and Haiku 5.5 on 62-65%, so neither qualifies. Bump PROMPT_VERSION
 // whenever intentSystem() changes, so cached verdicts reset.
-const INTENT_MODEL = 'claude-sonnet-5-5'
-const FALLBACK_MODEL = 'claude-opus-5-5'
+const INTENT_MODEL = 'claude-opus-5-5'
+const FALLBACK_MODEL = 'claude-sonnet-5-5'
 const INTENT_EFFORT: 'low' | 'medium' | 'high' = 'low'
 const PROMPT_VERSION = 'intent-v1'
 const BATCH = 12
