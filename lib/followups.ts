@@ -69,10 +69,13 @@ export type Followups = {
 
 type Verdict = { intent: Intent; reason: string; next: string; interest: string | null; objection: string | null; event: string | null }
 
-// Model choice: see the cost pass of 2026-10-12 (lib/claude-json.ts). Bump
-// PROMPT_VERSION whenever intentSystem() changes, so cached verdicts reset.
-const INTENT_MODEL = 'claude-opus-5'
-const FALLBACK_MODEL = 'claude-sonnet-5-5'
+// Model: Sonnet 5.5 at low effort (owner, 2026-10-12). On 11 Oct's 77 chats it
+// agreed with the old Opus 5 judge on 81% and fit the hot/warm/cold rubric best
+// (Opus 5 called leads 'hot' that hadn't asked to buy; Haiku 5.5 moved 9 warm
+// leads to cold). ~60% cheaper per token than Opus 5. Bump PROMPT_VERSION
+// whenever intentSystem() changes, so cached verdicts reset.
+const INTENT_MODEL = 'claude-sonnet-5-5'
+const FALLBACK_MODEL = 'claude-opus-5-5'
 const INTENT_EFFORT: 'low' | 'medium' | 'high' = 'low'
 const PROMPT_VERSION = 'intent-v1'
 const BATCH = 12
