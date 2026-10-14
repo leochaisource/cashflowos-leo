@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 // Explicit .ts extensions: shared with scripts/hotleads-sheet.ts (Node type stripping).
 import { contactBasics, customFieldIds, classifyFirstTouch, type ContactBasics } from './ghl.ts'
 import type { Followups } from './followups.ts'
+import type { ListCard } from './hot-list.ts'
 
 // THE HOT-LEADS SHEET — owner's ask (2026-10-01): every day's hot leads in the
 // shared "Leads Follow Up List" Google Sheet, with their interest, objection,
@@ -128,6 +129,129 @@ export async function hotLeadRows(args: {
   return rows.sort((a, b) => Number(String(b.Type).startsWith('💳')) - Number(String(a.Type).startsWith('💳')))
 }
 
+// ---------------------------------------------------------------- the sheet as a copy of Ariella's GHL list
+
+const STAGE_LABEL: Record<string, string> = {
+  hot: '🔥 Hot',
+  contacted: '📞 Contacted',
+  'link sent': '💳 Link sent',
+  paid: '✅ Paid',
+  'not interested': '❌ Not interested',
+  parked: '⏸ Parked',
+}
+
+/**
+ * One row per card on her GHL list, closed cards too (owner, 2026-10-14: the
+ * sheet is a copy of the list). Key = "list|contactId"; Type = the stage. Full
+ * contact details only for open cards and cards that changed in the last 3 days
+ * (older rows already have them); a field left out is left alone by the sheet.
+ */
+export async function hotListRows(args: {
+  cards: ListCard[]
+  f: Followups
+  project: string
+  locationId: string
+  token: string
+  agreementDate: string
+  assignee: string | null
+  funnels: { formId: string; label: string }[]
+  db?: SupabaseClient | null
+}): Promise<SheetRow[]> {
+  const { f } = args
+  const chatOf = new Map(f.chats.map((c) => [c.contactId, c]))
+  const recent = Date.now() - 3 * 864e5
+  const full = new Set(args.cards.filter((c) => c.open || Date.parse(c.changedAt) >= recent || Date.parse(c.since) >= recent).map((c) => c.contactId))
+  const d = await leadDetails({ ...args, ids: full })
+
+  return args.cards.map((card) => {
+    const id = card.contactId
+    const c = chatOf.get(id)
+    const paid = f.paidAt.get(id)
+    const row: SheetRow = {
+      Key: `list|${id}`,
+      Type: STAGE_LABEL[card.stage.toLowerCase()] ?? card.stage,
+      'Paid?': paid ? `Paid ✅ ${klDate(paid)}` : card.stage.toLowerCase() === 'paid' ? 'Paid ✅' : 'Not yet',
+      'Assigned to': args.assignee ?? '',
+    }
+    if (c?.interest || card.why) row.Interest = c?.interest || card.why
+    if (c) {
+      row['Last message from them'] = klDateTime(c.lastInboundAt)
+      if (c.objection) row.Objection = c.objection
+      if (c.event) row["Event they're eyeing"] = c.event
+      if (c.next) row['Suggested next step'] = c.next
+    }
+    if (full.has(id)) {
+      const b = d.details.get(id)
+      const o = d.optin.get(id)
+      const touch = b ? classifyFirstTouch(b.firstTouch, args.agreementDate).source : null
+      Object.assign(row, {
+        Date: klDate(card.since),
+        Name: b?.name ?? card.name,
+        Phone: text(b?.phone),
+        Email: b?.email ?? '',
+        Industry: d.field(b, d.industryId),
+        Role: d.field(b, d.roleId),
+        'Opted in': klDate(o?.at ?? b?.dateAdded),
+        'Opt-in form': (o && d.formLabel.get(o.formId)) || b?.source || '',
+        'First touch': touch === 'ads' ? 'Ads' : touch === 'organic' ? 'Organic' : touch ? 'Unknown' : '',
+        'GHL link': `=HYPERLINK("https://app.gohighlevel.com/v2/location/${args.locationId}/contacts/detail/${id}","Open in GHL")`,
+      })
+    }
+    return row
+  })
+}
+
+/** Contact details, the industry / role fields and first opt-ins for a set of leads. */
+async function leadDetails(args: {
+  ids: Set<string>
+  f: Followups
+  project: string
+  locationId: string
+  token: string
+  funnels: { formId: string; label: string }[]
+  db?: SupabaseClient | null
+}) {
+  const details = new Map<string, ContactBasics>()
+  for (const c of args.f.chats) if (args.ids.has(c.contactId) && c.details) details.set(c.contactId, c.details)
+  const missing = [...args.ids].filter((id) => !details.has(id))
+  for (let i = 0; i < missing.length; i += 6)
+    await Promise.all(
+      missing.slice(i, i + 6).map(async (id) => {
+        try {
+          details.set(id, await contactBasics(args.token, id))
+        } catch {
+          // a row without details still beats no row
+        }
+      }),
+    )
+  let industryId: string | null = null
+  let roleId: string | null = null
+  try {
+    const fields = await customFieldIds(args.locationId, args.token)
+    const pick = (re: RegExp, prefer: string) => fields.get(prefer) ?? [...fields].find(([n]) => re.test(n))?.[1] ?? null
+    industryId = pick(/industry/, 'your industry')
+    roleId = pick(/\brole\b|position|job title/, 'your role')
+  } catch {
+    // leave the two columns blank
+  }
+  const field = (b: ContactBasics | undefined, fid: string | null) => {
+    const v = fid ? b?.customFields.find((x) => x.id === fid)?.value : null
+    return Array.isArray(v) ? v.join(', ') : v ? String(v) : ''
+  }
+  const optin = new Map<string, { at: string; formId: string }>()
+  if (args.db && args.ids.size) {
+    const { data } = await args.db
+      .from('ghl_leads')
+      .select('contact_id, form_id, submitted_at')
+      .eq('project', args.project)
+      .in('contact_id', [...args.ids])
+      .order('submitted_at')
+    for (const r of (data ?? []) as { contact_id: string; form_id: string; submitted_at: string }[])
+      if (!optin.has(r.contact_id)) optin.set(r.contact_id, { at: r.submitted_at, formId: r.form_id })
+  }
+  return { details, industryId, roleId, field, optin, formLabel: new Map(args.funnels.map((x) => [x.formId, x.label])) }
+}
+
 /** Everyone who has paid, for the sheet to mark "Paid ✅" on their older rows. */
 export const paidList = (f: Followups) => [...f.paidAt].map(([contactId, at]) => ({ contactId, paidAt: klDate(at) }))
 
@@ -137,12 +261,14 @@ export async function pushHotLeads(
   secret: string,
   rows: SheetRow[],
   paid: { contactId: string; paidAt: string }[],
-): Promise<{ ok: boolean; inserted?: number; updated?: number; paidMarked?: number; error?: string }> {
+  /** 'list' = the rows are Ariella's GHL list (apps-script/hot-leads.gs, 2026-10-14). */
+  mode?: 'list',
+): Promise<{ ok: boolean; inserted?: number; updated?: number; paidMarked?: number; error?: string; ignored?: string }> {
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ secret, rows, paid }),
+      body: JSON.stringify(mode ? { secret, mode, rows } : { secret, rows, paid }),
       redirect: 'follow', // Apps Script answers via a redirect to googleusercontent.com
       signal: AbortSignal.timeout(60000),
     })

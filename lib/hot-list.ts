@@ -55,6 +55,8 @@ export type HotListSync = {
   error?: string
   /** The list after this run: open cards, in stage order then oldest first. */
   open: ListCard[]
+  /** Every card in the pipeline, closed ones too — the sheet shows them all. */
+  all: ListCard[]
   added: ListCard[]
   reopened: ListCard[]
   paid: ListCard[]
@@ -102,7 +104,7 @@ export async function syncHotList(args: { client: AdClient; f: Followups; db: Su
   const { client, f } = args
   const g = client.ghl
   const cfg = g?.hotList
-  const out: HotListSync = { ok: false, open: [], added: [], reopened: [], paid: [], ownedByOthers: [], errors: [], dryRun: !!args.dryRun }
+  const out: HotListSync = { ok: false, open: [], all: [], added: [], reopened: [], paid: [], ownedByOthers: [], errors: [], dryRun: !!args.dryRun }
   if (!g || !cfg || !g.followupAssignee) return { ...out, error: 'no hot list configured' }
   const token = process.env[g.tokenEnv]!.trim()
   const locationId = process.env[g.locationEnv]!.trim()
@@ -260,6 +262,7 @@ export async function syncHotList(args: { client: AdClient; f: Followups; db: Su
     .map((c) => listCard(c, c.contactName ?? 'Unnamed lead', whyOf(c.title)))
     .sort((a, b) => (order.get(idOf(a.stage) ?? '') ?? 9) - (order.get(idOf(b.stage) ?? '') ?? 9) || a.since.localeCompare(b.since))
 
+  out.all = [...cardOf.values()].map((c) => listCard(c, c.contactName ?? 'Unnamed lead', whyOf(c.title)))
   if (args.db && !args.dryRun) await saveSeen(args.db, client.id, nowSeen).catch((e) => out.errors.push((e as Error).message))
   out.ok = true
   return out

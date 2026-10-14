@@ -41,7 +41,7 @@ import {
   type Followups,
   type AssignedTask,
 } from '@/lib/followups'
-import { hotLeadRows, pushHotLeads, paidList } from '@/lib/hot-leads-sheet'
+import { hotLeadRows, hotListRows, pushHotLeads, paidList } from '@/lib/hot-leads-sheet'
 import { syncHotList, listCounts, type HotListSync } from '@/lib/hot-list'
 import { loadAdRows } from '@/lib/metrics'
 import { focusProjects } from '@/lib/settings'
@@ -1078,7 +1078,7 @@ async function runClient(client: AdClient, records: Rec[]) {
       const sheetSecret = process.env.SHEETS_HOTLEADS_SECRET?.trim()
       if (sheetUrl && sheetSecret && client.deal) {
         try {
-          const rows = await hotLeadRows({
+          const common = {
             f,
             project: client.id,
             locationId: process.env[g.locationEnv]!.trim(),
@@ -1087,10 +1087,12 @@ async function runClient(client: AdClient, records: Rec[]) {
             assignee: who?.name ?? null,
             funnels: g.funnels.map((x) => ({ formId: x.formId, label: x.label })),
             db: supabase,
-          })
-          const res = await pushHotLeads(sheetUrl, sheetSecret, rows, paidList(f))
+          }
+          // With her GHL list, the sheet is a copy of it (2026-10-14).
+          const rows = list?.ok ? await hotListRows({ ...common, cards: list.all }) : await hotLeadRows(common)
+          const res = list?.ok ? await pushHotLeads(sheetUrl, sheetSecret, rows, [], 'list') : await pushHotLeads(sheetUrl, sheetSecret, rows, paidList(f))
           if (!res.ok) notes.push(`Hot leads sheet not updated: ${res.error ?? 'unknown error'}`)
-          else if (followupsOwnerLine) followupsOwnerLine += ` · ${rows.length} hot lead${rows.length === 1 ? '' : 's'} added to the sheet`
+          else if (followupsOwnerLine && !list?.ok) followupsOwnerLine += ` · ${rows.length} hot lead${rows.length === 1 ? '' : 's'} added to the sheet`
         } catch (e) {
           notes.push(`Hot leads sheet not updated: ${(e as Error).message}`)
         }

@@ -5,7 +5,7 @@ import type { AdClient } from './ad-clients.ts'
 import { dayBounds } from './ghl.ts'
 import { eventFor } from './deal.ts'
 import { buildFollowups, type Followups } from './followups.ts'
-import { hotLeadRows, pushHotLeads, paidList, type SheetRow } from './hot-leads-sheet.ts'
+import { hotLeadRows, hotListRows, pushHotLeads, paidList, type SheetRow } from './hot-leads-sheet.ts'
 import { syncHotList, type HotListSync } from './hot-list.ts'
 
 // ONE DAY'S HOT LEADS → THE SHEET, as one call.
@@ -82,7 +82,7 @@ export async function syncHotLeadsDay(args: {
     db: args.db ?? null,
     cacheKey: client.id,
   })
-  const rows = await hotLeadRows({
+  const common = {
     f,
     project: client.id,
     locationId,
@@ -91,10 +91,16 @@ export async function syncHotLeadsDay(args: {
     assignee: g.followupAssignee?.name ?? null,
     funnels: g.funnels.map((x) => ({ formId: x.formId, label: x.label })),
     db: args.db ?? null,
-  })
-  const pushed = args.push ? await pushHotLeads(args.push.url, args.push.secret, rows, paidList(f)) : null
+  }
   // Ariella's one list in GHL (owner, 2026-10-14) — the live refresh only; a
-  // backfill of an old day must never put old leads back on her list.
+  // backfill of an old day must never put old leads back on her list. The
+  // sheet is then a copy of that list; without one it gets the day's rows.
   const hotList = g.hotList && args.syncList ? await syncHotList({ client, f, db: args.db ?? null }) : null
+  const rows = hotList?.ok ? await hotListRows({ ...common, cards: hotList.all }) : await hotLeadRows(common)
+  const pushed = args.push
+    ? hotList?.ok
+      ? await pushHotLeads(args.push.url, args.push.secret, rows, [], 'list')
+      : await pushHotLeads(args.push.url, args.push.secret, rows, paidList(f))
+    : null
   return { day: args.day, untilISO: until, rows, followups: f, pushed, hotList }
 }
