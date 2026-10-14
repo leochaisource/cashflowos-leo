@@ -330,7 +330,7 @@ export function renderGroupFollowups(f: Followups, assignee?: string, list?: { o
       '',
       `${assignee ?? 'Follow-up'}'s list in GHL: ${list.counts}`,
     )
-    const icon: Record<string, string> = { hot: '🔥', contacted: '📞', 'link sent': '💳' }
+    const icon: Record<string, string> = { hot: '🔥', contacted: '💬', 'call back': '📞', thinking: '🤔', 'link sent': '💳' }
     for (const c of list.open.slice(0, 10)) out.push(`${icon[c.stage.toLowerCase()] ?? '-'} ${who(c.name)}${c.why ? ` — ${clip(c.why, 70)}` : ''}`)
     if (list.open.length > 10) out.push(`…and ${list.open.length - 10} more on the list`)
     return out.join('\n')

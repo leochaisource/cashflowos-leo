@@ -48,6 +48,8 @@ export type ListCard = {
   open: boolean
   since: string
   changedAt: string
+  /** Her 'Call back' choice on the card (Call back stage), e.g. 'Tomorrow 10am'. */
+  callBack?: string | null
 }
 
 export type HotListSync = {
@@ -198,6 +200,7 @@ export async function syncHotList(args: { client: AdClient; f: Followups; db: Su
     open,
     since: c.createdAt,
     changedAt: c.changedAt,
+    callBack: cfg.callbackFieldId ? c.fields[cfg.callbackFieldId] ?? null : null,
   })
   const work = [...cand.values()].filter((c) => !notLeads.has(c.contactId) && !notALead.has(c.contactId) && !f.paidAt.has(c.contactId))
   for (let i = 0; i < work.length; i += 5)
@@ -223,7 +226,7 @@ export async function syncHotList(args: { client: AdClient; f: Followups; db: Su
                   source: `CashFlowOS · ${c.source}`,
                   monetaryValue: cfg.monetaryValue,
                 })
-            const made: Card = { id, contactId: c.contactId, title: titleOf(name, c.why), stageId: firstOpen, status: 'open', createdAt: now, changedAt: now, contactName: name, contactTags: who.tags, assignedTo: who.assignedTo, source: c.source }
+            const made: Card = { id, contactId: c.contactId, title: titleOf(name, c.why), stageId: firstOpen, status: 'open', createdAt: now, changedAt: now, contactName: name, contactTags: who.tags, assignedTo: who.assignedTo, source: c.source, updatedAt: now, fields: {} }
             cardOf.set(c.contactId, made)
             out.added.push(listCard(made, name, c.why))
             return
@@ -291,6 +294,7 @@ export async function readHotList(client: AdClient): Promise<{ open: ListCard[];
         open: true,
         since: c.createdAt,
         changedAt: c.changedAt,
+        callBack: cfg.callbackFieldId ? c.fields[cfg.callbackFieldId] ?? null : null,
       }))
       .sort((a, b) => order.indexOf(a.stage.toLowerCase()) - order.indexOf(b.stage.toLowerCase()) || a.since.localeCompare(b.since))
     return { open }
@@ -301,7 +305,7 @@ export async function readHotList(client: AdClient): Promise<{ open: ListCard[];
 
 const esc = (s: string) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
-const ICON: Record<string, string> = { hot: '🔥', contacted: '📞', 'link sent': '💳' }
+const ICON: Record<string, string> = { hot: '🔥', contacted: '💬', 'call back': '📞', thinking: '🤔', 'link sent': '💳' }
 const ageDays = (iso: string) => Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 864e5))
 
 /** "12 open — Hot 5 · Contacted 4 · Link sent 3" */
@@ -327,7 +331,7 @@ export function renderHotList(open: ListCard[], stages: string[], opts: { title:
     out.push('', `${ICON[s.toLowerCase()] ?? '•'} <b>${esc(s)}</b>`)
     for (const c of here.slice(0, max)) {
       const age = ageDays(c.since)
-      out.push(`• ${esc(c.name)}${c.why ? ` — ${esc(clip(c.why, 80))}` : ''}${age ? ` <i>(${age}d)</i>` : ''}`)
+      out.push(`• ${esc(c.name)}${c.why ? ` — ${esc(clip(c.why, 80))}` : ''}${c.callBack ? ` · <b>call back ${esc(c.callBack)}</b>` : ''}${age ? ` <i>(${age}d)</i>` : ''}`)
     }
     if (here.length > max) out.push(`  …and ${here.length - max} more`)
   }

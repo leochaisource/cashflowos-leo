@@ -805,6 +805,10 @@ export type Card = {
   contactTags: string[]
   assignedTo: string | null
   source: string | null
+  /** When anything on the card last changed (stage, status or a field). */
+  updatedAt: string
+  /** The card's own custom fields, by field id (e.g. the 'Call back' dropdown). */
+  fields: Record<string, string>
 }
 
 /** Every card in a pipeline, oldest pages first (GHL pages by startAfter / startAfterId). */
@@ -833,6 +837,12 @@ export async function pipelineCards(locationId: string, token: string, pipelineI
         contactTags: Array.isArray(c.tags) ? (c.tags as string[]) : [],
         assignedTo: (o.assignedTo as string) ?? null,
         source: (o.source as string) ?? null,
+        updatedAt: String(o.updatedAt ?? o.createdAt ?? ''),
+        fields: Object.fromEntries(
+          ((o.customFields ?? []) as { id: string; fieldValueString?: string; fieldValue?: unknown }[])
+            .map((f) => [f.id, String(f.fieldValueString ?? f.fieldValue ?? '')] as const)
+            .filter(([, v]) => v),
+        ),
       })
     }
     const meta = (j.meta ?? {}) as { startAfter?: number | null; startAfterId?: string | null }
@@ -898,6 +908,11 @@ export async function contactsWithTag(locationId: string, token: string, tag: st
     if (list.length < 100) break
   }
   return out
+}
+
+/** Write one contact custom field (e.g. the note an in-app notification shows). */
+export async function setContactField(token: string, contactId: string, fieldId: string, value: string): Promise<void> {
+  await sendJSON('PUT', `${API}/contacts/${encodeURIComponent(contactId)}`, token, { customFields: [{ id: fieldId, field_value: value }] })
 }
 
 /** Who owns a contact (null = nobody), with its name and tags. */

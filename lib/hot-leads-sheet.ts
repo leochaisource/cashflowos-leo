@@ -133,7 +133,9 @@ export async function hotLeadRows(args: {
 
 const STAGE_LABEL: Record<string, string> = {
   hot: '🔥 Hot',
-  contacted: '📞 Contacted',
+  contacted: '💬 Contacted',
+  'call back': '📞 Call back',
+  thinking: '🤔 Thinking',
   'link sent': '💳 Link sent',
   paid: '✅ Paid',
   'not interested': '❌ Not interested',

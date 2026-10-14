@@ -200,6 +200,24 @@ export type AdClient = {
       paidTags: string[]
       /** The card's value, for the pipeline's totals. */
       monetaryValue?: number
+      /** The card's 'Call back' dropdown (an opportunity custom field) — its id. */
+      callbackFieldId?: string
+      /**
+       * The stages that run on their own (lib/hot-list-tick.ts, hourly; owner's
+       * call 2026-10-15): reminders to the follow-up owner, and Ari's WhatsApp
+       * follow-ups. Each Ari message is a GHL tag that fires a workflow sending an
+       * approved WhatsApp template; a tag left out means that message is off.
+       */
+      automation?: {
+        callbackStage: string
+        thinkingStage: string
+        linkStage: string
+        /** No choice made on the card: remind this many hours after the move. */
+        defaultCallbackHours: number
+        ari: { missedCall?: string; thinking1?: string; thinking3?: string; deadline?: string; linkCheck?: string }
+        /** The GHL in-app ping: a contact note field + the tag whose workflow sends it. */
+        inApp?: { noteFieldId: string; tag: string }
+      }
     }
     /**
      * GHL contact ids that are never leads, on top of the location's own users:
@@ -365,7 +383,7 @@ export const AD_CLIENTS: AdClient[] = [
       // Her one list (owner, 2026-10-14) — the pipeline was made in GHL that day.
       hotList: {
         pipeline: 'CM1D Hot Leads',
-        openStages: ['Hot', 'Contacted', 'Link sent'],
+        openStages: ['Hot', 'Contacted', 'Call back', 'Thinking', 'Link sent'],
         paidStage: 'Paid',
         closedStages: ['Not interested', 'Parked'],
         // Not payment-not-completed: our own tag, never removed (current failed
@@ -373,6 +391,18 @@ export const AD_CLIENTS: AdClient[] = [
         enterTags: ['cm1d-hot', 'cm1d-cart', 'cm1d-pay-failed'],
         paidTags: ['ws-purchased', 'cm1d-paid', 'cm1d-hot-won', 'cm1d-cart-recovered'],
         monetaryValue: 397,
+        callbackFieldId: 'so4SpSAqGjUS7EyjqCwO', // "Call back" on the card, made 2026-10-15
+        automation: {
+          callbackStage: 'Call back',
+          thinkingStage: 'Thinking',
+          linkStage: 'Link sent',
+          defaultCallbackHours: 2,
+          // Ari's templates wait for the owner's OK on the wording and Meta's approval;
+          // until a tag is set here that message doesn't go out (the reminders do).
+          ari: {},
+          // "[SF] Ariella - Coach nudge (in-app)": the note field + the tag that fires it.
+          inApp: { noteFieldId: 'rnBXCWB4nZfrroVCRzuW', tag: 'ariella-coach-send' },
+        },
       },
       notLeads: ['6akNAWbnfjqG1vdETYkD', 'GudJcCRfbHpowedbHmgp', 'eigz0oA4vbkGHESFMel5'], // the owner's own "leo chai" contacts
     },
