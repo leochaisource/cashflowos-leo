@@ -253,16 +253,26 @@ function syncHotLeads() {
 // HOURLY (owner, 2026-10-15) — Ariella's call-back reminders, "they replied"
 // pings and Ari's follow-ups for the Call back / Thinking / Link sent stages.
 // No AI on the other end, so it costs no Claude credit.
+// The same clock runs the overnight half-price lead judging (2026-10-15,
+// /api/intent-batch): after midnight it sends yesterday's chats to Claude's
+// Batch API, and the next calls file the answers before the 8am brief.
 const TICK_URL = 'https://cashflowos-leo.vercel.app/api/hotlist-tick'
+const BATCH_URL = 'https://cashflowos-leo.vercel.app/api/intent-batch'
 
 function hotListTick() {
   const secret = PropertiesService.getScriptProperties().getProperty('SECRET')
-  const res = UrlFetchApp.fetch(TICK_URL, {
-    method: 'post',
-    headers: { Authorization: 'Bearer ' + secret },
-    muteHttpExceptions: true,
+  ;[TICK_URL, BATCH_URL].forEach(function (url) {
+    try {
+      const res = UrlFetchApp.fetch(url, {
+        method: 'post',
+        headers: { Authorization: 'Bearer ' + secret },
+        muteHttpExceptions: true,
+      })
+      console.log(url.split('/').pop() + ' ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 300))
+    } catch (err) {
+      console.error(url + ': ' + err)
+    }
   })
-  console.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 300))
 }
 
 /** Run once from the editor: (re)creates the daily refreshes and the hourly check. */
