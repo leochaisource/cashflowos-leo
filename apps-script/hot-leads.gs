@@ -250,14 +250,30 @@ function syncHotLeads() {
   console.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 300))
 }
 
-/** Run once from the editor: (re)creates the daily triggers. */
+// HOURLY (owner, 2026-10-15) — Ariella's call-back reminders, "they replied"
+// pings and Ari's follow-ups for the Call back / Thinking / Link sent stages.
+// No AI on the other end, so it costs no Claude credit.
+const TICK_URL = 'https://cashflowos-leo.vercel.app/api/hotlist-tick'
+
+function hotListTick() {
+  const secret = PropertiesService.getScriptProperties().getProperty('SECRET')
+  const res = UrlFetchApp.fetch(TICK_URL, {
+    method: 'post',
+    headers: { Authorization: 'Bearer ' + secret },
+    muteHttpExceptions: true,
+  })
+  console.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 300))
+}
+
+/** Run once from the editor: (re)creates the daily refreshes and the hourly check. */
 function installSyncTriggers() {
   ScriptApp.getProjectTriggers()
-    .filter(function (t) { return t.getHandlerFunction() === 'syncHotLeads' })
+    .filter(function (t) { return t.getHandlerFunction() === 'syncHotLeads' || t.getHandlerFunction() === 'hotListTick' })
     .forEach(function (t) { ScriptApp.deleteTrigger(t) })
   SYNC_HOURS.forEach(function (h) {
     ScriptApp.newTrigger('syncHotLeads').timeBased().atHour(h).nearMinute(0).everyDays(1).inTimezone('Asia/Kuala_Lumpur').create()
   })
+  ScriptApp.newTrigger('hotListTick').timeBased().everyHours(1).create()
   console.log('triggers: ' + ScriptApp.getProjectTriggers().length)
 }
 

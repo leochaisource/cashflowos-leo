@@ -397,9 +397,16 @@ export const AD_CLIENTS: AdClient[] = [
           thinkingStage: 'Thinking',
           linkStage: 'Link sent',
           defaultCallbackHours: 2,
-          // Ari's templates wait for the owner's OK on the wording and Meta's approval;
-          // until a tag is set here that message doesn't go out (the reminders do).
-          ari: {},
+          // Ari's WhatsApp templates (owner approved the wording, Meta approved them,
+          // 2026-10-15): each tag fires its "[SF] Ari - …" workflow (tag → template →
+          // remove tag). Remove a line here to stop that message.
+          ari: {
+            missedCall: 'cm1d-ari-missed-call', // cm1d_missed_call
+            thinking1: 'cm1d-ari-thinking-1', // cm1d_thinking_1
+            thinking3: 'cm1d-ari-thinking-3', // cm1d_thinking_3
+            deadline: 'cm1d-ari-class-soon', // cm1d_class_soon
+            linkCheck: 'cm1d-ari-payment-check', // cm1d_payment_check
+          },
           // "[SF] Ariella - Coach nudge (in-app)": the note field + the tag that fires it.
           inApp: { noteFieldId: 'rnBXCWB4nZfrroVCRzuW', tag: 'ariella-coach-send' },
         },
