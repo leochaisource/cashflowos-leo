@@ -6,6 +6,7 @@ import { dayBounds } from './ghl.ts'
 import { eventFor } from './deal.ts'
 import { gatherCoachInput, coachReport, renderCoach } from './closer-coach.ts'
 import { sendMessage } from './telegram.ts'
+import { readHotList } from './hot-list.ts'
 
 // The closing coach, end to end: yesterday's threads → coaching → Telegram.
 // Shared by POST /api/closer-coach (fired by the sheet's 9am trigger, through
@@ -81,10 +82,15 @@ export async function runCloserCoach(args: {
     includeSources: g.includeOrderSources ?? [],
     notLeads: g.notLeads,
   })
+  // Her one list in GHL (owner, 2026-10-14): the coach names only leads on it,
+  // and shows the list itself, so Telegram and GHL never disagree.
+  const hl = g.hotList ? await readHotList(client) : null
+  const list = g.hotList && hl && !hl.error ? { open: hl.open, stages: g.hotList.openStages, pipeline: g.hotList.pipeline } : undefined
   const { report, error } = args.anthropic
-    ? await coachReport(args.anthropic, input, product, closer.name)
+    ? await coachReport(args.anthropic, input, product, closer.name, list?.open)
     : { report: null, error: 'ANTHROPIC_API_KEY not set' }
-  let text = renderCoach(input.stats, report, closer.name, error)
+  let text = renderCoach(input.stats, report, closer.name, error, list)
+  if (hl?.error) text += `\n\n<i>Your GHL list couldn't be read this morning (${hl.error.slice(0, 120)}).</i>`
 
   const owner = process.env.OWNER_CHAT_ID?.trim()
   let recipients: string[] = []

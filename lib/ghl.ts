@@ -774,6 +774,140 @@ export async function removeTags(token: string, contactId: string, tags: string[
   if (tags.length) await sendJSON('DELETE', `${API}/contacts/${encodeURIComponent(contactId)}/tags`, token, { tags })
 }
 
+/** Mark one of our tasks done (the hot list replaced the daily tasks, 2026-10-14). */
+export async function completeTask(token: string, contactId: string, taskId: string): Promise<void> {
+  await sendJSON('PUT', `${API}/contacts/${encodeURIComponent(contactId)}/tasks/${encodeURIComponent(taskId)}/completed`, token, { completed: true })
+}
+
+// ---------------------------------------------------------------- pipeline cards (opportunities)
+
+export type Pipeline = { id: string; name: string; stages: { id: string; name: string }[] }
+
+/** A pipeline by its name (case-insensitive), or null. Pipelines can only be made in GHL's settings. */
+export async function pipelineByName(locationId: string, token: string, name: string): Promise<Pipeline | null> {
+  const j = await getJSON(`${API}/opportunities/pipelines?locationId=${encodeURIComponent(locationId)}`, token)
+  const p = ((j.pipelines ?? []) as Pipeline[]).find((x) => x.name.trim().toLowerCase() === name.trim().toLowerCase())
+  return p ? { id: p.id, name: p.name, stages: p.stages.map((s) => ({ id: s.id, name: s.name })) } : null
+}
+
+export type Card = {
+  id: string
+  contactId: string
+  /** The card's own name, as shown in the pipeline. */
+  title: string
+  stageId: string
+  status: 'open' | 'won' | 'lost' | 'abandoned'
+  createdAt: string
+  /** When it last moved stage or changed status — whichever is later. */
+  changedAt: string
+  /** The contact as GHL returns it with the card. */
+  contactName: string | null
+  contactTags: string[]
+  assignedTo: string | null
+  source: string | null
+}
+
+/** Every card in a pipeline, oldest pages first (GHL pages by startAfter / startAfterId). */
+export async function pipelineCards(locationId: string, token: string, pipelineId: string): Promise<Card[]> {
+  const out: Card[] = []
+  let after = ''
+  for (let page = 0; page < 50; page++) {
+    const j = await getJSON(
+      `${API}/opportunities/search?location_id=${encodeURIComponent(locationId)}&pipeline_id=${encodeURIComponent(pipelineId)}&limit=100${after}`,
+      token,
+    )
+    const list = (j.opportunities ?? []) as Record<string, unknown>[]
+    for (const o of list) {
+      const c = (o.contact ?? {}) as Record<string, unknown>
+      const stage = String(o.lastStageChangeAt ?? o.createdAt ?? '')
+      const status = String(o.lastStatusChangeAt ?? o.createdAt ?? '')
+      out.push({
+        id: String(o.id),
+        contactId: String(o.contactId ?? c.id ?? ''),
+        title: String(o.name ?? ''),
+        stageId: String(o.pipelineStageId ?? ''),
+        status: (String(o.status ?? 'open') as Card['status']),
+        createdAt: String(o.createdAt ?? ''),
+        changedAt: stage > status ? stage : status,
+        contactName: (c.name as string) ?? null,
+        contactTags: Array.isArray(c.tags) ? (c.tags as string[]) : [],
+        assignedTo: (o.assignedTo as string) ?? null,
+        source: (o.source as string) ?? null,
+      })
+    }
+    const meta = (j.meta ?? {}) as { startAfter?: number | null; startAfterId?: string | null }
+    if (list.length < 100 || !meta.startAfterId) break
+    after = `&startAfter=${meta.startAfter}&startAfterId=${encodeURIComponent(meta.startAfterId)}`
+  }
+  return out
+}
+
+/**
+ * A new card. Left unassigned on purpose: GHL hands an assigned card's owner the
+ * CONTACT too (seen 2026-10-14), so the card simply inherits the contact's owner.
+ */
+export async function createCard(
+  token: string,
+  locationId: string,
+  c: { pipelineId: string; stageId: string; contactId: string; title: string; source: string; monetaryValue?: number },
+): Promise<string> {
+  const j = await sendJSON('POST', `${API}/opportunities/`, token, {
+    locationId,
+    pipelineId: c.pipelineId,
+    pipelineStageId: c.stageId,
+    contactId: c.contactId,
+    name: c.title,
+    status: 'open',
+    source: c.source,
+    ...(c.monetaryValue ? { monetaryValue: c.monetaryValue } : {}),
+  })
+  return String(((j.opportunity ?? {}) as { id?: string }).id ?? '')
+}
+
+export async function updateCard(token: string, id: string, patch: { stageId?: string; status?: Card['status']; title?: string }): Promise<void> {
+  await sendJSON('PUT', `${API}/opportunities/${encodeURIComponent(id)}`, token, {
+    ...(patch.stageId ? { pipelineStageId: patch.stageId } : {}),
+    ...(patch.status ? { status: patch.status } : {}),
+    ...(patch.title ? { name: patch.title } : {}),
+  })
+}
+
+export type TaggedContact = { id: string; name: string | null; tags: string[]; assignedTo: string | null; lastActivity?: string | null }
+
+/** Every contact carrying a tag (contacts search, 100 a page). */
+export async function contactsWithTag(locationId: string, token: string, tag: string): Promise<TaggedContact[]> {
+  const out: TaggedContact[] = []
+  for (let page = 1; page <= 20; page++) {
+    const j = await sendJSON('POST', `${API}/contacts/search`, token, {
+      locationId,
+      page,
+      pageLimit: 100,
+      filters: [{ field: 'tags', operator: 'eq', value: tag }],
+    })
+    const list = (j.contacts ?? []) as Record<string, unknown>[]
+    for (const c of list) {
+      const name = (c.contactName as string) || [c.firstName, c.lastName].filter(Boolean).join(' ') || null
+      out.push({
+        id: String(c.id),
+        name: name ? String(name).trim() : null,
+        tags: Array.isArray(c.tags) ? (c.tags as string[]) : [],
+        assignedTo: (c.assignedTo as string) ?? null,
+        lastActivity: (c.lastActivity as string) ?? null,
+      })
+    }
+    if (list.length < 100) break
+  }
+  return out
+}
+
+/** Who owns a contact (null = nobody), with its name and tags. */
+export async function contactOwner(token: string, contactId: string): Promise<TaggedContact> {
+  const j = await getJSON(`${API}/contacts/${encodeURIComponent(contactId)}`, token)
+  const c = (j.contact ?? j) as Record<string, unknown>
+  const name = (c.contactName as string) || [c.firstName, c.lastName].filter(Boolean).join(' ') || null
+  return { id: contactId, name: name ? String(name).trim() : null, tags: Array.isArray(c.tags) ? (c.tags as string[]) : [], assignedTo: (c.assignedTo as string) ?? null }
+}
+
 export type CheckoutAttempt = { contactId: string; name: string | null; email: string | null; status: string; at: string; amount: number | null }
 
 /**

@@ -182,6 +182,26 @@ export type AdClient = {
       telegramChatId?: string
     }
     /**
+     * The follow-up owner's ONE list (owner, 2026-10-14): a GHL pipeline that
+     * CashFlowOS fills and she works on her phone (lib/hot-list.ts). Stage names
+     * must match the pipeline in GHL; the first open stage is where new cards land.
+     */
+    hotList?: {
+      pipeline: string
+      /** On her list — in order; new cards go to the first. */
+      openStages: string[]
+      /** Where a payment moves a card. */
+      paidStage: string
+      /** Off her list, but a lead who writes again and is judged hot comes back. */
+      closedStages: string[]
+      /** Tags that put a lead on the list (Ari's own hot tag, cart / payment tags). */
+      enterTags: string[]
+      /** Tags that mean they paid. */
+      paidTags: string[]
+      /** The card's value, for the pipeline's totals. */
+      monetaryValue?: number
+    }
+    /**
      * GHL contact ids that are never leads, on top of the location's own users:
      * people on our side whose test contacts carry a different email than
      * their GHL user (the owner's "leo chai" test chats, 2026-10-01).
@@ -342,6 +362,18 @@ export const AD_CLIENTS: AdClient[] = [
       followups: true, // unpaid checkouts + yesterday's WhatsApp chats by buying intent (owner, 2026-09-28)
       // GHL user "Ariella A" (owner, 2026-09-29); Telegram = her private chat with the bot, for the 9am closing coach (2026-10-08).
       followupAssignee: { userId: 'EaYYLKFAWMRPqVZXgm3c', name: 'Ariella', telegramChatId: '8867468846' },
+      // Her one list (owner, 2026-10-14) — the pipeline was made in GHL that day.
+      hotList: {
+        pipeline: 'CM1D Hot Leads',
+        openStages: ['Hot', 'Contacted', 'Link sent'],
+        paidStage: 'Paid',
+        closedStages: ['Not interested', 'Parked'],
+        // Not payment-not-completed: our own tag, never removed (current failed
+        // payments reach the list straight from GHL payments).
+        enterTags: ['cm1d-hot', 'cm1d-cart', 'cm1d-pay-failed'],
+        paidTags: ['ws-purchased', 'cm1d-paid', 'cm1d-hot-won', 'cm1d-cart-recovered'],
+        monetaryValue: 397,
+      },
       notLeads: ['6akNAWbnfjqG1vdETYkD', 'GudJcCRfbHpowedbHmgp', 'eigz0oA4vbkGHESFMel5'], // the owner's own "leo chai" contacts
     },
     watchPages: [

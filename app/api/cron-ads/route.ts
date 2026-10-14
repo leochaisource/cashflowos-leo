@@ -42,6 +42,7 @@ import {
   type AssignedTask,
 } from '@/lib/followups'
 import { hotLeadRows, pushHotLeads, paidList } from '@/lib/hot-leads-sheet'
+import { syncHotList, listCounts, type HotListSync } from '@/lib/hot-list'
 import { loadAdRows } from '@/lib/metrics'
 import { focusProjects } from '@/lib/settings'
 import { campaignInsights, type Camp } from '@/lib/meta'
@@ -1009,9 +1010,10 @@ async function runClient(client: AdClient, records: Rec[]) {
   // adyntel_runs.facts_text) and shown on the Research log page.
   // Who to chase today joins the END of the performance block — the client
   // group sees it (names only, capped). With a follow-up owner configured
-  // (Ariella, owner's call 2026-09-29) the list becomes GHL tasks + intent
-  // tags for her, and the owner gets one line on her progress instead of the
-  // full list; without one, the owner gets the full list privately as before.
+  // (Ariella, owner's call 2026-09-29) the leads go on her GHL list (the hot
+  // list pipeline, 2026-10-14 — it replaced the daily tasks) with intent tags,
+  // and the owner gets one line on her progress instead of the full list;
+  // without one, the owner gets the full list privately as before.
   let followupsPrivate = ''
   let followupsOwnerLine = ''
   if (followupsP && perf) {
@@ -1022,10 +1024,21 @@ async function runClient(client: AdClient, records: Rec[]) {
       const who = g.followupAssignee
       const leads = f.chats.filter((c) => c.intent !== 'not_a_lead')
       let tasks: AssignedTask[] = []
+      let list: HotListSync | null = null
       if (who) {
         const today = new Date(Date.parse(`${perf.date}T00:00:00Z`) + 864e5).toISOString().slice(0, 10)
-        const a = await assignFollowups(f, { token, assigneeId: who.userId, dueISO: new Date(`${today}T18:00:00+08:00`).toISOString() })
-        tasks = a.tasks
+        // Her ONE list (owner, 2026-10-14): the GHL pipeline replaces the daily
+        // tasks. The intent tags stay. `tasks` now records the list as it stood
+        // this morning, so tomorrow's line can check what she did with it.
+        if (g.hotList) {
+          list = await syncHotList({ client, f, db: supabaseConfigured ? supabase : null })
+          if (!list.ok) notes.push(`${who.name}'s list not updated: ${list.error}`)
+          if (list.errors.length) notes.push(`${who.name}'s list: ${list.errors.length} GHL error(s) — ${list.errors[0]}`)
+        }
+        const a = await assignFollowups(f, { token, assigneeId: who.userId, dueISO: new Date(`${today}T18:00:00+08:00`).toISOString(), tasks: !g.hotList })
+        tasks = list?.ok
+          ? list.open.map((c) => ({ contactId: c.contactId, taskId: c.cardId, kind: /^(Payment|Started the checkout)/.test(c.why) ? ('unpaid' as const) : ('hot' as const), name: c.name }))
+          : a.tasks
         if (a.errors.length) notes.push(`Follow-up tasks: ${a.errors.length} failed in GHL — ${a.errors[0]}`)
         // The leads handed to her yesterday morning (yesterday's brief_daily
         // payload): did she actually message them on WhatsApp, and did they pay?
@@ -1053,7 +1066,10 @@ async function runClient(client: AdClient, records: Rec[]) {
         followupsOwnerLine = renderFollowupReview(
           who.name,
           reviews,
-          `Today: ${tasks.length} task${tasks.length === 1 ? '' : 's'} in GHL (${count('hot')} hot · ${count('warm')} warm · ${count('unpaid')} unpaid)`,
+          list?.ok && g.hotList
+            ? `Today: ${listCounts(list.open, g.hotList.openStages)} on ${who.name}'s list in GHL` +
+                ` · this morning +${list.added.length} new · ${list.paid.length} paid${list.reopened.length ? ` · ${list.reopened.length} back` : ''}`
+            : `Today: ${tasks.length} task${tasks.length === 1 ? '' : 's'} in GHL (${count('hot')} hot · ${count('warm')} warm · ${count('unpaid')} unpaid)`,
         )
       }
       // The hot leads also go into the shared "Leads Follow Up List" Google
@@ -1082,7 +1098,11 @@ async function runClient(client: AdClient, records: Rec[]) {
       // No follow-up owner: the owner gets the full list privately, as before.
       if (!who) followupsPrivate = renderPrivateFollowups(f, process.env[g.locationEnv]!.trim(), client.client ?? client.name)
       perf.followups = {
-        text: renderGroupFollowups(f, who?.name),
+        text: renderGroupFollowups(
+          f,
+          who?.name,
+          list?.ok && g.hotList ? { open: list.open, counts: listCounts(list.open, g.hotList.openStages) } : undefined,
+        ),
         unpaid: f.unpaid.length,
         chats: leads.length,
         hot: leads.filter((c) => c.intent === 'hot').length,

@@ -3,6 +3,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 import { whatsappMessages, conversationMessages, contactBasics, paymentAttempts, teamMembers, type WaMessage } from './ghl.ts'
 import { clip } from './format.ts'
 import { claudeJson } from './claude-json.ts'
+import { renderHotList, type ListCard } from './hot-list.ts'
 
 // THE CLOSING COACH — owner's ask (2026-10-07): every day, study how Ari (the
 // GHL Conversation AI) and Ariella (the human closer) handled the leads, find
@@ -115,7 +116,7 @@ const COACH_SCHEMA = {
   additionalProperties: false,
 } as const
 
-const coachSystem = (product: string, closer: string) =>
+const coachSystem = (product: string, closer: string, hasList: boolean) =>
   `You are a world-class high-ticket closer and sales coach. You have closed thousands of WhatsApp sales in ` +
   `Malaysia and you coach teams on speed-to-lead, discovery, value before price, objection handling, honest ` +
   `urgency, the assumptive close, removing payment friction and disciplined follow-up.\n\n` +
@@ -133,8 +134,12 @@ const coachSystem = (product: string, closer: string) =>
   `- ari / ${closer.toLowerCase()}: one real strength you saw (at most 30 words, specific), and up to 2 fixes. Each ` +
   `fix: issue at most 15 words; the lead's name; instead_of = what was actually said, at most 20 words; say = the ` +
   `exact better line, at most 50 words, in the lead's language and tone.\n` +
-  `- today: the 3 unpaid leads most worth closing today — why (at most 20 words) and the exact WhatsApp message ` +
-  `to send each (at most 60 words, complete, ready to paste).\n\n` +
+  (hasList
+    ? `- today: up to 3 leads from ${closer.toUpperCase()}'S LIST (after the facts) most worth closing today — only names ` +
+      `on that list that also appear in the conversations, none if none do. For each: why (at most 20 words) and ` +
+      `the exact WhatsApp message to send (at most 60 words, complete, ready to paste).\n\n`
+    : `- today: the 3 unpaid leads most worth closing today — why (at most 20 words) and the exact WhatsApp message ` +
+      `to send each (at most 60 words, complete, ready to paste).\n\n`) +
   `Rules: be specific and kind — you are coaching a teammate, not grading them. Only use names that appear in ` +
   `the threads. Never invent prices, dates, bonuses, discounts or guarantees — use only what appears in the ` +
   `conversations. If a part had no example yesterday (e.g. ${closer} sent nothing), say so briefly instead of ` +
@@ -277,6 +282,8 @@ export async function coachReport(
   input: { stats: CoachStats; threads: Thread[] },
   product: string,
   closer: string,
+  /** Her GHL list (lib/hot-list.ts): "close today" picks come only from it. */
+  list?: { name: string; why: string; stage: string }[],
 ): Promise<{ report: CoachReport | null; error: string | null }> {
   if (!input.threads.length) return { report: null, error: 'no conversations yesterday' }
   const s = input.stats
@@ -285,7 +292,10 @@ export async function coachReport(
     `Ari ${s.sent.ARI}, ${closer} ${s.sent.ARIELLA}, other team ${s.sent.TEAM}, automations ${s.sent.AUTO}. ` +
     `Median reply time ${s.medianReplyMin ?? 'n/a'} min (${closer}'s own: ${s.medianReplyMinAriella ?? 'n/a'} min). ` +
     `Left without a reply at day's end: ${s.leftOnRead.join(', ') || 'none'}. Paid yesterday: ${s.paidFromThreads.join(', ') || 'none'}.`
-  const body = `${facts}\n\n=== CONVERSATIONS ===\n\n${input.threads.map((t) => threadText(t, closer)).join('\n\n---\n\n')}`
+  const listText = list?.length
+    ? `\n\n=== ${closer.toUpperCase()}'S LIST (GHL, open) ===\n${list.map((c) => `- ${c.name} — ${c.why || 'no reason noted'} [${c.stage}]`).join('\n')}`
+    : ''
+  const body = `${facts}${listText}\n\n=== CONVERSATIONS ===\n\n${input.threads.map((t) => threadText(t, closer)).join('\n\n---\n\n')}`
   try {
     const res = await claudeJson<CoachReport>({
       anthropic,
@@ -293,7 +303,7 @@ export async function coachReport(
       fallbackModel: FALLBACK_MODEL,
       effort: 'medium',
       maxTokens: 12000,
-      system: coachSystem(product, closer),
+      system: coachSystem(product, closer, !!list?.length),
       user: body,
       schema: COACH_SCHEMA as unknown as Record<string, unknown>,
     })
@@ -314,8 +324,21 @@ const longDay = (iso: string) => {
 }
 const mins = (n: number | null) => (n === null ? 'n/a' : n < 60 ? `${n} min` : `${Math.round(n / 6) / 10} h`)
 
-/** The Telegram message (HTML). Numbers always; the coaching when the model answered. */
-export function renderCoach(stats: CoachStats, report: CoachReport | null, closer: string, error: string | null): string {
+/**
+ * The Telegram message (HTML). Numbers always; the coaching when the model
+ * answered; and, with `list`, her GHL list at the end — "close today" picks
+ * that aren't on it are dropped, so this message never names a lead her list
+ * doesn't (owner, 2026-10-14).
+ */
+export function renderCoach(
+  stats: CoachStats,
+  report: CoachReport | null,
+  closer: string,
+  error: string | null,
+  list?: { open: ListCard[]; stages: string[]; pipeline: string },
+): string {
+  const listBlock = () =>
+    list ? ['', renderHotList(list.open, list.stages, { title: `📋 Your list in GHL (Opportunities → ${list.pipeline})`, max: 8 })] : []
   const out: string[] = [`🎯 <b>Closing coach</b> · ${esc(longDay(stats.day))}`, '']
   out.push(
     `${stats.leadsWrote} lead${stats.leadsWrote === 1 ? '' : 's'} wrote · paid: <b>${stats.paidFromThreads.length}</b>` +
@@ -328,7 +351,7 @@ export function renderCoach(stats: CoachStats, report: CoachReport | null, close
     out.push(`⚠️ Left without a reply: ${esc(stats.leftOnRead.slice(0, 6).join(', '))}${stats.leftOnRead.length > 6 ? ` +${stats.leftOnRead.length - 6}` : ''}`)
 
   if (!report) {
-    out.push('', `<i>No coaching today — ${esc(clip(error ?? 'unknown error', 120))}.</i>`)
+    out.push('', `<i>No coaching today — ${esc(clip(error ?? 'unknown error', 120))}.</i>`, ...listBlock())
     return out.join('\n')
   }
   out.push('', `<b>The big one:</b> ${esc(clip(report.verdict, 400))}`)
@@ -348,9 +371,13 @@ export function renderCoach(stats: CoachStats, report: CoachReport | null, close
   }
   coachBlock(`👩 ${esc(closer)}`, report.ariella)
   coachBlock('🤖 Ari (AI)', report.ari)
-  if (report.today.length) {
-    out.push('', '<b>Close these today</b>')
-    for (const t of report.today.slice(0, 3)) out.push(`• <b>${esc(clip(t.lead, 30))}</b> — ${esc(clip(t.why, 200))}`, `   💬 “${esc(clip(t.message, 520))}”`)
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim()
+  const onList = (lead: string) => !list || list.open.some((c) => norm(c.name).includes(norm(lead)) || norm(lead).includes(norm(c.name)))
+  const today = report.today.filter((t) => onList(t.lead))
+  if (today.length) {
+    out.push('', list ? '<b>Close these today</b> <i>(from your list)</i>' : '<b>Close these today</b>')
+    for (const t of today.slice(0, 3)) out.push(`• <b>${esc(clip(t.lead, 30))}</b> — ${esc(clip(t.why, 200))}`, `   💬 “${esc(clip(t.message, 520))}”`)
   }
+  out.push(...listBlock())
   return out.join('\n')
 }

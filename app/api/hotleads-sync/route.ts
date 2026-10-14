@@ -22,7 +22,8 @@ export const maxDuration = 300 // WhatsApp export + the model's judging take 1�
 //
 // Needs `Authorization: Bearer <SHEETS_HOTLEADS_SECRET>` — the secret the sheet's
 // script already holds. FAILS CLOSED: no secret set, everyone gets 401.
-// Sheet only: no GHL tasks, tags or Telegram messages (the 8am run does those).
+// The sheet, plus Ariella's GHL list (lib/hot-list.ts, 2026-10-14). No tags or
+// Telegram messages — the 8am run does those.
 // A failure is sent to the owner privately, so a silent sheet never goes unseen.
 
 function authed(req: Request): boolean {
@@ -44,6 +45,7 @@ async function run() {
     db: supabaseConfigured ? supabase : null,
     anthropic: key ? claudeClient('intent-judge-refresh', { apiKey: key, maxRetries: 4 }) : null,
     push: { url, secret },
+    syncList: true,
   })
   if (!s) return { ok: true as const, skipped: 'no event scheduled' }
   if (!s.pushed?.ok) return { ok: false as const, error: `sheet: ${s.pushed?.error ?? 'not pushed'}` }
@@ -55,6 +57,9 @@ async function run() {
     intentError: s.followups.intentError ?? null,
     sheet: s.pushed,
     leads: s.rows.map((r) => `${r.Type} · ${r.Name}`),
+    hotList: s.hotList
+      ? { ok: s.hotList.ok, error: s.hotList.error, open: s.hotList.open.length, added: s.hotList.added.map((c) => c.name), reopened: s.hotList.reopened.map((c) => c.name), paid: s.hotList.paid.map((c) => c.name), errors: s.hotList.errors.slice(0, 3) }
+      : null,
   }
 }
 

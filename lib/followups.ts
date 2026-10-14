@@ -313,8 +313,28 @@ const who = (n: string | null) => clip(n?.trim() || 'Unnamed contact', 40)
  * The group's section — plain text (the performance block is escaped as a
  * whole). All hot leads by name, up to 5 warm, the rest as counts.
  */
-export function renderGroupFollowups(f: Followups, assignee?: string): string {
+/**
+ * The client group's lines. With `list` (Ariella's GHL list, 2026-10-14) the
+ * names shown ARE that list — the same leads she works — under yesterday's counts.
+ */
+export function renderGroupFollowups(f: Followups, assignee?: string, list?: { open: { name: string; why: string; stage: string }[]; counts: string }): string {
   const out: string[] = []
+  if (list) {
+    const leads = f.chats.filter((c) => c.intent !== 'not_a_lead')
+    const n = (i: Intent) => leads.filter((c) => c.intent === i).length
+    const judged = f.intentError === null || leads.some((c) => c.intent !== 'unknown')
+    out.push(
+      `Payment started, not completed: ${f.unpaid.length || 'none'}`,
+      `WhatsApp chats yesterday, not paid: ${leads.length || 'none'}` +
+        (leads.length && judged ? ` — hot ${n('hot')} · warm ${n('warm')} · cold ${n('cold')}` : ''),
+      '',
+      `${assignee ?? 'Follow-up'}'s list in GHL: ${list.counts}`,
+    )
+    const icon: Record<string, string> = { hot: '🔥', contacted: '📞', 'link sent': '💳' }
+    for (const c of list.open.slice(0, 10)) out.push(`${icon[c.stage.toLowerCase()] ?? '-'} ${who(c.name)}${c.why ? ` — ${clip(c.why, 70)}` : ''}`)
+    if (list.open.length > 10) out.push(`…and ${list.open.length - 10} more on the list`)
+    return out.join('\n')
+  }
   const chatOf = new Map(f.chats.map((c) => [c.contactId, c]))
   if (f.unpaid.length) {
     out.push(`Payment started, not completed: ${f.unpaid.length}`)
@@ -416,7 +436,7 @@ const klTime = (iso: string) => {
 
 export async function assignFollowups(
   f: Followups,
-  opts: { token: string; assigneeId: string; dueISO: string },
+  opts: { token: string; assigneeId: string; dueISO: string; /** false = intent tags only (the GHL hot list replaced the tasks, 2026-10-14). */ tasks?: boolean },
 ): Promise<Assignment> {
   const out: Assignment = { tasks: [], created: 0, refreshed: 0, tagged: 0, errors: [] }
   const chatOf = new Map(f.chats.map((c) => [c.contactId, c]))
@@ -462,9 +482,10 @@ export async function assignFollowups(
   }
 
   // A few at a time: GHL rate-limits per location.
-  for (let i = 0; i < todos.length; i += 6)
+  const taskTodos = opts.tasks === false ? [] : todos
+  for (let i = 0; i < taskTodos.length; i += 6)
     await Promise.all(
-      todos.slice(i, i + 6).map(async (t) => {
+      taskTodos.slice(i, i + 6).map(async (t) => {
         const input = { title: t.title, body: t.body, dueDate: opts.dueISO, assignedTo: opts.assigneeId }
         try {
           const open = (await contactTasks(opts.token, t.contactId)).find((x) => !x.completed && (x.body ?? '').includes(MARK))

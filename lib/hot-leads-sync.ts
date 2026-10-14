@@ -6,6 +6,7 @@ import { dayBounds } from './ghl.ts'
 import { eventFor } from './deal.ts'
 import { buildFollowups, type Followups } from './followups.ts'
 import { hotLeadRows, pushHotLeads, paidList, type SheetRow } from './hot-leads-sheet.ts'
+import { syncHotList, type HotListSync } from './hot-list.ts'
 
 // ONE DAY'S HOT LEADS → THE SHEET, as one call.
 //
@@ -32,6 +33,8 @@ export type HotLeadsSync = {
   followups: Followups
   /** null = not pushed (dry run, or the sheet isn't configured). */
   pushed: Awaited<ReturnType<typeof pushHotLeads>> | null
+  /** Ariella's GHL list brought up to date from this run (null = no list configured). */
+  hotList: HotListSync | null
 }
 
 /**
@@ -47,6 +50,8 @@ export async function syncHotLeadsDay(args: {
   db?: SupabaseClient | null
   anthropic: Anthropic | null
   push: { url: string; secret: string } | null
+  /** Also bring Ariella's GHL list up to date — the live refresh only, never a backfill. */
+  syncList?: boolean
 }): Promise<HotLeadsSync | null> {
   const { client } = args
   const g = client.ghl
@@ -88,5 +93,8 @@ export async function syncHotLeadsDay(args: {
     db: args.db ?? null,
   })
   const pushed = args.push ? await pushHotLeads(args.push.url, args.push.secret, rows, paidList(f)) : null
-  return { day: args.day, untilISO: until, rows, followups: f, pushed }
+  // Ariella's one list in GHL (owner, 2026-10-14) — the live refresh only; a
+  // backfill of an old day must never put old leads back on her list.
+  const hotList = g.hotList && args.syncList ? await syncHotList({ client, f, db: args.db ?? null }) : null
+  return { day: args.day, untilISO: until, rows, followups: f, pushed, hotList }
 }
