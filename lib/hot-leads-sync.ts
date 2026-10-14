@@ -5,6 +5,7 @@ import type { AdClient } from './ad-clients.ts'
 import { dayBounds } from './ghl.ts'
 import { eventFor } from './deal.ts'
 import { buildFollowups, type Followups } from './followups.ts'
+import { intentProduct } from './intent-batch.ts'
 import { hotLeadRows, hotListRows, pushHotLeads, paidList, type SheetRow } from './hot-leads-sheet.ts'
 import { syncHotList, type HotListSync } from './hot-list.ts'
 
@@ -74,9 +75,7 @@ export async function syncHotLeadsDay(args: {
     salesSinceISO: dayBounds(next.from, tz).start,
     asOfISO: until,
     includeSources: g.includeOrderSources ?? [],
-    product:
-      `${client.client ?? client.name} one-day Claude AI workshop on ${next.to}, tickets ` +
-      `RM${client.deal.ticketPrices.general} General / RM${client.deal.ticketPrices.vip} VIP`,
+    product: intentProduct(client, next.to),
     anthropic: args.anthropic,
     notLeads: g.notLeads,
     db: args.db ?? null,

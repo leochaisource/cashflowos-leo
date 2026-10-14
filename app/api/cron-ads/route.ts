@@ -41,6 +41,7 @@ import {
   type Followups,
   type AssignedTask,
 } from '@/lib/followups'
+import { BATCH_FEATURE, collectIntentBatch, followupsArgs } from '@/lib/intent-batch'
 import { hotLeadRows, hotListRows, pushHotLeads, paidList } from '@/lib/hot-leads-sheet'
 import { syncHotList, listCounts, type HotListSync } from '@/lib/hot-list'
 import { loadAdRows } from '@/lib/metrics'
@@ -523,32 +524,25 @@ async function runClient(client: AdClient, records: Rec[]) {
             // Who to chase today — STARTED here, awaited just before the message
             // is assembled, so its GHL reads and model calls overlap the
             // competitor research instead of adding to the run's length.
-            if (g.followups) {
-              const tz = g.timeZone ?? 'Asia/Kuala_Lumpur'
-              const { start, end } = dayBounds(reportDay, tz)
-              const next = eventFor(client.deal, new Date(Date.parse(`${reportDay}T00:00:00Z`) + 864e5).toISOString().slice(0, 10))
+            const fa = g.followups ? followupsArgs(client, reportDay) : null
+            if (fa) {
               const key = process.env.ANTHROPIC_API_KEY?.trim()
-              followupsP = next
-                ? buildFollowups({
-                    locationId: process.env[g.locationEnv]!.trim(),
-                    token: process.env[g.tokenEnv]!.trim(),
-                    day: reportDay,
-                    dayStartISO: start,
-                    dayEndISO: end,
-                    salesSinceISO: dayBounds(next.from, tz).start,
-                    includeSources: g.includeOrderSources ?? [],
-                    product:
-                      `${client.client ?? client.name} one-day Claude AI workshop on ${next.to}, tickets ` +
-                      `RM${client.deal.ticketPrices.general} General / RM${client.deal.ticketPrices.vip} VIP`,
-                    anthropic: key ? claudeClient('intent-judge-8am', { apiKey: key }) : null,
-                    notLeads: g.notLeads,
-                    db: supabase,
-                    cacheKey: client.id,
-                  }).catch((e) => {
-                    notes.push(`Follow-ups unavailable: ${(e as Error).message}`)
-                    return null
+              // The overnight half-price batch (lib/intent-batch.ts) has usually
+              // judged yesterday's chats already: file its verdicts first, so the
+              // judge below finds them in the cache and only fills the gaps.
+              const overnight = key
+                ? collectIntentBatch({ client, anthropic: claudeClient(BATCH_FEATURE, { apiKey: key }), db: supabase, cancelIfRunning: true }).catch((e) => {
+                    notes.push(`Overnight judging not collected: ${(e as Error).message}`)
                   })
-                : null
+                : Promise.resolve()
+              followupsP = overnight
+                .then(() =>
+                  buildFollowups({ ...fa, anthropic: key ? claudeClient('intent-judge-8am', { apiKey: key }) : null, db: supabase }),
+                )
+                .catch((e) => {
+                  notes.push(`Follow-ups unavailable: ${(e as Error).message}`)
+                  return null
+                })
             }
           }
           perfText = renderPerformance(perf)

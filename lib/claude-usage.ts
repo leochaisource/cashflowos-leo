@@ -18,16 +18,17 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 // Scripts run from the laptop use it too (feature "script-…"), so the total is
 // everything that spends the API key from this project.
 
-// USD per million tokens [model prefix, input, output] — platform.claude.com
-// pricing as of 2026-10-12. Cache reads cost 0.1× input, 5-minute cache writes
-// 1.25×, 1-hour writes 2×; web search $10 per 1,000. A model not listed is
-// priced at the dearest rate here, so the meter errs high, never low.
-const PRICES: [string, number, number][] = [
-  ['claude-opus-5-5', 4, 20],
-  ['claude-opus-5', 5, 25],
-  ['claude-sonnet-5-5', 2, 10],
-  ['claude-haiku-5-5', 0.1, 0.5],
-  ['claude-haiku-4-5', 1, 5],
+// USD per million tokens [model prefix, input, output, cache read × input] —
+// platform.claude.com pricing as of 2026-10-15. Cache reads cost 0.05× input on
+// Opus 5.5 and Sonnet 5.5, 0.1× on the rest; 5-minute cache writes 1.25×, 1-hour
+// writes 2×; web search $10 per 1,000; the Batch API halves all of it. A model
+// not listed is priced at the dearest rate here, so the meter errs high, never low.
+const PRICES: [string, number, number, number][] = [
+  ['claude-opus-5-5', 4, 20, 0.05],
+  ['claude-opus-5', 5, 25, 0.1],
+  ['claude-sonnet-5-5', 2, 10, 0.05],
+  ['claude-haiku-5-5', 0.1, 0.5, 0.1],
+  ['claude-haiku-4-5', 1, 5, 0.1],
 ]
 const DEAREST = PRICES.reduce((a, b) => (b[2] > a[2] ? b : a))
 
@@ -36,6 +37,7 @@ const TZ = 'Asia/Kuala_Lumpur'
 const FEATURE_LABEL: Record<string, string> = {
   'intent-judge-8am': 'Buying-intent judging, 8am brief',
   'intent-judge-refresh': 'Buying-intent judging, hot leads refresh',
+  'intent-judge-batch': 'Buying-intent judging, overnight batch (half price)',
   'closer-coach': "Ariella's closing coach",
   'brief-analysis': '8am competitor analysis',
   'competitor-usp': 'Competitor write-ups',
@@ -55,18 +57,26 @@ type Usage = {
 
 export type DaySpend = { day: string; total: number; calls: number; byFeature: { feature: string; cost: number; calls: number }[] }
 
-/** What one response cost, in USD. */
-export function costOf(model: string, u: Usage): number {
-  const [, inRate, outRate] = PRICES.filter(([m]) => model.startsWith(m)).sort((a, b) => b[0].length - a[0].length)[0] ?? DEAREST
+/** What one response cost, in USD. `batch`: it came back from the Batch API, at half price. */
+export function costOf(model: string, u: Usage, opts: { batch?: boolean } = {}): number {
+  const [, inRate, outRate, readRate] = PRICES.filter(([m]) => model.startsWith(m)).sort((a, b) => b[0].length - a[0].length)[0] ?? DEAREST
   const write1h = u.cache_creation?.ephemeral_1h_input_tokens ?? 0
   const write5m = Math.max(0, (u.cache_creation_input_tokens ?? 0) - write1h)
   const perMillion =
     (u.input_tokens ?? 0) * inRate +
     write5m * inRate * 1.25 +
     write1h * inRate * 2 +
-    (u.cache_read_input_tokens ?? 0) * inRate * 0.1 +
+    (u.cache_read_input_tokens ?? 0) * inRate * readRate +
     (u.output_tokens ?? 0) * outRate
-  return perMillion / 1e6 + (u.server_tool_use?.web_search_requests ?? 0) * 0.01
+  return (perMillion / 1e6 + (u.server_tool_use?.web_search_requests ?? 0) * 0.01) * (opts.batch ? 0.5 : 1)
+}
+
+/**
+ * Meter a Batch API result. Batch answers arrive in a results file, not as
+ * /v1/messages responses, so claudeClient's fetch never sees them.
+ */
+export async function meterBatchResult(feature: string, model: string, usage: Usage): Promise<void> {
+  await record(feature, model, usage, { batch: true })
 }
 
 /** An Anthropic client whose every Messages call is metered under `feature`. */
@@ -122,10 +132,10 @@ export async function spendOn(day = klDay()): Promise<DaySpend | null> {
   return { day, total, calls, byFeature }
 }
 
-async function record(feature: string, model: string, usage: Usage): Promise<void> {
+async function record(feature: string, model: string, usage: Usage, opts: { batch?: boolean } = {}): Promise<void> {
   const s = store()
   if (!s) return
-  const cost = costOf(model, usage)
+  const cost = costOf(model, usage, opts)
   const day = klDay()
   const dir = `${prefix()}/${day}`
   const name = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}_${slug(feature)}_${slug(model)}_${Math.round(cost * 1e6)}.json`

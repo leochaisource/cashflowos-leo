@@ -11,6 +11,9 @@ import type Anthropic from '@anthropic-ai/sdk'
 //   • Overloaded / 5xx / timeout → one more go on `fallbackModel`.
 //   • `effort` is always explicit: defaults differ by model (Opus 5.5 and
 //     Haiku 5.5 default to medium) and an unset effort silently changes cost.
+//   • `cacheSystem` marks the system prompt for prompt caching (owner,
+//     2026-10-15): calls that repeat it within 5 minutes pay 5% for it. Only
+//     worth it when another call follows — a write nobody reads costs 25% more.
 //
 // `fallbacks` is newer than this SDK's types, so the request goes through the
 // beta endpoint with a cast — the same pattern as agents/linkedin/prompt.ts.
@@ -19,24 +22,46 @@ export type ClaudeJsonResult<T> = { data: T | null; model: string; stop: string 
 
 const serverFallback = (model: string) => /^claude-(opus|sonnet)-/.test(model)
 
-export async function claudeJson<T>(args: {
-  anthropic: Anthropic
+export type ClaudeJsonArgs = {
   model: string
   fallbackModel?: string
   effort: 'low' | 'medium' | 'high'
   maxTokens: number
   system: string
+  cacheSystem?: boolean
   user: string
   schema: Record<string, unknown>
-}): Promise<ClaudeJsonResult<T>> {
+}
+
+/** The request body claudeJson sends, without the server-side fallback — also what a Batch API request carries. */
+export function jsonRequest(args: Omit<ClaudeJsonArgs, 'model' | 'fallbackModel'>, model: string) {
+  return {
+    model,
+    max_tokens: args.maxTokens,
+    output_config: { effort: args.effort, format: { type: 'json_schema', schema: args.schema } },
+    system: args.cacheSystem ? [{ type: 'text', text: args.system, cache_control: { type: 'ephemeral' } }] : args.system,
+    messages: [{ role: 'user', content: args.user }],
+  }
+}
+
+/** The JSON a structured-output reply carries. Throws when it isn't JSON. */
+export function jsonFrom<T>(res: { content: { type: string; text?: string }[]; stop_reason?: string | null }): T {
+  const text = res.content
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text ?? '')
+    .join('')
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new Error(`model returned non-JSON (stop_reason ${res.stop_reason})`)
+  }
+}
+
+export async function claudeJson<T>(args: ClaudeJsonArgs & { anthropic: Anthropic }): Promise<ClaudeJsonResult<T>> {
   const call = async (model: string) => {
     const params = {
-      model,
-      max_tokens: args.maxTokens,
+      ...jsonRequest(args, model),
       ...(serverFallback(model) ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' } : {}),
-      output_config: { effort: args.effort, format: { type: 'json_schema', schema: args.schema } },
-      system: args.system,
-      messages: [{ role: 'user', content: args.user }],
     }
     return args.anthropic.beta.messages.create(
       params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
@@ -53,15 +78,6 @@ export async function claudeJson<T>(args: {
     res = await call(model)
   }
   if (res.stop_reason === 'refusal') return { data: null, model: res.model ?? model, stop: res.stop_reason, usage: res.usage ?? null, refused: true }
-  const text = res.content
-    .filter((b): b is Anthropic.Beta.Messages.BetaTextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-  let data: T | null = null
-  try {
-    data = JSON.parse(text) as T
-  } catch {
-    throw new Error(`model returned non-JSON (stop_reason ${res.stop_reason})`)
-  }
+  const data = jsonFrom<T>(res as unknown as Parameters<typeof jsonFrom>[0])
   return { data, model: res.model ?? model, stop: res.stop_reason ?? null, usage: res.usage ?? null, refused: false }
 }

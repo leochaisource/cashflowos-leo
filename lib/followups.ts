@@ -17,7 +17,7 @@ import {
   type WaMessage,
 } from './ghl.ts'
 import { clip } from './format.ts'
-import { claudeJson } from './claude-json.ts'
+import { claudeJson, jsonFrom, jsonRequest } from './claude-json.ts'
 import { loadIntentCache, saveIntentCache, verdictKey } from './intent-cache.ts'
 
 // WHO TO CHASE TODAY — for the client group's morning update (owner's ask,
@@ -65,6 +65,8 @@ export type Followups = {
   messages: WaMessage[]
   /** Chats sent to the model vs verdicts reused from the cache. */
   intentStats?: { judged: number; reused: number }
+  /** `planOnly`: the chats the model would have been sent, with their cache keys. */
+  pending?: { id: string; key: string; text: string }[]
 }
 
 type Verdict = { intent: Intent; reason: string; next: string; interest: string | null; objection: string | null; event: string | null }
@@ -131,6 +133,22 @@ function transcript(msgs: WaMessage[]): string {
     .join('\n')
 }
 
+type JudgeOut = { leads: { id: string; intent: Verdict['intent']; reason: string; next: string; interest: string; objection: string; event: string }[] }
+
+const judgeUser = (batch: { id: string; text: string }[]) => batch.map((b) => `LEAD ID: ${b.id}\n${b.text}`).join('\n\n---\n\n')
+
+function addVerdicts(verdicts: Map<string, Verdict>, out: JudgeOut | null) {
+  for (const l of out?.leads ?? [])
+    verdicts.set(l.id, {
+      intent: l.intent,
+      reason: l.reason.trim(),
+      next: l.next.trim(),
+      interest: l.interest.trim() || null,
+      objection: l.objection.trim() || null,
+      event: l.event.trim() || null,
+    })
+}
+
 async function judge(
   anthropic: Anthropic,
   product: string,
@@ -142,38 +160,66 @@ async function judge(
   const batches: { id: string; text: string }[][] = []
   for (let i = 0; i < items.length; i += BATCH) batches.push(items.slice(i, i + BATCH))
   const errors: string[] = []
-  type Out = { leads: { id: string; intent: Verdict['intent']; reason: string; next: string; interest: string; objection: string; event: string }[] }
-  await Promise.all(
-    batches.map(async (batch) => {
-      try {
-        // A busy API (529 overloaded, 5xx) falls back to FALLBACK_MODEL inside
-        // claudeJson, so a dozen leads aren't left unjudged.
-        const res = await claudeJson<Out>({
-          anthropic,
-          model,
-          fallbackModel: FALLBACK_MODEL,
-          effort,
-          maxTokens: 4000,
-          system: intentSystem(product),
-          user: batch.map((b) => `LEAD ID: ${b.id}\n${b.text}`).join('\n\n---\n\n'),
-          schema: INTENT_SCHEMA as unknown as Record<string, unknown>,
-        })
-        if (res.refused) return
-        for (const l of res.data?.leads ?? [])
-          verdicts.set(l.id, {
-            intent: l.intent,
-            reason: l.reason.trim(),
-            next: l.next.trim(),
-            interest: l.interest.trim() || null,
-            objection: l.objection.trim() || null,
-            event: l.event.trim() || null,
-          })
-      } catch (e) {
-        errors.push((e as Error).message)
-      }
-    }),
-  )
+  const run = async (batch: { id: string; text: string }[], cacheSystem: boolean) => {
+    try {
+      // A busy API (529 overloaded, 5xx) falls back to FALLBACK_MODEL inside
+      // claudeJson, so a dozen leads aren't left unjudged.
+      const res = await claudeJson<JudgeOut>({
+        anthropic,
+        model,
+        fallbackModel: FALLBACK_MODEL,
+        effort,
+        maxTokens: 4000,
+        system: intentSystem(product),
+        cacheSystem,
+        user: judgeUser(batch),
+        schema: INTENT_SCHEMA as unknown as Record<string, unknown>,
+      })
+      if (!res.refused) addVerdicts(verdicts, res.data)
+    } catch (e) {
+      errors.push((e as Error).message)
+    }
+  }
+  // PROMPT CACHING (owner, 2026-10-15). The instructions are the same in every
+  // batch, so the first batch goes alone and writes them to the cache, and the
+  // rest then read them at 5% of the price (a cache entry can't be read until
+  // the call writing it is answering, so they can't all start at once). A lone
+  // batch isn't marked: a write nobody reads costs 25% more.
+  if (batches.length > 1) {
+    await run(batches[0], true)
+    await Promise.all(batches.slice(1).map((b) => run(b, true)))
+  } else if (batches.length) await run(batches[0], false)
   return { verdicts, error: errors.length ? errors[0] : null }
+}
+
+/**
+ * The overnight batch (lib/intent-batch.ts): the requests judge() would send
+ * for these chats, one per batch of BATCH, with the ids each one covers.
+ */
+export function intentBatchRequests(product: string, items: { id: string; text: string }[]) {
+  const out: { custom_id: string; params: ReturnType<typeof jsonRequest>; ids: string[] }[] = []
+  for (let i = 0; i < items.length; i += BATCH) {
+    const batch = items.slice(i, i + BATCH)
+    const params = jsonRequest(
+      {
+        effort: INTENT_EFFORT,
+        maxTokens: 4000,
+        system: intentSystem(product),
+        user: judgeUser(batch),
+        schema: INTENT_SCHEMA as unknown as Record<string, unknown>,
+      },
+      INTENT_MODEL,
+    )
+    out.push({ custom_id: `b${out.length}`, params, ids: batch.map((b) => b.id) })
+  }
+  return out
+}
+
+/** The verdicts in one answer to an intentBatchRequests() request. */
+export function intentVerdicts(message: Parameters<typeof jsonFrom>[0]): Map<string, Verdict> {
+  const verdicts = new Map<string, Verdict>()
+  addVerdicts(verdicts, jsonFrom<JudgeOut>(message))
+  return verdicts
 }
 
 export async function buildFollowups(args: {
@@ -197,6 +243,8 @@ export async function buildFollowups(args: {
   /** Override the judge's model / effort (comparisons only). */
   intentModel?: string
   intentEffort?: 'low' | 'medium' | 'high'
+  /** Judge nothing: return in `pending` the chats the cache can't answer (the overnight batch). */
+  planOnly?: boolean
 }): Promise<Followups> {
   const notLeads = new Set(args.notLeads ?? [])
   const { paidEver, paidAt, unpaid: attempts } = await paymentAttempts(
@@ -261,7 +309,8 @@ export async function buildFollowups(args: {
 
   let intentError: string | null = null
   let reused = 0
-  if (args.anthropic && leads.length) {
+  let pending: Followups['pending']
+  if ((args.anthropic || args.planOnly) && leads.length) {
     const model = args.intentModel ?? INTENT_MODEL
     // Chats nobody wrote in since the last run keep their verdict — no model call.
     const useCache = !!(args.db && args.cacheKey && !args.intentModel && !args.intentEffort)
@@ -276,7 +325,8 @@ export async function buildFollowups(args: {
       return !hit
     })
     reused = items.length - todo.length
-    if (todo.length) {
+    if (args.planOnly) pending = todo.map((it) => ({ id: it.c.contactId, key: it.key, text: it.text }))
+    else if (todo.length && args.anthropic) {
       const { verdicts, error } = await judge(
         args.anthropic,
         args.product,
@@ -296,7 +346,7 @@ export async function buildFollowups(args: {
     }
   } else if (!args.anthropic) intentError = 'no Anthropic key — intent not judged'
 
-  return { day: args.day, unpaid, chats: leads, intentError, paidAt, messages: msgs, intentStats: { judged: leads.length - reused, reused } }
+  return { day: args.day, unpaid, chats: leads, intentError, paidAt, messages: msgs, intentStats: { judged: leads.length - reused, reused }, pending }
 }
 
 // ---------------------------------------------------------------- rendering
