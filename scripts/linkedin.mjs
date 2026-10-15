@@ -46,6 +46,8 @@ const SB_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim()
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const MAX_BODY = 3000 // LinkedIn's post limit
 const MAX_PHOTO = 5 * 1024 * 1024
+const MAX_UPLOAD = 25 * 1024 * 1024 // GHL media upload limit for non-video files
+const MAX_SLIDES = 300 // LinkedIn document carousel page limit
 const HEADROOM_MS = 60 * 60_000
 
 function fail(msg) {
@@ -208,18 +210,40 @@ async function schedule(file, ...flags) {
     if (!/[+-]\d\d:\d\d$|Z$/.test(fm.slot)) fail(`slot "${fm.slot}" has no timezone. Write it as …T09:00:00+08:00.`)
     if (when < Date.now() + HEADROOM_MS) fail(`slot ${fm.slot} is less than an hour away (or past). Pick a later slot.`)
   }
-  let photo = null
-  if (fm.photo && !/^none$/i.test(fm.photo)) {
-    photo = resolvePath(fm.photo)
-    if (!existsSync(photo)) fail(`Photo not found: ${photo}`)
-    if (!/\.jpe?g$/i.test(photo)) fail(`Photo must be a .jpg prepared by linkedin/tools/photo-prep.mjs: ${photo}`)
-    if (statSync(photo).size > MAX_PHOTO) fail(`Photo is over 5 MB. Re-run photo-prep on it: ${photo}`)
+  // Attachments. A carousel wins over the photo (LinkedIn can't mix a document with images).
+  // GHL publishes a LinkedIn PDF carousel from IMAGES plus linkedinPostDetails.postAsPdf — it
+  // builds the document itself. Sending a raw PDF is accepted but shows up with no attachment
+  // (tested 2026-10-15), so `carousel:` points at a folder of slide-NN.png files (a path to
+  // carousel.pdf inside that folder works too).
+  let files = []
+  let carousel = false
+  if (fm.carousel && !/^none$/i.test(fm.carousel)) {
+    let dir = resolvePath(fm.carousel)
+    if (/\.pdf$/i.test(dir)) dir = dirname(dir)
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) fail(`Carousel folder not found: ${dir}`)
+    files = readdirSync(dir)
+      .filter((f) => /^slide-\d+\.(png|jpe?g)$/i.test(f))
+      .sort()
+      .map((f) => ({ path: join(dir, f), mime: /\.png$/i.test(f) ? 'image/png' : 'image/jpeg' }))
+    if (files.length < 2) fail(`Carousel folder has ${files.length} slide image(s); need at least 2: ${dir}`)
+    if (files.length > MAX_SLIDES) fail(`Carousel has ${files.length} slides; LinkedIn's limit is ${MAX_SLIDES}.`)
+    for (const f of files) if (statSync(f.path).size > MAX_UPLOAD) fail(`Slide over 25 MB: ${f.path}`)
+    carousel = true
+  } else if (fm.photo && !/^none$/i.test(fm.photo)) {
+    const p = resolvePath(fm.photo)
+    if (!existsSync(p)) fail(`Photo not found: ${p}`)
+    if (!/\.jpe?g$/i.test(p)) fail(`Photo must be a .jpg prepared by linkedin/tools/photo-prep.mjs: ${p}`)
+    if (statSync(p).size > MAX_PHOTO) fail(`Photo is over 5 MB. Re-run photo-prep on it: ${p}`)
+    files = [{ path: p, mime: 'image/jpeg' }]
   }
+  // The document title LinkedIn shows on the carousel: the post's first line, max 100 chars.
+  const pdfTitle = body.split('\n')[0].trim().slice(0, 100)
 
   const payload = {
     accountIds: [ACCOUNT || '<GHL_LEO_LINKEDIN_ACCOUNT_ID>'],
     summary: body,
-    media: photo ? [{ url: '<uploaded photo url>', type: 'image/jpeg' }] : [],
+    media: files.map((f) => ({ url: '<uploaded file url>', type: f.mime })),
+    ...(carousel ? { linkedinPostDetails: { postAsPdf: true, pdfTitle } } : {}),
     type: 'post',
     status: draft ? 'draft' : 'scheduled',
     ...(draft ? {} : { scheduleDate: new Date(when).toISOString() }),
@@ -230,7 +254,8 @@ async function schedule(file, ...flags) {
   if (dry) {
     console.log(`DRY RUN, nothing sent. ${basename(path)} would be sent as:\n`)
     console.log(JSON.stringify({ ...payload, summary: `${body.slice(0, 120)}… (${body.length} chars)` }, null, 2))
-    if (photo) console.log(`\nphoto: ${photo} (${(statSync(photo).size / 1024).toFixed(0)} KB)`)
+    console.log('')
+    for (const f of files) console.log(`${carousel ? '📑 slide' : '📷 photo'}: ${f.path} (${(statSync(f.path).size / 1024).toFixed(0)} KB)`)
     if (!draft) console.log(`goes live: ${fm.slot} = ${new Date(when).toISOString()} UTC`)
     return
   }
@@ -238,17 +263,20 @@ async function schedule(file, ...flags) {
   need(['GHL_LEO_LOCATION_ID', 'GHL_LEO_TOKEN', 'GHL_LEO_LINKEDIN_ACCOUNT_ID', 'GHL_LEO_USER_ID'])
   const acct = await leoLinkedIn()
 
-  if (photo) {
+  payload.media = []
+  for (const f of files) {
+    // Slides are all named slide-NN.png, so prefix the post slug to keep the media library readable.
+    const name = carousel ? `${basename(dirname(f.path))}-${basename(f.path)}` : basename(f.path)
     const form = new FormData()
-    form.append('file', new Blob([readFileSync(photo)], { type: 'image/jpeg' }), basename(photo))
+    form.append('file', new Blob([readFileSync(f.path)], { type: f.mime }), name)
     form.append('hosted', 'false')
-    form.append('name', basename(photo))
+    form.append('name', name)
     const up = await ghl('POST', '/medias/upload-file', { form })
     const url = up?.url || up?.fileUrl
-    if (!url) fail(`Photo upload returned no url: ${JSON.stringify(up).slice(0, 300)}`)
-    payload.media = [{ url, type: 'image/jpeg' }]
-    console.log(`📷 photo uploaded: ${basename(photo)}`)
+    if (!url) fail(`Upload returned no url for ${name}: ${JSON.stringify(up).slice(0, 300)}`)
+    payload.media.push({ url, type: f.mime })
   }
+  if (files.length) console.log(carousel ? `📑 ${files.length} carousel slides uploaded` : `📷 photo uploaded: ${basename(files[0].path)}`)
 
   const res = await ghl('POST', `/social-media-posting/${LOC}/posts`, { json: payload })
   const id = res?.results?.post?._id || res?.post?._id || res?.results?._id || res?._id
