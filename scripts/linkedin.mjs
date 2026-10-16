@@ -10,6 +10,7 @@
 //   npm run linkedin -- schedule <post.md> --dry-run  print exactly what would be sent
 //   npm run linkedin -- schedule <post.md> --draft    create a GHL DRAFT only (test)
 //   npm run linkedin -- schedule <post.md>            upload photo + schedule at the post's slot
+//   npm run linkedin -- update <post.md>              replace an already-scheduled post (deletes it, re-creates it)
 //   npm run linkedin -- list                          scheduled / failed / recent posts
 //   npm run linkedin -- delete <ghlPostId>            delete a DRAFT (cleans up a test)
 //   npm run linkedin -- ideas                         ideas you ✅'d on Telegram, not used yet
@@ -81,12 +82,12 @@ function need(keys) {
 }
 
 // ---- GHL -----------------------------------------------------------------
-async function ghl(method, path, { json, form } = {}) {
+async function ghl(method, path, { json, form, version } = {}) {
   const res = await fetch(`${API}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${TOKEN}`,
-      Version: VERSION,
+      Version: version || VERSION,
       Accept: 'application/json',
       ...(json ? { 'Content-Type': 'application/json' } : {}),
     },
@@ -194,14 +195,20 @@ async function accounts() {
 async function schedule(file, ...flags) {
   if (!file) fail('Usage: npm run linkedin -- schedule linkedin/posts/<file>.md [--draft | --dry-run]')
   const dry = flags.includes('--dry-run')
-  const draft = flags.includes('--draft')
+  const update = flags.includes('--update') // replace an already-scheduled GHL post in place
+  const draft = !update && flags.includes('--draft')
   const path = resolvePath(file)
   if (!existsSync(path)) fail(`No such post file: ${path}`)
   const { fm, body, raw } = readPost(path)
 
   // ---- refuse anything that isn't ready (before touching the network) ----
-  if (fm.ghl_post_id) fail(`${basename(path)} is already in GHL (ghl_post_id ${fm.ghl_post_id}). Not sending it twice.`)
-  if (fm.status !== 'approved') fail(`${basename(path)} is status "${fm.status || '?'}". Only "approved" posts are scheduled.`)
+  if (update) {
+    if (!fm.ghl_post_id) fail(`${basename(path)} has no ghl_post_id, so there's nothing to update. Use schedule instead.`)
+    if (!['approved', 'scheduled'].includes(fm.status)) fail(`${basename(path)} is status "${fm.status || '?'}". Only approved/scheduled posts can be updated.`)
+  } else {
+    if (fm.ghl_post_id) fail(`${basename(path)} is already in GHL (ghl_post_id ${fm.ghl_post_id}). Not sending it twice; use update to change it.`)
+    if (fm.status !== 'approved') fail(`${basename(path)} is status "${fm.status || '?'}". Only "approved" posts are scheduled.`)
+  }
   if (!body) fail(`${basename(path)} has an empty body.`)
   if (body.length > MAX_BODY) fail(`${basename(path)} is ${body.length} characters; LinkedIn's limit is ${MAX_BODY}.`)
   const when = Date.parse(fm.slot || '')
@@ -278,16 +285,37 @@ async function schedule(file, ...flags) {
   }
   if (files.length) console.log(carousel ? `📑 ${files.length} carousel slides uploaded` : `📷 photo uploaded: ${basename(files[0].path)}`)
 
+  // UPDATE = replace, not edit. GHL's edit-post (PUT) dropped a DRAFT's 8 slides to 1, under both
+  // Version 2021-07-28 and v3 (tested 2026-10-16; a draft's read-back is reliable, unlike a
+  // scheduled one's, see show()). So the old post is deleted and a fresh one created. Delete FIRST: a missing post can be re-sent
+  // with `schedule`; two posts would publish twice. The file is reset to approved in between, so a
+  // failure after the delete leaves it ready for a plain `schedule`.
+  if (update) {
+    // Only a post that hasn't gone out yet can be replaced; a published one is already on LinkedIn.
+    const cur = await ghl('GET', `/social-media-posting/${LOC}/posts/${fm.ghl_post_id}`)
+    const curStatus = (cur?.results?.post ?? cur?.post ?? cur)?.status
+    if (!['scheduled', 'draft', 'failed'].includes(curStatus)) {
+      fail(`GHL post ${fm.ghl_post_id} is "${curStatus}", not scheduled. Nothing was changed.`)
+    }
+    await ghl('DELETE', `/social-media-posting/${LOC}/posts/${fm.ghl_post_id}`)
+    writeFrontmatter(path, raw, { status: 'approved', ghl_post_id: '' })
+    console.log(`🗑️  old GHL post ${fm.ghl_post_id} removed; creating the replacement…`)
+  }
   const res = await ghl('POST', `/social-media-posting/${LOC}/posts`, { json: payload })
   const id = res?.results?.post?._id || res?.post?._id || res?.results?._id || res?._id
-  if (!id) fail(`GHL accepted the call but returned no post id: ${JSON.stringify(res).slice(0, 400)}`)
+  if (!id) {
+    fail(
+      `GHL accepted the call but returned no post id: ${JSON.stringify(res).slice(0, 400)}` +
+        (update ? `\n   The old post was already removed. Check GHL, then run: npm run linkedin -- schedule ${file}` : ''),
+    )
+  }
 
   if (draft) {
     console.log(`📝 DRAFT created in GHL for ${acct.name}: ${id}\n   Check it in GHL → Social Planner, then remove it with: npm run linkedin -- delete ${id}`)
     return // a test draft does not mark the post file
   }
   writeFrontmatter(path, raw, { status: 'scheduled', ghl_post_id: id })
-  console.log(`✅ ${basename(path)} scheduled for ${fm.slot} on ${acct.name}'s LinkedIn (GHL post ${id}).`)
+  console.log(`✅ ${basename(path)} ${update ? 'REPLACED (new GHL post)' : 'scheduled'} for ${fm.slot} on ${acct.name}'s LinkedIn (GHL post ${id}).`)
 
   // The post is in GHL either way; a stale mirror only means Sunday's ideas can't see it yet.
   try {
@@ -309,7 +337,7 @@ async function list() {
     console.log(`\n${type.toUpperCase()} (${posts.length})`)
     for (const p of posts) {
       const when = p.scheduleDate || p.publishedAt || p.updatedAt || ''
-      console.log(`  ${String(when).slice(0, 16)}  ${p._id}  ${String(p.summary || '').split('\n')[0].slice(0, 70)}`)
+      console.log(`  ${String(when).slice(0, 16)}  ${p._id}  [${(p.media || []).length} media]  ${String(p.summary || '').split('\n')[0].slice(0, 60)}`)
     }
   }
 }
@@ -319,9 +347,10 @@ async function del(id) {
   need(['GHL_LEO_LOCATION_ID', 'GHL_LEO_TOKEN'])
   const data = await ghl('GET', `/social-media-posting/${LOC}/posts/${id}`)
   const post = data?.results?.post ?? data?.post ?? data
-  if (post?.status !== 'draft') fail(`Post ${id} is "${post?.status}", not a draft. Only test drafts can be deleted from here; do it in GHL if you mean it.`)
+  const isTest = /^TEST\b/.test(String(post?.summary ?? '').trim())
+  if (post?.status !== 'draft' && !isTest) fail(`Post ${id} is "${post?.status}", not a draft. Only drafts, or posts whose first line starts with TEST, can be deleted from here.`)
   await ghl('DELETE', `/social-media-posting/${LOC}/posts/${id}`)
-  console.log(`🗑️  Draft ${id} deleted.`)
+  console.log(`🗑️  ${post?.status === 'draft' ? 'Draft' : 'Test post'} ${id} deleted.`)
 }
 
 // ---- Telegram-approved ideas (agent_actions, same queue shape as job_apply) ----
@@ -427,9 +456,35 @@ async function sync() {
 
 // ==========================================================================
 const [cmd, ...args] = process.argv.slice(2)
-const COMMANDS = { check, accounts, schedule, list, delete: del, ideas, sync }
+const update = (file, ...flags) => schedule(file, '--update', ...flags)
+
+// show <ghlPostId>: what GHL actually holds for a post (status, time, attachments). Read-only.
+async function show(id, flag) {
+  if (!id) fail('Usage: npm run linkedin -- show <ghlPostId> [--raw]')
+  need(['GHL_LEO_LOCATION_ID', 'GHL_LEO_TOKEN'])
+  const data = await ghl('GET', `/social-media-posting/${LOC}/posts/${id}`)
+  const p = data?.results?.post ?? data?.post ?? data
+  if (flag === '--raw') {
+    console.log(JSON.stringify({ ...p, summary: `${String(p?.summary ?? '').slice(0, 60)}…` }, null, 2))
+    return
+  }
+  const media = p?.media ?? []
+  const li = p?.linkedinPostDetails ?? p?.linkedInPostDetails ?? {}
+  console.log(`${id}  status=${p?.status}  scheduleDate=${p?.scheduleDate}`)
+  console.log(`  first line: ${String(p?.summary ?? '').split('\n')[0]}`)
+  console.log(`  media: ${media.length} item(s)  postAsPdf=${li.postAsPdf ?? '?'}  pdfTitle=${li.pdfTitle ?? '?'}`)
+  for (const m of media.slice(0, 3)) console.log(`    ${m.type}  …${String(m.url).slice(-60)}`)
+  if (media.length > 3) console.log(`    … and ${media.length - 3} more`)
+  // Verified 2026-10-16: a SCHEDULED post reads back with only its first media item, yet it
+  // published with all 8 slides (as a new GHL record). Don't "fix" a 1-media scheduled post;
+  // check a published one with `list` (its [N media] count is the real one).
+  if (p?.status === 'scheduled' && media.length === 1) {
+    console.log('  (scheduled posts read back with only their first slide; GHL attaches all of them when it publishes)')
+  }
+}
+const COMMANDS = { check, accounts, schedule, update, show, list, delete: del, ideas, sync }
 if (!COMMANDS[cmd]) {
-  console.log('Usage: npm run linkedin -- <check | accounts | schedule <post.md> [--draft|--dry-run] | list | delete <id> | ideas [used <id>] | sync>')
+  console.log('Usage: npm run linkedin -- <check | accounts | schedule <post.md> [--draft|--dry-run] | update <post.md> [--dry-run] | list | delete <id> | ideas [used <id>] | sync>')
   process.exit(cmd ? 1 : 0)
 }
 try {
