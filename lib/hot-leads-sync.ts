@@ -13,8 +13,11 @@ import { syncHotList, type HotListSync } from './hot-list.ts'
 //
 // Three callers, one path, so the sheet can't depend on who filled it:
 //   • the 8am cron        — yesterday, whole day (it also assigns GHL tasks; this doesn't)
-//   • /api/hotleads-sync  — TODAY SO FAR, at 9am, 12pm and 6pm (owner, 2026-10-02),
-//                           fired by a time trigger in the sheet's own Apps Script
+//   • /api/hotleads-sync  — TODAY SO FAR, at 9am, 12pm, 3pm, 6pm and 9pm, fired by a
+//                           time trigger in the sheet's own Apps Script. Only the
+//                           3pm run judges new chats (`judge`); the others reuse
+//                           saved verdicts, and the overnight batch judges the rest
+//                           (owner, 2026-10-16: API cost)
 //   • scripts/hotleads-sheet.ts — backfill / re-run of any day
 //
 // Re-running a day is safe: rows are keyed date|contactId, so a later run
@@ -53,6 +56,12 @@ export async function syncHotLeadsDay(args: {
   push: { url: string; secret: string } | null
   /** Also bring Ariella's GHL list up to date — the live refresh only, never a backfill. */
   syncList?: boolean
+  /**
+   * false: send no chat to the model — chats keep the verdict saved for exactly
+   * what they say now, and a changed chat waits for the next judging run. The
+   * list still takes checkouts, failed payments, tags and payments. Default true.
+   */
+  judge?: boolean
 }): Promise<HotLeadsSync | null> {
   const { client } = args
   const g = client.ghl
@@ -76,7 +85,8 @@ export async function syncHotLeadsDay(args: {
     asOfISO: until,
     includeSources: g.includeOrderSources ?? [],
     product: intentProduct(client, next.to),
-    anthropic: args.anthropic,
+    anthropic: args.judge === false ? null : args.anthropic,
+    planOnly: args.judge === false,
     notLeads: g.notLeads,
     db: args.db ?? null,
     cacheKey: client.id,

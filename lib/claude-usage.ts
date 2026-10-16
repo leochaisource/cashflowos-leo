@@ -3,7 +3,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 // THE CLAUDE API METER. Every Claude call CashFlowOS (Jarvis / the Oyen bot)
 // makes is priced and totalled per Kuala Lumpur day. The first time a day's total
-// passes CLAUDE_DAILY_ALERT_USD (default $1; owner, 2026-10-12), the owner gets
+// passes CLAUDE_DAILY_ALERT_USD (default $0.80; owner 2026-10-12, $1 until 2026-10-16), the owner gets
 // one Telegram alert listing what spent it.
 //
 // Every client comes from claudeClient(feature). Its fetch reads `usage` off each
@@ -39,6 +39,7 @@ const FEATURE_LABEL: Record<string, string> = {
   'intent-judge-refresh': 'Buying-intent judging, hot leads refresh',
   'intent-judge-batch': 'Buying-intent judging, overnight batch (half price)',
   'closer-coach': "Ariella's closing coach",
+  'closer-coach-batch': "Ariella's closing coach, overnight batch (half price)",
   'brief-analysis': '8am competitor analysis',
   'competitor-usp': 'Competitor write-ups',
   'linkedin-ideas': 'LinkedIn ideas',
@@ -149,7 +150,7 @@ async function record(feature: string, model: string, usage: Usage, opts: { batc
   if (up.error) throw new Error(up.error.message)
   console.log(`[CFO] claude ${feature} ${model} $${cost.toFixed(4)}`)
 
-  const limit = Number(process.env.CLAUDE_DAILY_ALERT_USD ?? 1)
+  const limit = Number(process.env.CLAUDE_DAILY_ALERT_USD ?? 0.8)
   if (!Number.isFinite(limit)) return
   const spend = await spendOn(day)
   if (!spend || spend.total <= limit) return
@@ -168,7 +169,7 @@ function alertText(s: DaySpend, limit: number): string {
     return `• ${label} — $${f.cost.toFixed(2)} · ${f.calls} call${f.calls === 1 ? '' : 's'}`
   })
   return (
-    `${test}⚠️ <b>Claude API: $${s.total.toFixed(2)} spent today</b> — over your $${limit}/day line.\n` +
+    `${test}⚠️ <b>Claude API: $${s.total.toFixed(2)} spent today</b> — over your $${limit.toFixed(2)}/day line.\n` +
     `${day} (KL), ${s.calls} calls so far:\n${lines.join('\n')}\n\n` +
     `Counts every Claude call CashFlowOS makes, scripts included. One alert a day.`
   )

@@ -2,7 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 // Explicit .ts extensions: shared with scripts/closer-coach.ts (Node type stripping).
 import { whatsappMessages, conversationMessages, contactBasics, paymentAttempts, teamMembers, type WaMessage } from './ghl.ts'
 import { clip } from './format.ts'
-import { claudeJson } from './claude-json.ts'
+import { claudeJson, type ClaudeJsonArgs } from './claude-json.ts'
 import { renderHotList, type ListCard } from './hot-list.ts'
 
 // THE CLOSING COACH — owner's ask (2026-10-07): every day, study how Ari (the
@@ -23,7 +23,7 @@ import { renderHotList, type ListCard } from './hot-list.ts'
 export type Speaker = 'LEAD' | 'ARI' | 'ARIELLA' | 'TEAM' | 'AUTO'
 
 // Opus 5.5 since the cost pass of 2026-10-12 (newer, cheaper per token than Opus 5).
-const COACH_MODEL = 'claude-opus-5-5'
+export const COACH_MODEL = 'claude-opus-5-5'
 const FALLBACK_MODEL = 'claude-sonnet-5-5'
 const MAX_THREADS = 30
 const MSGS_PER_THREAD = 26
@@ -276,16 +276,17 @@ function threadText(t: Thread, closer: string): string {
   return `${head}\n${lines.join('\n')}`
 }
 
-/** The model's coaching, or an error string — never throws. */
-export async function coachReport(
-  anthropic: Anthropic,
+/**
+ * What coachReport() asks the model — also what the overnight half-price batch
+ * sends (lib/coach-batch.ts). Null when nobody wrote yesterday.
+ */
+export function coachRequest(
   input: { stats: CoachStats; threads: Thread[] },
   product: string,
   closer: string,
-  /** Her GHL list (lib/hot-list.ts): "close today" picks come only from it. */
   list?: { name: string; why: string; stage: string }[],
-): Promise<{ report: CoachReport | null; error: string | null }> {
-  if (!input.threads.length) return { report: null, error: 'no conversations yesterday' }
+): Omit<ClaudeJsonArgs, 'model' | 'fallbackModel'> | null {
+  if (!input.threads.length) return null
   const s = input.stats
   const facts =
     `Yesterday (${s.day}): ${s.leadsWrote} leads wrote; ${s.threads} conversations below. Messages sent: ` +
@@ -296,17 +297,28 @@ export async function coachReport(
     ? `\n\n=== ${closer.toUpperCase()}'S LIST (GHL, open) ===\n${list.map((c) => `- ${c.name} — ${c.why || 'no reason noted'} [${c.stage}]`).join('\n')}`
     : ''
   const body = `${facts}${listText}\n\n=== CONVERSATIONS ===\n\n${input.threads.map((t) => threadText(t, closer)).join('\n\n---\n\n')}`
+  return {
+    effort: 'medium',
+    maxTokens: 12000,
+    system: coachSystem(product, closer, !!list?.length),
+    user: body,
+    schema: COACH_SCHEMA as unknown as Record<string, unknown>,
+  }
+}
+
+/** The model's coaching, or an error string — never throws. */
+export async function coachReport(
+  anthropic: Anthropic,
+  input: { stats: CoachStats; threads: Thread[] },
+  product: string,
+  closer: string,
+  /** Her GHL list (lib/hot-list.ts): "close today" picks come only from it. */
+  list?: { name: string; why: string; stage: string }[],
+): Promise<{ report: CoachReport | null; error: string | null }> {
+  const req = coachRequest(input, product, closer, list)
+  if (!req) return { report: null, error: 'no conversations yesterday' }
   try {
-    const res = await claudeJson<CoachReport>({
-      anthropic,
-      model: COACH_MODEL,
-      fallbackModel: FALLBACK_MODEL,
-      effort: 'medium',
-      maxTokens: 12000,
-      system: coachSystem(product, closer, !!list?.length),
-      user: body,
-      schema: COACH_SCHEMA as unknown as Record<string, unknown>,
-    })
+    const res = await claudeJson<CoachReport>({ ...req, anthropic, model: COACH_MODEL, fallbackModel: FALLBACK_MODEL })
     if (res.refused) return { report: null, error: 'the model declined' }
     if (!res.data) return { report: null, error: `no report (${res.stop})` }
     return { report: res.data, error: null }

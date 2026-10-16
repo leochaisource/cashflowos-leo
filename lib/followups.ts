@@ -344,9 +344,9 @@ export async function buildFollowups(args: {
       }
       if (useCache) await saveIntentCache(args.db!, args.cacheKey!, cache).catch((e) => (intentError ??= (e as Error).message))
     }
-  } else if (!args.anthropic) intentError = 'no Anthropic key — intent not judged'
+  } else if (!args.anthropic && !args.planOnly) intentError = 'no Anthropic key — intent not judged'
 
-  return { day: args.day, unpaid, chats: leads, intentError, paidAt, messages: msgs, intentStats: { judged: leads.length - reused, reused }, pending }
+  return { day: args.day, unpaid, chats: leads, intentError, paidAt, messages: msgs, intentStats: { judged: args.planOnly ? 0 : leads.length - reused, reused }, pending }
 }
 
 // ---------------------------------------------------------------- rendering
