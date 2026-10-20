@@ -21,7 +21,7 @@ const db = createClient(
   { auth: { persistSession: false } },
 )
 const key = process.env.ANTHROPIC_API_KEY?.trim()
-const anthropic = key ? claudeClient('script-linkedin-ideas-dry-run', { apiKey: key, timeout: 40_000, maxRetries: 0 }) : null
+const anthropic = key ? claudeClient('script-linkedin-ideas-dry-run', { apiKey: key, timeout: 180_000, maxRetries: 0 }) : null
 
 console.log(`Week ${isoWeek(now)} · ideas day (Sunday MYT): ${isIdeasDay(now) ? 'yes' : 'no'}${has('--sunday') ? ' · forced' : ''}`)
 

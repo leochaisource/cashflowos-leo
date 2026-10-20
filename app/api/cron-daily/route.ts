@@ -25,7 +25,9 @@ import { workProjectsFrom, urgentStepLines } from '@/lib/work-projects'
 // once you set the same value in your Vercel env.
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+// 300, not 60: on Sundays the LinkedIn Ideas check runs a web-searching research call
+// (agents/linkedin/research.ts) before pitching angles. Other days finish in seconds.
+export const maxDuration = 300
 
 // Who receives the brief: your team's numeric Telegram ids (comma-separated), or
 // OWNER_CHAT_ID as the solo fallback. None set = nobody (the brief just no-ops).

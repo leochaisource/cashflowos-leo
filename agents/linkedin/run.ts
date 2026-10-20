@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { failedCard, failedKey, ideaCard, ideaKey, isIdeasDay, isoWeek } from './definition.ts'
 import { loadFailedPosts, loadWeekFacts } from './load.ts'
 import { draftAngles } from './prompt.ts'
+import { researchBrief } from './research.ts'
 
 // The whole LinkedIn Ideas check, shared by the daily cron (via agents/registry.ts)
 // and scripts/linkedin-ideas-dry-run.ts. It only RETURNS proposals to create —
@@ -51,9 +52,19 @@ export async function linkedinDrafts(args: {
 
   const facts = await loadWeekFacts(db, now)
   if (facts.unavailable.length) notes.push(`could not read: ${facts.unavailable.join('; ')}`)
-  if (!facts.sections) return { drafts, notes: [...notes, 'a quiet week — nothing to pitch'] }
 
-  const angles = await draftAngles(anthropic, facts.text)
+  // The outside world: leaders, AI-forward companies, research, creator topics. A
+  // failed search costs the evidence, not the menu: the angles still go out.
+  let research = ''
+  try {
+    research = await researchBrief(anthropic, now)
+    if (!research) notes.push('research brief came back empty')
+  } catch (e) {
+    notes.push(`research skipped: ${(e as Error).message}`)
+  }
+  if (!facts.sections && !research) return { drafts, notes: [...notes, 'a quiet week and no research — nothing to pitch'] }
+
+  const angles = await draftAngles(anthropic, facts.text, research)
   angles.forEach((a, i) => {
     drafts.push({
       idempotencyKey: ideaKey(week, i + 1),

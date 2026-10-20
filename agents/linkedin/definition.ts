@@ -40,7 +40,10 @@ export type Angle = {
   angle: string // one line: what the post argues or tells
   hook_type: string // a type from linkedin/hooks.md
   topic: string // a topic from linkedin/profile.md §6
-  source: string // which fact from the week it's built on
+  source: string // which fact or researched item it's built on
+  evidence?: string // the researched study / leader / company backing it ("McKinsey, State of AI, 2025")
+  evidence_url?: string // its URL, verified to appear in the research brief ('' if not)
+  leo_link?: string // which of Leo's real results it connects to, or the things-I-learned format
   client_data: boolean // true = built on a client's numbers → anonymise or get consent
 }
 
@@ -87,6 +90,8 @@ export function ideaCard(a: Angle, n: number, total: number): string {
     esc(a.angle),
     '',
     `<i>From: ${esc(a.source)}</i>`,
+    ...(a.evidence ? [`📊 Evidence: ${esc(a.evidence)}${a.evidence_url ? `\n${esc(a.evidence_url)}` : ' (no verified link: check before posting)'}`] : []),
+    ...(a.leo_link ? [`🔗 Your angle: ${esc(a.leo_link)}`] : []),
     ...(a.client_data ? ['⚠️ Built on client numbers: anonymise, or name them only with consent.'] : []),
     '',
     '✅ = queue it for your /linkedin-posts session. Nothing is posted from here.',

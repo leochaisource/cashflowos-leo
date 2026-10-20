@@ -478,7 +478,7 @@ const linkedinIdeasCheck: ScheduledCheck = {
     const key = process.env.ANTHROPIC_API_KEY?.trim()
     const { drafts, notes } = await linkedinDrafts({
       db: supabaseConfigured ? supabase : null,
-      anthropic: key ? claudeClient('linkedin-ideas', { apiKey: key, timeout: 40_000, maxRetries: 0 }) : null,
+      anthropic: key ? claudeClient('linkedin-ideas', { apiKey: key, timeout: 180_000, maxRetries: 0 }) : null,
       now: new Date(),
     })
     if (notes.length) console.log('[CFO] linkedin-ideas:', notes.join(' · '))
