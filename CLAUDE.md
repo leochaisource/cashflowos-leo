@@ -64,10 +64,21 @@ mid-task. `git add -p` is interactive and unavailable. To commit only your chang
    change, and `git diff` still shows the other session's.
 
 To prove the commit builds without disturbing anyone's dev server, build it in a separate
-`git worktree` on the same drive (D:), with `node_modules` linked as a junction, using
-`next build --webpack` (Turbopack refuses a linked `node_modules`). Remove the junction
-NON-recursively before deleting the worktree, or the delete follows it into the real packages. If
-`next start` leaves a process holding the port, check its command line, then stop it by port.
+`git worktree` on D: and run `npm ci` inside it. A `node_modules` junction is fine for `tsc` but
+breaks the build: Turbopack refuses it, and webpack can't resolve across drives. If you did use a
+junction, remove it NON-recursively before deleting the worktree, or the delete follows it into the
+real packages. If deleting fails with "Filename too long", empty the folder in PowerShell with
+`robocopy <empty-dir> <worktree-dir> /MIR` (exit codes below 8 mean success), then
+`git worktree prune`. If `next start` leaves a process holding the port, check its command line,
+then stop it by port.
+
+## Before every push
+
+A push ships every commit between the remote and HEAD, not just yours. Other sessions here commit
+and hold work for Leo's OK, and one push on 2026-10-22 shipped four such commits by accident. So,
+immediately before `git push`, as part of the same step: run `git fetch`, then
+`git log --oneline origin/main..HEAD`. If any listed commit isn't yours, stop and ask Leo before
+pushing. A check run earlier in the session goes stale.
 
 ## Competitor research (Adyntel)
 
