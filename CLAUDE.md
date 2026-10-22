@@ -80,6 +80,12 @@ immediately before `git push`, as part of the same step: run `git fetch`, then
 `git log --oneline origin/main..HEAD`. If any listed commit isn't yours, stop and ask Leo before
 pushing. A check run earlier in the session goes stale.
 
+A hook enforces this: `scripts/git-hooks/pre-push`, switched on for this checkout with
+`git config core.hooksPath scripts/git-hooks`. Every push prints the commits it ships, and a push of
+more than one commit stops until you run it again with `PUSH_OK=<n> git push` (in PowerShell,
+`$env:PUSH_OK='<n>'` first). Give `PUSH_OK` only after reading the list, and never pass
+`--no-verify` to get past the hook.
+
 ## Competitor research (Adyntel)
 
 - **Tune filters offline, for free.** Every ad's raw data is stored, so test keyword and relevance
