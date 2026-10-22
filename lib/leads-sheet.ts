@@ -69,7 +69,9 @@ function findCol(headers: string[], aliases: string[]): number {
 export function parseSheetDate(v: string): Date | null {
   const s = (v ?? '').trim()
   if (!s) return null
-  const dmy = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:[ ,]+(\d{1,2}):(\d{2}))?/)
+  // The time may follow with no separator at all: GHL's sheet action writes
+  // "5/10/202618:15" (Starcity's MM2H sheet, 2026-10-15).
+  const dmy = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:[ ,]*(\d{1,2}):(\d{2}))?/)
   if (dmy) {
     const [, d, m, y, hh = '0', mm = '0'] = dmy
     return new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm))
@@ -161,7 +163,7 @@ export async function loadSheetLeads(project: Project): Promise<{ leads: SheetLe
     phone: findCol(headers, ['phone', 'phone number', 'whatsapp', 'contact']),
     email: findCol(headers, ['email', 'email address']),
     paid: findCol(headers, ['purchase ticket', 'ticket', 'purchase', 'payment', 'paid']),
-    webinar: findCol(headers, ['webinar date', 'session', 'cohort', 'class date']),
+    webinar: findCol(headers, ['webinar date', 'session', 'cohort', 'class date', 'preview date']),
     source: findCol(headers, ['utm source', 'source', 'placement']),
     ad: findCol(headers, ['utm content', 'ad', 'ad name', 'creative']),
     campaign: findCol(headers, ['utm campaign', 'campaign']),

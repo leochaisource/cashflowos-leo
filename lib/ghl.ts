@@ -67,6 +67,10 @@ export type GhlPerformance = {
   spendTotal: number
   spendSince: string
   costPerSale: number | null
+  /** false = a no-sales funnel (config `sales: false`): the totals are leads, not purchases. */
+  salesTracked: boolean
+  /** Form submissions since `spendSince` through the report day — set only when salesTracked is false. */
+  leadsTotal: number | null
   /** Anything that went wrong, for the brief's warning line. */
   problems: string[]
   /** "Are we on track" — set by the cron when the client has an event schedule. */
@@ -504,17 +508,31 @@ export async function ghlPerformance(
   let purchasesTotal: number | null = null
   let purchasesToday: number | null = null
   let revenueToday: number | null = null
-  try {
-    // Cumulative runs from the start of the last class's day; "today" is the
-    // report day only. Both end at the close of the report day, so a brief
-    // never counts a sale that happened after the period it describes.
-    const salesFrom = dayBounds(win.salesSince, tz).start
-    purchasesTotal = await seatsSold(locationId, token, salesFrom, end, cfg.excludeOrderSources ?? [], cfg.includeOrderSources ?? [])
-    const today = await saleRows(locationId, token, start, end, cfg.excludeOrderSources ?? [], cfg.includeOrderSources ?? [])
-    purchasesToday = today.filter((r) => !r.isUpsell).reduce((s, r) => s + r.seats, 0)
-    revenueToday = today.reduce((s, r) => s + (r.amount ?? 0), 0)
-  } catch (e) {
-    problems.push(`Purchases unreadable from GHL (${(e as Error).message}) — shown as unknown, not zero.`)
+  const salesTracked = cfg.sales !== false
+  let leadsTotal: number | null = null
+  if (!salesTracked) {
+    // A free-seminar funnel: the running total is registrations since launch.
+    try {
+      const from = dayBounds(win.spendSince, tz).start
+      let n = 0
+      for (const f of cfg.funnels) n += await formSubmissions(locationId, token, f.formId, from, end)
+      leadsTotal = n
+    } catch (e) {
+      problems.push(`Total leads unreadable from GHL (${(e as Error).message}) — shown as unknown, not zero.`)
+    }
+  } else {
+    try {
+      // Cumulative runs from the start of the last class's day; "today" is the
+      // report day only. Both end at the close of the report day, so a brief
+      // never counts a sale that happened after the period it describes.
+      const salesFrom = dayBounds(win.salesSince, tz).start
+      purchasesTotal = await seatsSold(locationId, token, salesFrom, end, cfg.excludeOrderSources ?? [], cfg.includeOrderSources ?? [])
+      const today = await saleRows(locationId, token, start, end, cfg.excludeOrderSources ?? [], cfg.includeOrderSources ?? [])
+      purchasesToday = today.filter((r) => !r.isUpsell).reduce((s, r) => s + r.seats, 0)
+      revenueToday = today.reduce((s, r) => s + (r.amount ?? 0), 0)
+    } catch (e) {
+      problems.push(`Purchases unreadable from GHL (${(e as Error).message}) — shown as unknown, not zero.`)
+    }
   }
 
   // Spend on the day that no funnel claims — a new or renamed campaign. Shown
@@ -541,6 +559,8 @@ export async function ghlPerformance(
     spendTotal,
     spendSince: win.spendSince,
     costPerSale: purchasesTotal && purchasesTotal > 0 ? spendTotal / purchasesTotal : null,
+    salesTracked,
+    leadsTotal,
     problems,
   }
 }
@@ -1081,6 +1101,17 @@ export function renderPerformance(p: GhlPerformance): string {
   if (p.otherSpend >= 0.5) out.push('', `Other campaigns:`, `Amount spent: ${rm(p.otherSpend)}`)
   if (p.whatsappWindows !== null || p.whatsappTracked)
     out.push('', `WhatsApp conversation windows opened: ${p.whatsappWindows === null ? 'unavailable' : p.whatsappWindows}`)
+  if (!p.salesTracked) {
+    // A free-seminar funnel sells nothing online: the totals are leads.
+    out.push(
+      '',
+      `Total leads: ${p.leadsTotal === null ? 'unavailable' : p.leadsTotal} (accumulative, since ${longDate(p.spendSince)})`,
+      `Total Amount spend: ${rm(p.spendTotal)} (since ${longDate(p.spendSince)})`,
+      `Cost Per Lead: ${p.leadsTotal ? rm(p.spendTotal / p.leadsTotal) : p.leadsTotal === 0 ? 'no leads yet' : 'unavailable'}`,
+    )
+    if (p.followups?.text) out.push('', p.followups.text)
+    return out.join('\n')
+  }
   out.push(
     '',
     `Direct purchases: ${p.purchasesToday === null ? 'unavailable' : p.purchasesToday}` +

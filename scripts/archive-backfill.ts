@@ -95,13 +95,11 @@ for (const day of days) {
 }
 
 // Sales once for the whole range — they are dated events, not daily aggregates.
-const sales = await saleRows(
-  loc,
-  token,
-  dayBounds(from, tz).start,
-  dayBounds(yesterday, tz).end,
-  client.ghl.excludeOrderSources ?? [],
-)
+// A no-sales funnel (sales: false) never reads payments: its location sells other things.
+const sales =
+  client.ghl.sales === false
+    ? []
+    : await saleRows(loc, token, dayBounds(from, tz).start, dayBounds(yesterday, tz).end, client.ghl.excludeOrderSources ?? [])
 const saleCount = await write('ghl_sales', ghlSaleRows(client.id, sales), 'project,transaction_id')
 const seats = sales.filter((s) => !s.isUpsell).reduce((n, s) => n + s.seats, 0)
 

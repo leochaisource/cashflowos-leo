@@ -152,6 +152,14 @@ export type AdClient = {
      * shows as "Other campaigns" in the brief and raises an alert.
      */
     funnels: { label: string; campaign: string | string[]; formId: string; formName: string }[]
+    /**
+     * false = the funnel sells nothing online — a free seminar whose lead IS the
+     * registration (Starcity, 2026-10-15). The block then counts registrations
+     * since `spendSince` and the cost per registration instead of purchases,
+     * and never reads GHL payments: the location may sell other things, which
+     * would otherwise land in this client's numbers as its sales.
+     */
+    sales?: boolean
     /** Purchases are counted from this date — the day of the last class. UPDATE AFTER EACH CLASS. */
     salesSince: string
     /** Total spend is counted from this date — the campaign start. UPDATE EACH LAUNCH. */
@@ -469,10 +477,8 @@ export const AD_CLIENTS: AdClient[] = [
 ]
 
 // ---------------------------------------------------------------- Starcity
-// Third real ad client — added 2026-08-16, WAITING ON CREDENTIALS. Until
-// STARCITY_META_AD_ACCOUNT_ID and STARCITY_META_ACCESS_TOKEN exist in Vercel,
-// isConfigured() is false, so the morning cron skips it (no Meta call, no
-// Adyntel spend) and the dashboard shows it as "no delivery recorded".
+// Third real ad client — added 2026-08-16; Meta connected in production since
+// late Sept, GoHighLevel + the MM2H master leads sheet since 2026-10-15.
 AD_CLIENTS.push({
   id: 'starcity-global',
   rank: 2,
@@ -505,12 +511,36 @@ AD_CLIENTS.push({
     { name: 'Summer Koh', pageId: '425840764829395' }, // Bukit Bintang, Wyndham-managed, free MM2H
   ],
   currency: 'RM', // the ad account bills in MYR even though the market is HK
-  // VERIFIED against the Sept campaign: the seminar registration fires the
-  // Pixel's CUSTOM event (offsite_conversion.fb_pixel_custom — 44 of 45 came
-  // from the Leads campaign). No named custom conversion exists on the account
-  // and no standard lead event fires, so this is the only honest "lead" here.
-  // Messaging conversations were 2 in a month — not the funnel.
-  leadActionTypes: ['offsite_conversion.fb_pixel_custom'],
+  // The Sept seminar fired the Pixel's CUSTOM event (fb_pixel_custom, 44 of 45).
+  // The Oct "[SF] MM2H Seminar Campaign" fires the STANDARD Lead event instead
+  // (verified 2026-10-15: fb_pixel_lead = lead = onsite_web_lead = 39, custom 0)
+  // — listing only the custom event showed RM 4.9k spend at 0 leads for ten
+  // days. leadsOf() takes the max across types, so listing both is safe.
+  leadActionTypes: [...PIXEL_LEAD, 'offsite_conversion.fb_pixel_custom'],
+  // GoHighLevel: the opt-in runs in Leo's OWN sub-account "Speakfunnels", not a
+  // Starcity one — hence GHL_LEO_LOCATION_ID (also used by the LinkedIn
+  // publisher). The token is a separate READ-ONLY Private Integration,
+  // "CashFlowOS Reporting (Claude)", made 2026-10-15.
+  ghl: {
+    locationEnv: 'GHL_LEO_LOCATION_ID',
+    tokenEnv: 'GHL_STARCITY_TOKEN',
+    timeZone: 'Asia/Kuala_Lumpur', // the ad account's zone (verified 2026-10-15)
+    funnels: [
+      {
+        label: 'MM2H Seminar',
+        campaign: ['[SF] MM2H Seminar Campaign'],
+        // Read off seminar.starcityglobal.com/mm2h/optin (the campaign's landing
+        // page) and confirmed in GHL Sites → Forms, 2026-10-22.
+        formId: 'U83AnoOJlHHLHzPsH3DU',
+        formName: 'MM2H 講座 Oct 2026｜確認你的免費座位',
+      },
+    ],
+    sales: false, // free seminar: the registration is the result, nothing is sold online
+    salesSince: '2026-10-05', // unused while sales is false
+    spendSince: '2026-10-05', // "[SF] MM2H Seminar Campaign" start — MOVE THIS at the next seminar launch
+  },
+  // Every registration, with the preview date chosen, party size and age band.
+  leadsSheet: { id: '1JKZwrj3Xz97b3VYGJrLBPMyF1uZNyj4i3dWa3pqx6jU' },
   targetCPL: 150, // RM per registration; the Sept run came in at ~RM 181
   relevanceTerms: [
     // subject: overseas property at all — Malaysia is the direct set, other
@@ -541,15 +571,14 @@ AD_CLIENTS.push({
     '肉乾', '月餅', '寵物', '宠物', '星匯', 'starcity',
     '中山', '珠海', '惠州', '佛山', '傢俬', '傢私', '家具', 'furniture', 'sim', 'wifi', '旅行社', '定制', '機票', '机票', '痛症', 'beauty'],
   briefContext:
-    'LIVE, BETWEEN CAMPAIGNS. 星匯國際 (Starcity Global) × Florence 火姐 — 26 years in overseas property — ' +
-    'sells Malaysian property (KL, Johor) to Hong Kong buyers via free in-person HK seminars. The 12–13 Sept ' +
-    'seminar campaign ran 25 Aug–12 Sep: ~RM 8,100, 45 registrations (~RM 181 each), 123k impressions. ' +
-    'Angles used: "AI 揀樓 實戰Demo" (data-driven picking), five-gate screening (五關), 8% ROI / 15-year ' +
-    'retirement plan, HK-prices-too-high pain, a four-expert panel. Landing: class.starcityglobal.com/offline. ' +
-    'Nothing is delivering right now, which is expected between seminars — do not call it paused or a ' +
-    'problem; the useful question is what to run for the NEXT seminar. Registrations are the lead; a ' +
-    'registration that attends is the real outcome, and attendance is not in the data.',
-  sources: {},
+    'LIVE. 星匯國際 (Starcity Global) × Florence 火姐 — 26 years in overseas property — sells Malaysian ' +
+    'property (KL, Johor, Penang) to Hong Kong buyers via free in-person HK seminars. NOW RUNNING: "[SF] MM2H ' +
+    'Seminar Campaign" (since 5 Oct 2026) for MM2H seminar previews on 24 and 25 Oct; angles are emigration ' +
+    '(移居), MM2H, Penang and video testimonials. The lead is the registration (GHL form + the MM2H master ' +
+    'leads sheet, which also records party size and the applicant\'s age band). The previous seminar ' +
+    '(12–13 Sept) cost ~RM 8,100 for 45 registrations (~RM 181 each) — the benchmark to beat. A ' +
+    'registration that attends is the real outcome, and attendance is not in the data yet.',
+  sources: { leads: 'MM2H master leads sheet' },
 })
 
 // ---------------------------------------------------------------- Mr Money

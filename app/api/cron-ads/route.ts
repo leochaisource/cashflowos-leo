@@ -503,7 +503,8 @@ async function runClient(client: AdClient, records: Rec[]) {
           const token = process.env[g.tokenEnv]!.trim()
           const loc = process.env[g.locationEnv]!.trim()
           for (const f of g.funnels) leadRows.push(...(await formSubmissionRows(loc, token, f.formId, start, end)))
-          saleRowsForDay = await saleRows(
+          // A no-sales funnel never reads payments: its location sells other things.
+          if (g.sales !== false) saleRowsForDay = await saleRows(
             loc,
             token,
             dayBounds(perfWindow(client, reportDay).salesSince, tz).start,
