@@ -1,5 +1,6 @@
+import { after } from 'next/server'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
-import { AD_CLIENTS } from '@/lib/ad-clients'
+import { AD_CLIENTS, type AdClient } from '@/lib/ad-clients'
 import { journeyFor } from '@/lib/funnel-config'
 import { klToday } from '@/lib/funnel-data'
 import { newlyRed } from '@/lib/funnel-view'
@@ -21,7 +22,8 @@ export const maxDuration = 300
 //   POST /api/lead-journey                 body { calls: [...] } (optional)
 //   POST /api/lead-journey?force=1         rebuild now, even if done today
 //   POST /api/lead-journey?day=YYYY-MM-DD  rebuild the cohort holding that day
-//   POST /api/lead-journey?dry=1           work it out, write nothing
+//   POST /api/lead-journey?dry=1           work it out, write nothing (waits for the answer)
+//   POST /api/lead-journey?wait=1          wait for the rebuild instead of running it after the reply
 //
 // Needs `Authorization: Bearer <SHEETS_HOTLEADS_SECRET>`. FAILS CLOSED.
 
@@ -66,34 +68,49 @@ export async function POST(req: Request) {
       out[client.id] = steps
       continue
     }
-    try {
-      const r = await refreshJourney({ client, db: supabase, day, dryRun })
-      steps.journey = r
-      if (!dryRun && r.ok) {
-        await supabase.storage.from('cfo-cache').upload(marker, JSON.stringify({ day, at: new Date().toISOString() }), { upsert: true, contentType: 'application/json' })
-        // A stage that just turned red: one message to the owner.
-        const { view, red } = await newlyRed(supabase, client)
-        steps.red = red.map((x) => x.key)
-        const owner = process.env.OWNER_CHAT_ID?.trim()
-        if (red.length && owner && view) {
-          const cur = client.currency || 'RM'
-          const lines = red.map(
-            (x) =>
-              `🔴 <b>${x.label}</b> ${pct(x.rate)} vs ${pct(x.benchmark)} benchmark` +
-              (x.atStake !== null ? ` · ~${cur}${Math.round(x.atStake).toLocaleString('en-MY')} at stake` : '') +
-              (x.owner ? ` · ${x.owner}` : ''),
-          )
-          await sendMessage(
-            owner,
-            `🧭 <b>${client.name}: funnel stage turned red</b> (${view.window.label})\n${lines.join('\n')}\n\n<a href="${APP_URL}/projects/${client.id}/funnel">Open the Funnel tab</a>`,
-            { noPreview: true },
-          ).catch(() => {})
-        }
-      }
-    } catch (e) {
-      steps.journey = { ok: false, error: (e as Error).message }
+    // The rebuild takes a minute or two — longer than Apps Script waits for an
+    // answer — so the sheet's call gets its reply now and the work runs after
+    // it (?wait=1 or a dry run waits, for testing). A failed run sets no
+    // marker, so the next hour tries again.
+    const job = () => rebuild(client, day, marker, dryRun)
+    if (dryRun || params.get('wait') === '1') Object.assign(steps, await job())
+    else {
+      after(job)
+      steps.journey = `rebuilding ${day}`
     }
     out[client.id] = steps
   }
   return Response.json({ ok: true, dryRun, clients: out })
+}
+
+async function rebuild(client: AdClient, day: string, marker: string, dryRun: boolean): Promise<Record<string, unknown>> {
+  const steps: Record<string, unknown> = {}
+  try {
+    const r = await refreshJourney({ client, db: supabase, day, dryRun })
+    steps.journey = r
+    if (dryRun || !r.ok) return steps
+    await supabase.storage.from('cfo-cache').upload(marker, JSON.stringify({ day, at: new Date().toISOString() }), { upsert: true, contentType: 'application/json' })
+    // A stage that just turned red: one message to the owner.
+    const { view, red } = await newlyRed(supabase, client)
+    steps.red = red.map((x) => x.key)
+    const owner = process.env.OWNER_CHAT_ID?.trim()
+    if (red.length && owner && view) {
+      const cur = client.currency || 'RM'
+      const lines = red.map(
+        (x) =>
+          `🔴 <b>${x.label}</b> ${pct(x.rate)} vs ${pct(x.benchmark)} benchmark` +
+          (x.atStake !== null ? ` · ~${cur}${Math.round(x.atStake).toLocaleString('en-MY')} at stake` : '') +
+          (x.owner ? ` · ${x.owner}` : ''),
+      )
+      await sendMessage(
+        owner,
+        `🧭 <b>${client.name}: funnel stage turned red</b> (${view.window.label})\n${lines.join('\n')}\n\n<a href="${APP_URL}/projects/${client.id}/funnel">Open the Funnel tab</a>`,
+        { noPreview: true },
+      ).catch(() => {})
+    }
+  } catch (e) {
+    steps.journey = { ok: false, error: (e as Error).message }
+    console.error('lead-journey rebuild failed:', (e as Error).message)
+  }
+  return steps
 }
