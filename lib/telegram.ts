@@ -8,6 +8,44 @@ const api = (method: string) => {
   return token ? `https://api.telegram.org/bot${token}/${method}` : null
 }
 
+const TIMEOUT_MS = 15000
+
+// Every Bot API call goes through here: a 15s limit and two retries. Without
+// them a Telegram hiccup at 8am silently lost that message, and a hung call held
+// the whole cron until Vercel's limit. Retries happen only when Telegram did not
+// act: a 429 (wait the retry_after it asks for, up to 10s), a 5xx, or a
+// connection that never opened. A timeout is NOT retried: the message may have
+// landed, and a brief sent twice to a client's group is worse than a logged miss.
+// Never throws.
+async function call(method: string, payload: Record<string, unknown>): Promise<{ ok: boolean; result?: any; error?: string }> {
+  const url = api(method)
+  if (!url) return { ok: false, error: 'TELEGRAM_BOT_TOKEN not set' }
+  let error = 'unknown'
+  let wait = 0
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (wait) await new Promise((r) => setTimeout(r, wait))
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (res.ok && body.ok) return { ok: true, result: body.result }
+      error = String(body.description || res.status)
+      // A bad chat id or a bot removed from the group fails the same way again.
+      wait = res.status === 429 ? Number(body.parameters?.retry_after ?? 1) * 1000 : res.status >= 500 ? 1000 * 2 ** (attempt + 1) : 0
+      if (!wait || wait > 10_000) return { ok: false, error }
+    } catch (e) {
+      if (e instanceof Error && e.name === 'TimeoutError') return { ok: false, error: `timed out after ${TIMEOUT_MS / 1000}s` }
+      error = (e as Error).message
+      wait = 1000 * 2 ** (attempt + 1)
+    }
+  }
+  return { ok: false, error }
+}
+
 // ------------------------------------------------------------
 // getFilePath() — step 1 of downloading a Telegram file (photo/PDF the user sent).
 // Telegram gives you a file_id in the update; you ask getFile for a temporary
@@ -18,24 +56,13 @@ const api = (method: string) => {
 export async function getFilePath(
   fileId: string,
 ): Promise<{ file_path: string; file_size?: number } | null> {
-  const url = api('getFile')
-  if (!url) return null
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_id: fileId }),
-    })
-    const body = await res.json().catch(() => ({}))
-    if (!res.ok || !body.ok || !body.result?.file_path) {
-      console.error('[CFO] getFile failed:', body.description || res.status)
-      return null
-    }
-    return { file_path: body.result.file_path, file_size: body.result.file_size }
-  } catch (e) {
-    console.error('[CFO] getFile threw:', e)
+  if (!api('getFile')) return null
+  const r = await call('getFile', { file_id: fileId })
+  if (!r.ok || !r.result?.file_path) {
+    console.error('[CFO] getFile failed:', r.error ?? 'no file_path')
     return null
   }
+  return { file_path: r.result.file_path, file_size: r.result.file_size }
 }
 
 // ------------------------------------------------------------
@@ -47,7 +74,7 @@ export async function downloadFileBytes(filePath: string): Promise<Buffer | null
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim()
   if (!token) return null
   try {
-    const res = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`)
+    const res = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`, { signal: AbortSignal.timeout(30000) })
     if (!res.ok) {
       console.error('[CFO] file download failed:', res.status)
       return null
@@ -98,26 +125,19 @@ export async function sendMessage(
   // A link to the dashboard would otherwise unfurl into a preview of the login page.
   opts: { noPreview?: boolean } = {},
 ): Promise<{ ok: boolean; error?: string }> {
-  const url = api('sendMessage')
-  if (!url) {
+  if (!api('sendMessage')) {
     console.warn('[CFO] TELEGRAM_BOT_TOKEN not set yet — skipping sendMessage.')
     return { ok: false, error: 'TELEGRAM_BOT_TOKEN not set' }
   }
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      parse_mode: 'HTML',
-      ...(opts.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
-    }),
+  const r = await call('sendMessage', {
+    chat_id: chatId,
+    text,
+    parse_mode: 'HTML',
+    ...(opts.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
   })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    const error = String(body.description || res.status)
-    console.error('[CFO] Telegram sendMessage failed:', error)
-    return { ok: false, error }
+  if (!r.ok) {
+    console.error('[CFO] Telegram sendMessage failed:', r.error)
+    return { ok: false, error: r.error }
   }
   return { ok: true }
 }
@@ -131,39 +151,29 @@ export async function sendWithButtons(
   text: string,
   inlineKeyboard: InlineKeyboard,
 ): Promise<number | null> {
-  const url = api('sendMessage')
-  if (!url) {
+  if (!api('sendMessage')) {
     console.warn('[CFO] TELEGRAM_BOT_TOKEN not set yet — skipping sendWithButtons.')
     return null
   }
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      parse_mode: 'HTML',
-      reply_markup: { inline_keyboard: inlineKeyboard },
-    }),
+  const r = await call('sendMessage', {
+    chat_id: chatId,
+    text,
+    parse_mode: 'HTML',
+    reply_markup: { inline_keyboard: inlineKeyboard },
   })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok || !body.ok) {
-    console.error('[CFO] Telegram sendWithButtons failed:', body.description || res.status)
+  if (!r.ok) {
+    console.error('[CFO] Telegram sendWithButtons failed:', r.error)
     return null
   }
-  return body.result?.message_id ?? null
+  return r.result?.message_id ?? null
 }
 
 // Acknowledge a button tap so Telegram stops the little spinner on the user's
 // button. Optional toast text. Never throws.
 export async function answerCallbackQuery(callbackId: string, text?: string) {
-  const url = api('answerCallbackQuery')
-  if (!url) return
-  await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ callback_query_id: callbackId, text: text ?? '' }),
-  }).catch(e => console.error('[CFO] answerCallbackQuery failed:', e))
+  if (!api('answerCallbackQuery')) return
+  const r = await call('answerCallbackQuery', { callback_query_id: callbackId, text: text ?? '' })
+  if (!r.ok) console.error('[CFO] answerCallbackQuery failed:', r.error)
 }
 
 // Strip (or replace) the inline buttons on an already-sent message. Pass no
@@ -174,15 +184,12 @@ export async function editMessageReplyMarkup(
   messageId: number,
   keyboard?: InlineKeyboard,
 ) {
-  const url = api('editMessageReplyMarkup')
-  if (!url) return
-  await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: keyboard ? { inline_keyboard: keyboard } : {},
-    }),
-  }).catch(e => console.error('[CFO] editMessageReplyMarkup failed:', e))
+  if (!api('editMessageReplyMarkup')) return
+  const r = await call('editMessageReplyMarkup', {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: keyboard ? { inline_keyboard: keyboard } : {},
+  })
+  // "message is not modified" = the buttons were already gone, which is the goal.
+  if (!r.ok && !/not modified/i.test(r.error ?? '')) console.error('[CFO] editMessageReplyMarkup failed:', r.error)
 }
