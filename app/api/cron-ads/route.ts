@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { claudeClient } from '@/lib/claude-usage'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
+import { claimScheduledRun } from '@/lib/cron-claim'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, isRelevant, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 import { persistThumbnails } from '@/lib/creatives'
 import { refreshProfiles } from '@/lib/competitor-profiles'
@@ -1249,6 +1250,9 @@ export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET?.trim()
   const authed = !!secret && req.headers.get('authorization') === `Bearer ${secret}`
   if (!authed) return new Response('forbidden', { status: 401 })
+
+  // A second delivery of this morning's scheduled run: the brief already went out.
+  if (!(await claimScheduledRun(req, 'cron-ads'))) return Response.json({ ok: true, duplicate: true })
 
   // ?client=<id> runs just one, for testing without spending every client's credit.
   const only = new URL(req.url).searchParams.get('client')

@@ -1,5 +1,6 @@
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
+import { claimScheduledRun } from '@/lib/cron-claim'
 import { getRecords, rm, todayISO, type Rec } from '@/lib/records'
 import { propose, proposeAndNotify, runAutopilot } from '@/lib/actions'
 import { AGENTS, SCHEDULED, type ProposalDraft } from '@/agents/registry'
@@ -51,6 +52,9 @@ export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET?.trim()
   const authed = !!secret && req.headers.get('authorization') === `Bearer ${secret}`
   if (!authed) return new Response('forbidden', { status: 401 })
+
+  // A second delivery of this morning's scheduled run: the brief already went out.
+  if (!(await claimScheduledRun(req, 'cron-daily'))) return Response.json({ ok: true, duplicate: true })
 
   const today = todayISO()
   const yesterday = new Date(Date.parse(today) - 864e5).toISOString().slice(0, 10)
