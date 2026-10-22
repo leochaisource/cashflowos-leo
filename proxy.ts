@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import { NextResponse, type NextRequest } from 'next/server'
 
 // 🔒 Don't edit — this keeps your robot safe.
@@ -13,11 +14,23 @@ export function proxy(req: NextRequest) {
   if (!passcode) return NextResponse.next()          // no lock installed → open door
 
   const session = req.cookies.get('cfo_session')?.value
-  if (session) return NextResponse.next()            // has the opaque session cookie → allow
+  if (session && validSession(session, passcode)) return NextResponse.next() // a cookie /api/login signed → allow
 
   const url = req.nextUrl.clone()
   url.pathname = '/login'
   return NextResponse.redirect(url)
+}
+
+// /api/login mints the cookie as `nonce.HMAC(nonce)`, signed with APP_PASSCODE.
+// Checking only that a cookie EXISTED let any made-up value in (found live on
+// 2026-10-22: `cfo_session=x` opened the dashboard), so recompute the signature
+// and compare in constant time. Changing APP_PASSCODE logs every device out.
+function validSession(token: string, passcode: string): boolean {
+  const dot = token.lastIndexOf('.')
+  if (dot <= 0) return false
+  const given = Buffer.from(token.slice(dot + 1), 'hex')
+  const want = crypto.createHmac('sha256', passcode).update(token.slice(0, dot)).digest()
+  return given.length === want.length && crypto.timingSafeEqual(given, want)
 }
 
 // The matcher protects every page EXCEPT the ones below, which must stay reachable
