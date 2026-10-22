@@ -1,5 +1,5 @@
-import crypto from 'crypto'
 import { NextResponse, type NextRequest } from 'next/server'
+import { SESSION_COOKIE, unlocked } from '@/lib/session'
 
 // 🔒 Don't edit — this keeps your robot safe.
 // The passcode gate. In Next 16 this file is called `proxy.ts` (the old name
@@ -10,27 +10,13 @@ import { NextResponse, type NextRequest } from 'next/server'
 // set, we DON'T gate anything — the app shows a calm setup banner instead, so a
 // half-configured clone never locks you out of your own HQ.
 export function proxy(req: NextRequest) {
-  const passcode = (process.env.APP_PASSCODE ?? '').trim()
-  if (!passcode) return NextResponse.next()          // no lock installed → open door
-
-  const session = req.cookies.get('cfo_session')?.value
-  if (session && validSession(session, passcode)) return NextResponse.next() // a cookie /api/login signed → allow
+  // No lock installed → open door. Otherwise only a cookie /api/login signed gets
+  // in; the signature check lives in lib/session.ts.
+  if (unlocked(req.cookies.get(SESSION_COOKIE)?.value)) return NextResponse.next()
 
   const url = req.nextUrl.clone()
   url.pathname = '/login'
   return NextResponse.redirect(url)
-}
-
-// /api/login mints the cookie as `nonce.HMAC(nonce)`, signed with APP_PASSCODE.
-// Checking only that a cookie EXISTED let any made-up value in (found live on
-// 2026-10-22: `cfo_session=x` opened the dashboard), so recompute the signature
-// and compare in constant time. Changing APP_PASSCODE logs every device out.
-function validSession(token: string, passcode: string): boolean {
-  const dot = token.lastIndexOf('.')
-  if (dot <= 0) return false
-  const given = Buffer.from(token.slice(dot + 1), 'hex')
-  const want = crypto.createHmac('sha256', passcode).update(token.slice(0, dot)).digest()
-  return given.length === want.length && crypto.timingSafeEqual(given, want)
 }
 
 // The matcher protects every page EXCEPT the ones below, which must stay reachable

@@ -498,6 +498,9 @@ h1, h2, h3, .ph { font-family: var(--font-head); }
 
 /* ---- Login (the lock screen) ---- */
 .login-wrap { min-height: calc(100vh - 80px); display: grid; place-items: center; padding: 24px; }
+/* the locked shell (layout.tsx): no navigation, just the login card, centred */
+.main.locked { max-width: none; padding: 24px 16px; }
+.main.locked .login-wrap { min-height: calc(100vh - 48px); padding: 0; }
 .login-card { width: 100%; max-width: 400px; border-radius: var(--r-28); padding: 30px 28px; }
 .login-input { width: 100%; box-sizing: border-box; background: var(--fill); border: 1px solid var(--glass-line-2); border-radius: 12px; padding: 12px 14px; font-size: 15px; color: var(--ink); }
 .login-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }

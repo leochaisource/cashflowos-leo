@@ -11,6 +11,7 @@ import { getPendingCount, getRecords } from '@/lib/records'
 import { workProjectsFrom } from '@/lib/work-projects'
 import { activeProjects } from '@/lib/settings'
 import { THEME_COLOR, THEME_COOKIE, themeFrom } from '@/lib/theme'
+import { SESSION_COOKIE, unlocked } from '@/lib/session'
 
 // SpeakFunnels type (Brand Guidelines v1.0 §04): Sora for headlines and the
 // wordmark, Hanken Grotesk for everything else. next/font self-hosts both under
@@ -36,11 +37,27 @@ export async function generateViewport(): Promise<Viewport> {
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const jar = await cookies()
+  const theme = themeFrom(jar.get(THEME_COOKIE)?.value)
+  const htmlProps = { lang: 'en', 'data-theme': theme, className: `${sora.variable} ${hanken.variable}` }
+
+  // A visitor who hasn't unlocked the app only ever reaches /login (the gate
+  // never sees that path), so they get the page alone: no sidebar, no project or
+  // client names, no database reads.
+  if (!unlocked(jar.get(SESSION_COOKIE)?.value)) {
+    return (
+      <html {...htmlProps}>
+        <body>
+          <main className="main locked">{children}</main>
+        </body>
+      </html>
+    )
+  }
+
   // The nav is a client component and the project list depends on the database
   // (the demo switch, and the work projects live in `records`), so the server
   // resolves both here and hands them down. Ad clients first, then work.
-  const [pending, projects, rows, jar] = await Promise.all([getPendingCount(), activeProjects(), getRecords(), cookies()])
-  const theme = themeFrom(jar.get(THEME_COOKIE)?.value)
+  const [pending, projects, rows] = await Promise.all([getPendingCount(), activeProjects(), getRecords()])
   const navProjects = [
     ...projects
       .slice()
@@ -51,7 +68,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       .map(w => ({ id: w.slug, label: w.client ?? w.name })),
   ]
   return (
-    <html lang="en" data-theme={theme} className={`${sora.variable} ${hanken.variable}`}>
+    <html {...htmlProps}>
       <body>
         <div className="app">
           {/* Desktop sidebar — hidden on phones (the top bar + BottomNav take over ≤768px). */}
