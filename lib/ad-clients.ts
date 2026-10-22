@@ -528,7 +528,9 @@ AD_CLIENTS.push({
     funnels: [
       {
         label: 'MM2H Seminar',
-        campaign: ['[SF] MM2H Seminar Campaign'],
+        // The retargeting of MM2H leads (live 19 Oct) counts toward the same
+        // seminar's cost per lead (Leo, 2026-10-22).
+        campaign: ['[SF] MM2H Seminar Campaign', '[SF] MM2H - Retarget MM2H leads'],
         // Read off seminar.starcityglobal.com/mm2h/optin (the campaign's landing
         // page) and confirmed in GHL Sites → Forms, 2026-10-22.
         formId: 'U83AnoOJlHHLHzPsH3DU',
