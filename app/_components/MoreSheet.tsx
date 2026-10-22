@@ -1,12 +1,13 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import Icon, { type IconName } from './Icon'
 import { isActivePath } from './Nav'
 
 // The slide-up "More" sheet for phones. Holds the tabs that don't fit on the
 // bottom bar, so every one of the 10 sections stays reachable on a phone.
 // Closes on a backdrop tap, on a link tap, or via the Close button.
-export type MoreTab = { href: string; label: string; ico: string }
+export type MoreTab = { href: string; label: string; icon: IconName }
 
 export default function MoreSheet({
   tabs,
@@ -38,7 +39,7 @@ export default function MoreSheet({
               className={isActivePath(path, t.href) ? 'active' : ''}
               onClick={onClose}
             >
-              <span className="ms-ico" aria-hidden="true">{t.ico}</span>
+              <Icon name={t.icon} size={22} />
               <span>{t.label}</span>
             </Link>
           ))}

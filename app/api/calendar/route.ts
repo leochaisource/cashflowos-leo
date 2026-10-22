@@ -77,7 +77,7 @@ export async function GET(req: Request) {
       `📌 ${projectName ? `[${projectName}] ` : ''}${r.title}`,
       projectId
         ? `Next step on ${projectName ?? projectId}. Tick it off: ${base}/projects/${projectId}`
-        : `Task in the Firstin5 dashboard: ${base}/tasks`,
+        : `Task in the SpeakFunnels Command Centre: ${base}/tasks`,
     )
   }
 
@@ -95,11 +95,11 @@ export async function GET(req: Request) {
   const body = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Firstin5//Dashboard//EN',
+    'PRODID:-//SpeakFunnels//Command Centre//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
-    'X-WR-CALNAME:Firstin5 — project deadlines',
-    'X-WR-CALDESC:Open next steps and project target dates from the Firstin5 dashboard',
+    'X-WR-CALNAME:SpeakFunnels — project deadlines',
+    'X-WR-CALDESC:Open next steps and project target dates from the SpeakFunnels Command Centre',
     'X-PUBLISHED-TTL:PT1H',
     ...events,
     'END:VCALENDAR',

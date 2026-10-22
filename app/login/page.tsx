@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import Brand from '../_components/Brand'
 
 // The lock screen. One passcode field, friendly copy. On success the server sets
 // the session cookie and we send you to your HQ. This page is EXCLUDED from the
@@ -39,11 +40,8 @@ export default function Login() {
   return (
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
-        <div className="brand" style={{ marginBottom: 8 }}>
-          <img className="logo" src="/icons/firstin5-logo.svg" alt="" width={26} height={26} />
-          Firstin5 Dashboard
-        </div>
-        <h1 className="ph" style={{ fontSize: 18 }}>Enter your passcode</h1>
+        <Brand size="lg" />
+        <h1 className="ph" style={{ fontSize: 20 }}>Enter your passcode</h1>
         <p className="cap" style={{ margin: '4px 0 16px' }}>
           A lock on the door, not bank-grade security — just enough to keep your numbers private.
         </p>

@@ -78,4 +78,4 @@ export function jarvisIdentity(): string {
 }
 
 /** The business name for greetings/cards, with a safe fallback. */
-export const jarvisName = () => JARVIS.businessName || 'Firstin5 Dashboard'
+export const jarvisName = () => JARVIS.businessName || 'SpeakFunnels Command Centre'

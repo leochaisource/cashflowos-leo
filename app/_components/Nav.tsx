@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import Icon, { type IconName } from './Icon'
 
 // 👉 The desktop sidebar tabs, grouped under micro-cap section labels.
 //    Adding a tab? Add ONE line to the right group here, add the SAME tab to
@@ -13,31 +14,34 @@ import { usePathname } from 'next/navigation'
 //    database — something a client component can't read.
 export type NavProject = { id: string; label: string }
 
-export const navGroups = (projects: NavProject[]): { label: string; tabs: { href: string; label: string }[] }[] => [
+// `icon` is a line icon from Icon.tsx; project entries have none and show a dot.
+export type NavTab = { href: string; label: string; icon?: IconName }
+
+export const navGroups = (projects: NavProject[]): { label: string; tabs: NavTab[] }[] => [
   { label: 'Projects', tabs: [
-    { href: '/', label: 'All projects' },
+    { href: '/', label: 'All projects', icon: 'grid' },
     ...projects.map(p => ({ href: `/projects/${p.id}`, label: p.label })),
   ] },
   { label: 'Overview', tabs: [
-    { href: '/agency', label: 'Agency' },
+    { href: '/agency', label: 'Agency', icon: 'agency' },
   ] },
   { label: 'Money', tabs: [
-    { href: '/cash-in', label: 'Cash In' },
-    { href: '/cash-out', label: 'Cash Out' },
+    { href: '/cash-in', label: 'Cash In', icon: 'cash-in' },
+    { href: '/cash-out', label: 'Cash Out', icon: 'cash-out' },
   ] },
   { label: 'Pipeline', tabs: [
-    { href: '/leads', label: 'Leads' },
-    { href: '/customers', label: 'Customers' },
+    { href: '/leads', label: 'Leads', icon: 'leads' },
+    { href: '/customers', label: 'Customers', icon: 'customers' },
   ] },
   { label: 'Work', tabs: [
-    { href: '/content', label: 'Content' },
-    { href: '/tasks', label: 'Tasks' },
+    { href: '/content', label: 'Content', icon: 'content' },
+    { href: '/tasks', label: 'Tasks', icon: 'tasks' },
   ] },
   { label: 'Robot', tabs: [
-    { href: '/approvals', label: 'Approvals' },
-    { href: '/employees', label: 'AI Employees' },
-    { href: '/vault', label: 'Vault' },
-    { href: '/settings', label: 'Settings' },
+    { href: '/approvals', label: 'Approvals', icon: 'approvals' },
+    { href: '/employees', label: 'AI Employees', icon: 'bot' },
+    { href: '/vault', label: 'Vault', icon: 'vault' },
+    { href: '/settings', label: 'Settings', icon: 'settings' },
   ] },
 ]
 
@@ -54,7 +58,7 @@ export function isActivePath(path: string | null, href: string): boolean {
 }
 
 // `pendingCount` is an optional seam: pass it (from a server component that
-// already knows the number) to show the clay 🙋 badge on Approvals. We never
+// already knows the number) to show the count badge on Approvals. We never
 // fetch here — a client nav must stay free of its own server round-trips.
 export default function Nav({ pendingCount, projects = [] }: { pendingCount?: number; projects?: NavProject[] }) {
   const path = usePathname()
@@ -65,7 +69,8 @@ export default function Nav({ pendingCount, projects = [] }: { pendingCount?: nu
           <p className="nav-label">{group.label}</p>
           {group.tabs.map(t => (
             <Link key={t.href} href={t.href} className={isActivePath(path, t.href) ? 'active' : ''}>
-              <span>{t.label}</span>
+              {t.icon ? <Icon name={t.icon} /> : <span className="nav-dot" aria-hidden="true" />}
+              <span className="nav-text">{t.label}</span>
               {t.href === '/approvals' && pendingCount ? (
                 <span className="nav-badge" aria-label={`${pendingCount} pending`}>{pendingCount}</span>
               ) : null}

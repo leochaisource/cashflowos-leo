@@ -216,7 +216,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                     <td data-label="3-day avg">{baseV}</td>
                     <td
                       data-label="Yesterday vs 3-day"
-                      style={change === null ? undefined : { color: good ? '#2E5A40' : '#8A3E2D', fontWeight: 600 }}
+                      style={change === null ? undefined : { color: good ? 'var(--good-ink)' : 'var(--bad-ink)', fontWeight: 600 }}
                     >
                       {change === null ? DASH : `${change > 0 ? '+' : ''}${(change * 100).toFixed(0)}%`}
                     </td>

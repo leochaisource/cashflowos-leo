@@ -217,7 +217,7 @@ function RateLine({ x, cur, project, funnel, isBottleneck }: { x: RateRow; cur: 
         </span>
       </td>
       <td data-label="Actual vs benchmark">
-        <div style={{ position: 'relative', height: 10, borderRadius: 5, background: 'var(--paper-2)' }}>
+        <div style={{ position: 'relative', flex: 1, height: 10, borderRadius: 5, background: 'var(--paper-2)' }}>
           {x.rate !== null && <div style={{ position: 'absolute', inset: 0, width: w(x.rate), borderRadius: 5, background: DOT[x.status] === DOT.none ? 'var(--ink-faint)' : DOT[x.status] }} />}
           {x.benchmark !== null && <div title="benchmark" style={{ position: 'absolute', top: -4, left: w(x.benchmark), width: 2, height: 18, background: 'var(--ink)' }} />}
         </div>
@@ -381,7 +381,7 @@ function Tracker(props: { rows: JourneyRow[]; tracked: boolean; stop?: string; q
       </form>
       {!tracked && <p className="set-note" style={{ marginTop: 0 }}>Only opt-in, checkout and paid are known for this event — the other ticks need the journey table.</p>}
       <div style={{ overflowX: 'auto' }}>
-        <table className="tbl adtbl" style={{ minWidth: 760 }}>
+        <table className="tbl adtbl matrix" style={{ minWidth: 760 }}>
           <thead>
             <tr>
               <th>Name</th>
@@ -412,8 +412,8 @@ function Tracker(props: { rows: JourneyRow[]; tracked: boolean; stop?: string; q
                   const own = !!stageTime(r, s.key)
                   const passed = !own && CORE.includes(s.key) && reached(r, s.key)
                   return (
-                    <td key={s.key} style={{ padding: '11px 3px' }} title={own ? `${s.label}: ${stageTime(r, s.key)!.slice(0, 16).replace('T', ' ')} UTC` : passed ? `${s.label}: got past it without it being seen` : s.label}>
-                      <div style={{ height: 8, borderRadius: 4, background: own ? 'var(--sage)' : passed ? 'rgba(75,122,90,.30)' : 'var(--paper-2)' }} />
+                    <td key={s.key} className="stagecell" title={own ? `${s.label}: ${stageTime(r, s.key)!.slice(0, 16).replace('T', ' ')} UTC` : passed ? `${s.label}: got past it without it being seen` : s.label}>
+                      <div style={{ height: 8, borderRadius: 4, background: own ? 'var(--sage)' : passed ? 'var(--good-tint)' : 'var(--paper-2)' }} />
                     </td>
                   )
                 })}
