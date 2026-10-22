@@ -32,6 +32,7 @@ export function proxy(req: NextRequest) {
 //   • /api/closer-coach       — the 9am closing coach, started by hotleads-sync (same Bearer)
 //   • /api/hotlist-tick       — Ariella's hourly list check, from the sheet's trigger (same Bearer)
 //   • /api/intent-batch       — the overnight half-price lead judging, same hourly trigger (same Bearer)
+//   • /api/lead-journey       — the funnel's Call Log feed + morning journey rebuild, same trigger (same Bearer)
 //   • /api/calendar           — the ICS feed Google Calendar subscribes to; calendar
 //     fetchers can't log in or send headers, so it carries its own URL token
 //   • /manifest.webmanifest   — the REAL PWA manifest (app/manifest.ts serves HERE);
@@ -43,6 +44,6 @@ export function proxy(req: NextRequest) {
 // A single missed exclusion here = a locked webhook on class day, so this list is tested.
 export const config = {
   matcher: [
-    '/((?!login|api/login|api/telegram|api/cron-daily|api/cron-ads|api/sync-ads|api/eventops|api/hotleads-sync|api/hotlist-tick|api/intent-batch|api/closer-coach|api/calendar|manifest\\.webmanifest|manifest\\.json|icons|icon\\.png|_next|favicon\\.ico).*)',
+    '/((?!login|api/login|api/telegram|api/cron-daily|api/cron-ads|api/sync-ads|api/eventops|api/hotleads-sync|api/hotlist-tick|api/intent-batch|api/lead-journey|api/closer-coach|api/calendar|manifest\\.webmanifest|manifest\\.json|icons|icon\\.png|_next|favicon\\.ico).*)',
   ],
 }

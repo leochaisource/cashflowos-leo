@@ -42,6 +42,7 @@ import {
   type AssignedTask,
 } from '@/lib/followups'
 import { BATCH_FEATURE, collectIntentBatch, followupsArgs } from '@/lib/intent-batch'
+import { funnelBriefLine } from '@/lib/funnel-view'
 import { hotLeadRows, hotListRows, pushHotLeads, paidList } from '@/lib/hot-leads-sheet'
 import { syncHotList, listCounts, type HotListSync } from '@/lib/hot-list'
 import { loadAdRows } from '@/lib/metrics'
@@ -1110,11 +1111,20 @@ async function runClient(client: AdClient, records: Rec[]) {
     }
   }
 
+  // THE FUNNEL'S BOTTLENECK (owner, 2026-10-22): one line, operator copy only —
+  // the stage with the most money at stake against its benchmark (lib/funnel-view.ts).
+  const funnelLine = supabaseConfigured
+    ? await funnelBriefLine(supabase, client).catch((e) => {
+        notes.push(`Funnel line unavailable: ${(e as Error).message}`)
+        return ''
+      })
+    : ''
   const alerts = operatorAlerts(notes)
   const text = [
     perfText ? esc(perfText) : spent > 0 || !focus ? header : '',
     // Operator copy only (clientChunks is built from perfText alone).
     followupsOwnerLine ? esc(followupsOwnerLine) : '',
+    funnelLine ? esc(funnelLine) : '',
     digest,
     report ? esc(report) : '',
     focus ? competitorsLink(client.id, competitorCount) : '',

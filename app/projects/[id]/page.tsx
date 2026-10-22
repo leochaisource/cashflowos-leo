@@ -7,11 +7,15 @@ import { todayISO, getRecords, m } from '@/lib/records'
 import Metric from '@/app/_components/Metric'
 import Spark from '@/app/_components/Spark'
 import AdTable from '@/app/_components/AdTable'
+import CustomerAdTable from '@/app/_components/CustomerAdTable'
 import RefreshButton from '@/app/_components/RefreshButton'
 import FunnelEntryForm from '@/app/_components/FunnelEntryForm'
 import NextSteps from '@/app/_components/NextSteps'
 import ProjectTabs from '@/app/_components/ProjectTabs'
 import { findWorkProject, stepsFor, type WorkProject } from '@/lib/work-projects'
+import { supabase, supabaseConfigured } from '@/lib/supabase'
+import { journeyFor } from '@/lib/funnel-config'
+import { funnelView } from '@/lib/funnel-view'
 import type { Rec } from '@/lib/records'
 import { money, num, pct, times, whenShort, dateLong, daysUntil, DASH } from '@/lib/format'
 
@@ -45,8 +49,21 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   // a live-looking page for a client that isn't yours reachable by URL.
   if (project.demo && !(await demoEnabled())) notFound()
 
-  const [s, allRecords] = await Promise.all([projectScorecard(project, WINDOW_DAYS), getRecords()])
+  const [s, allRecords, funnel] = await Promise.all([
+    projectScorecard(project, WINDOW_DAYS),
+    getRecords(),
+    // Ads by customers, not by cost per lead (owner, 2026-10-22) — where the
+    // leads' purchases are known. Elsewhere the CPL tables stay.
+    journeyFor(project.id) && supabaseConfigured ? funnelView(supabase, project).catch(() => null) : Promise.resolve(null),
+  ])
   const steps = stepsFor(allRecords, project.id)
+  // One customer from a handful of leads is luck, not a winner (the Funnel tab lists every ad).
+  const withCustomers = funnel?.creatives.filter((c) => c.customers >= 2 && c.spend) ?? []
+  const bestAds = [...withCustomers].sort((a, b) => a.costPerCustomer! - b.costPerCustomer!).slice(0, 6)
+  const noCustomerAds = (funnel?.creatives ?? [])
+    .filter((c) => c.customers === 0 && (c.spend ?? 0) >= LOSER_MIN_SPEND)
+    .sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0))
+    .slice(0, 6)
 
   // Receipts filed against THIS client — by photo caption, by a typed expense,
   // or by hand. Without this the tagging has no payoff: you'd send a receipt to
@@ -237,27 +254,56 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         )}
       </div>
 
-      <div className="cols">
-        <div className="col">
-          <h3>🏆 Winning ads — cheapest CPL</h3>
-          <AdTable
-            rows={s.winners}
-            currency={cur}
-            highlight="cpl"
-            empty={`No ad has reached ${WINNER_MIN_LEADS} leads yet. Below that, a cheap CPL is luck, not a winner.`}
-          />
+      {funnel ? (
+        <div className="cols">
+          <div className="col">
+            <h3>
+              🏆 Best ads — cost per customer · {funnel.window.label} {funnel.eventOpen ? 'so far' : ''} ·{' '}
+              <Link href={`/projects/${project.id}/funnel`}>full ranking</Link>
+            </h3>
+            <CustomerAdTable
+              rows={bestAds}
+              currency={cur}
+              empty="No ad has 2 customers yet this event. Below that, a cheap cost per customer is luck. Customers count for the ad on their first sign-up form."
+            />
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="cols">
+          <div className="col">
+            <h3>🏆 Winning ads — cheapest CPL</h3>
+            <AdTable
+              rows={s.winners}
+              currency={cur}
+              highlight="cpl"
+              empty={`No ad has reached ${WINNER_MIN_LEADS} leads yet. Below that, a cheap CPL is luck, not a winner.`}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="cols">
         <div className="col">
-          <h3>💸 Losing ads — worst CPL</h3>
-          <AdTable
-            rows={s.losersByCPL}
-            currency={cur}
-            highlight="cpl"
-            empty={`Nothing is losing: no ad has spent ${money(LOSER_MIN_SPEND, cur)}+ while running 25% worse than your blended CPL.`}
-          />
+          {funnel ? (
+            <>
+              <h3>💸 Spending without a customer — this event</h3>
+              <CustomerAdTable
+                rows={noCustomerAds}
+                currency={cur}
+                empty={`No ad has spent ${money(LOSER_MIN_SPEND, cur)}+ this event without bringing a customer.`}
+              />
+            </>
+          ) : (
+            <>
+              <h3>💸 Losing ads — worst CPL</h3>
+              <AdTable
+                rows={s.losersByCPL}
+                currency={cur}
+                highlight="cpl"
+                empty={`Nothing is losing: no ad has spent ${money(LOSER_MIN_SPEND, cur)}+ while running 25% worse than your blended CPL.`}
+              />
+            </>
+          )}
         </div>
         <div className="col">
           <h3>👀 Losing ads — lowest link CTR</h3>

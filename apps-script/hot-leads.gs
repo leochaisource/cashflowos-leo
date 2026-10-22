@@ -256,21 +256,50 @@ function syncHotLeads() {
 // The same clock runs the overnight half-price lead judging (2026-10-15,
 // /api/intent-batch): after midnight it sends yesterday's chats to Claude's
 // Batch API, and the next calls file the answers before the 8am brief.
+// And the funnel's lead journey (2026-10-22, /api/lead-journey): each hour it
+// gets this sheet's Call Log, so calls count in the funnel, and the first call
+// after 6am rebuilds yesterday's journey (no AI).
 const TICK_URL = 'https://cashflowos-leo.vercel.app/api/hotlist-tick'
 const BATCH_URL = 'https://cashflowos-leo.vercel.app/api/intent-batch'
+const JOURNEY_URL = 'https://cashflowos-leo.vercel.app/api/lead-journey'
 
 function hotListTick() {
   const secret = PropertiesService.getScriptProperties().getProperty('SECRET')
-  ;[TICK_URL, BATCH_URL].forEach(function (url) {
+  ;[TICK_URL, BATCH_URL, JOURNEY_URL].forEach(function (url) {
     try {
-      const res = UrlFetchApp.fetch(url, {
-        method: 'post',
-        headers: { Authorization: 'Bearer ' + secret },
-        muteHttpExceptions: true,
-      })
+      const opts = { method: 'post', headers: { Authorization: 'Bearer ' + secret }, muteHttpExceptions: true }
+      if (url === JOURNEY_URL) {
+        opts.contentType = 'application/json'
+        opts.payload = JSON.stringify({ calls: callLogRows_() })
+      }
+      const res = UrlFetchApp.fetch(url, opts)
       console.log(url.split('/').pop() + ' ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 300))
     } catch (err) {
       console.error(url + ': ' + err)
+    }
+  })
+}
+
+/** The Call Log tab as plain rows, by header name (CallTracker.gs writes it). */
+function callLogRows_() {
+  const log = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Call Log')
+  if (!log || log.getLastRow() < 2) return []
+  const values = log.getRange(1, 1, log.getLastRow(), log.getLastColumn()).getValues()
+  const head = values[0].map(function (h) { return String(h).trim() })
+  const at = function (name) { return head.indexOf(name) }
+  const cell = function (row, name) {
+    const i = at(name)
+    if (i < 0 || row[i] === '' || row[i] === null) return null
+    return row[i] instanceof Date ? row[i].toISOString() : String(row[i]).replace(/^'/, '')
+  }
+  return values.slice(1).map(function (row) {
+    return {
+      calledAt: cell(row, 'Called at'),
+      contactId: cell(row, 'Contact ID'),
+      outcome: cell(row, 'Call outcome'),
+      pickedUp: cell(row, 'Picked up (Y/N)'),
+      attempt: cell(row, 'Attempt #'),
+      calledBy: cell(row, 'Called by'),
     }
   })
 }
