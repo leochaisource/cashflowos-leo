@@ -50,22 +50,50 @@ async function getAll(url: string, token: string, maxPages = 10): Promise<Record
   const out: Record<string, unknown>[] = []
   let next: string | null = url
   for (let page = 0; next && page < maxPages; page++) {
-    const res: Response = await fetch(next, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(30000),
-    })
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`Meta ${res.status}: ${body.slice(0, 200)}`)
-    }
-    const json = (await res.json()) as {
-      data?: Record<string, unknown>[]
-      paging?: { next?: string }
-    }
+    const json = await getPage(next, token)
     out.push(...(json.data ?? []))
     next = json.paging?.next ?? null
   }
   return out
+}
+
+// Two retries, 2s then 4s apart, when Meta says "slow down" or "try again".
+// Its throttling usually comes back as HTTP 400 with an error code inside (4, 17,
+// 32, 613, 80000–80014), not as a 429, and it flags short faults `is_transient`.
+// A bad token or wrong account fails the same way every time, so it throws at
+// once. A timeout is not retried either: three 30s waits on several calls per
+// client would push the whole 8am run past its 300s limit, and then nobody gets
+// a brief instead of one brief missing its Meta numbers.
+const META_RATE_CODES = new Set([4, 17, 32, 613])
+function metaTransient(status: number, body: string): boolean {
+  if (status === 429 || status >= 500) return true
+  try {
+    const e = (JSON.parse(body) as { error?: { code?: number; is_transient?: boolean } }).error
+    const code = Number(e?.code)
+    return e?.is_transient === true || META_RATE_CODES.has(code) || (code >= 80000 && code <= 80014)
+  } catch {
+    return false
+  }
+}
+
+async function getPage(url: string, token: string): Promise<{ data?: Record<string, unknown>[]; paging?: { next?: string } }> {
+  let last: Error | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt))
+    let res: Response
+    try {
+      res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30000) })
+    } catch (e) {
+      if (e instanceof Error && e.name === 'TimeoutError') throw new Error('Meta timed out after 30s')
+      last = e as Error // the connection never opened: safe to try again
+      continue
+    }
+    if (res.ok) return (await res.json()) as { data?: Record<string, unknown>[]; paging?: { next?: string } }
+    const body = await res.text().catch(() => '')
+    last = new Error(`Meta ${res.status}: ${body.slice(0, 200)}`)
+    if (!metaTransient(res.status, body)) throw last
+  }
+  throw last ?? new Error('Meta request failed')
 }
 
 // ---------------------------------------------------------------- campaigns
