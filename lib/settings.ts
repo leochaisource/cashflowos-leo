@@ -86,8 +86,8 @@ export async function activeProjects(): Promise<Project[]> {
   return on ? PROJECTS : PROJECTS.filter((p) => !p.demo)
 }
 
-/** How many ranked projects the 8am brief covers. */
-export const FOCUS_MAX = 3
+/** How many ranked projects the 8am brief covers. 4 since 2026-10-28 (Nicsman AI Speaker Course). */
+export const FOCUS_MAX = 4
 
 /**
  * The focus list: ranked projects in rank order, capped at FOCUS_MAX. This is

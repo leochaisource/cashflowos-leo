@@ -1296,8 +1296,10 @@ export async function GET(req: Request) {
   // ALL AT ONCE since 2026-10-01: Claude Malaysia's run grew to ~3 min (follow-up
   // judging, GHL tasks, the hot-leads sheet), and a client queued behind it in a
   // pair finished at ~3.6 of the 5 allowed minutes. In parallel the total is the
-  // slowest client, not a pair plus one. Three focus clients — revisit at more.
-  const CONCURRENCY = 3
+  // slowest client, not a pair plus one. Four focus clients since 2026-10-28: a
+  // fourth in a second batch would start only after Claude Malaysia's ~2.5 min
+  // run, so all four run together.
+  const CONCURRENCY = 4
   for (let i = 0; i < runnable.length; i += CONCURRENCY) {
     const batch = runnable.slice(i, i + CONCURRENCY)
     const settled = await Promise.all(

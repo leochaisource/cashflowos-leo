@@ -29,11 +29,19 @@ const money = (n: number) => client.currency + n.toLocaleString('en-MY', { maxim
 const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 // ---- competitors: straight out of Supabase, no API call -------------------
-const { data: rows, error } = await s.from('competitor_ads').select('raw_payload').eq('client', client.id)
+const { data: rows, error } = await s.from('competitor_ads').select('raw_payload, keywords').eq('client', client.id)
 if (error) { console.error(error.message); process.exit(1) }
 const ads: NormalisedAd[] = (rows ?? [])
   .map((r) => normaliseAd(r.raw_payload as Record<string, unknown>))
   .filter((a) => a.ad_archive_id)
+// Brand-watch pulls are tagged `page:<name>`; the cron never filters them as
+// off-topic, so the replay mustn't either (an own-camp page would vanish).
+const watchedIds = new Set(
+  (rows ?? [])
+    .filter((r) => ((r.keywords as string[] | null) ?? []).some((k) => k.startsWith('page:')))
+    .map((r) => normaliseAd(r.raw_payload as Record<string, unknown>).ad_archive_id)
+    .filter(Boolean),
+)
 console.log(`${client.id}: rebuilt ${ads.length} competitor ads from Supabase (0 Adyntel calls)`)
 
 // ---- Meta: live, free ------------------------------------------------------
@@ -191,7 +199,7 @@ const stepsBlock = openSteps.length
   : []
 
 // ---- build + write ---------------------------------------------------------
-const market = competitorSection(ads, [], client.countries.join('+'), {}, client.relevanceTerms, client.excludeTerms)
+const market = competitorSection(ads, [], client.countries.join('+'), {}, client.relevanceTerms, client.excludeTerms, watchedIds)
 const facts = stripLoneSurrogates([
   `CLIENT: ${client.name}`,
   client.briefContext ? `SITUATION: ${client.briefContext}` : '',

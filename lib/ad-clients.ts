@@ -624,6 +624,88 @@ AD_CLIENTS.push({
   sources: {},
 })
 
+// NICSMAN AI SPEAKER COURSE — Prominds Academy × Nicsman Tay (owner, 2026-10-28).
+// A free Zoom webinar (Fri 6 Nov 2026, 8–10pm, no replay) sells seats for
+// 《AI讲师影响力》, a 2-day offline course on 15–16 Nov. Brief and keyword choices:
+// Prominds-AI讲师影响力-Project-Brief.md in the workspace root. Ads will run from a
+// SEPARATE SpeakFunnels ad account and leads land in Prominds' OWN GoHighLevel —
+// neither exists yet, so the brief is competitor intelligence until they're wired
+// (then add the NICSMAN_* env vars and a `ghl` block with the webinar form id).
+// Ranked until 16 Nov, when a dated next step asks the owner whether to keep it.
+//
+// Keywords are the words rivals put in their OWN ads (Simplified Chinese, the
+// audience's language). Owner's picks: the speaker business + the course business;
+// the AI angle and English coaches were left out.
+//
+// PROMINDS' OWN CAMP is excluded from the competitor view (owner's call): Prominds
+// and its speakers run speaker/course ads that every one of these searches returns
+// (Ad Library, 2026-10-28: Prominds 博迈, Hedki 社长赫奇, Trisen 团队增长导师, Mr.J
+// 万人团队导师, TikTok企业运营班, 陈皓合伙人模式 — all linking to events.prominds.com.my,
+// which the "prominds" term catches). Prominds' own page is WATCHED instead, so
+// what our side runs is always in the brief, labelled as ours. Melvin Loo is
+// deliberately NOT excluded: the owner counts him as a rival.
+AD_CLIENTS.push({
+  id: 'prominds-ai-speaker',
+  rank: 4,
+  name: 'Nicsman AI Speaker Course',
+  stage: 'pre-launch',
+  adAccountEnv: 'NICSMAN_META_AD_ACCOUNT_ID',
+  tokenEnv: 'NICSMAN_META_ACCESS_TOKEN',
+  chatIdEnv: 'OWNER_CHAT_ID',
+  keywords: ['讲师培训', '成为讲师', '公众演说', '一对多', '知识变现', '卖课', '个人品牌', '线上课程招生'],
+  countries: ['MY'],
+  keywordsPerRun: 2, // 8 searches → the whole list every 4 days; + 1 watched page = 3 credits/day
+  watchPages: [
+    { name: 'Prominds 博迈', pageId: '650580238132055' }, // the client's own page — ours, not a rival
+    { name: 'TBUN Institute 国家认证培训师 NCS TTT', pageId: '143810292138960' }, // "turn your experience into training"
+  ],
+  currency: 'RM',
+  leadActionTypes: PIXEL_LEAD, // unverified — a GHL landing-page form firing the Pixel is the plan
+  targetCPL: 40, // owner: RM30–40 target, RM50 ceiling
+  relevanceTerms: [
+    // subject: is it about BECOMING a speaker or selling what you know? Deliberately
+    // NOT a bare 讲师 / 培训师 (every course ad names its trainer), 招生 / 导师 / 教练 /
+    // coach (tuition centres, beauty academies, diploma colleges) or "speaker" (the
+    // audio kind) — all four flooded the seed run, 2026-10-28. Nor 教课 / 设计课程: any
+    // teacher "teaches a class", and 平面设计课程 is a graphic-design course.
+    ['成为讲师', '成為講師', '当讲师', '當講師', '做讲师', '做講師', '讲师培训', '講師培訓', '培训讲师', '培訓講師', '讲师课程',
+     '講師課程', '讲师事业', '講師事業', '讲师变现', '講師變現', '百万讲师', '百萬講師', '合作讲师', '合作講師', '职业讲师', '職業講師',
+     '成为培训师', '成為培訓師', '认证培训师', '認證培訓師', '演说', '演說', '演讲', '演講', '一对多', '一對多',
+     '知识变现', '知識變現', '知识付费', '知識付費', '卖课', '賣課', '个人品牌', '個人品牌', '课程设计', '課程設計',
+     '找学生', '招学生', 'public speaking', 'ttt', 'train the trainer', 'course creator'],
+    // offer type: is a course, class or event being sold or registered for?
+    ['课程', '課程', '课', '課', '班', '讲座', '講座', '工作坊', '分享会', '分享會', '报名', '報名', '名额', '名額', '免费', '免費',
+     '开课', '開課', 'webinar', 'workshop', 'masterclass', 'seminar', 'bootcamp', 'course', 'class', 'programme', 'program',
+     'register', 'free', 'academy'],
+  ],
+  excludeTerms: [
+    // Prominds' own camp (see the header)
+    'prominds', '博迈', 'nicsman', 'hedki', '赫奇', 'trisen', 'mr.j', 'tiktok企业运营班', '陈皓', 'dato keen', 'meng teck',
+    // children's classes, tuition and hobbies share every "课程 / 招生" word
+    '补习', '補習', 'spm', 'upsr', 'pt3', '小朋友', '孩子', '儿童', '兒童', '幼儿', '幼兒', 'kids', 'tuition',
+    '音乐', '音樂', '乐器', '樂器', '钢琴', '鋼琴', '舞蹈', '美容', '美甲', '美睫', '纹绣', '紋繡', '接发', '接髮',
+    // other projects' markets (property is Starcity's, investing is Mr Money's)
+    '房产', '房產', '地产', '地產', '股票', '炒股', '交易', 'forex', '外汇', '外匯', 'crypto', '保险公司', '人寿',
+    // job ads and school leavers: "诚聘IT课程讲师", "IMU预科讲师"
+    '诚聘', '誠聘', '招聘', '预科', '預科', 'pre-university', 'diploma',
+  ],
+  briefContext:
+    'PRE-LAUNCH — no ad account connected yet (ads will run from a separate SpeakFunnels account; leads will ' +
+    'land in Prominds\' own GoHighLevel). Prominds Academy × Nicsman Tay: a FREE Zoom webinar on Fri 6 Nov ' +
+    '2026, 8–10pm MYT (no replay) sells seats for 《AI讲师影响力》, a 2-day offline course on 15–16 Nov 2026. ' +
+    'Audience: Malaysian Chinese business owners, sales agents and sales leaders, service providers ' +
+    '(consultants, coaches, professionals) and existing speakers. Angle: the backend business model behind ' +
+    'million-ringgit speakers, plus AI (AI agents for students, AI ads, AI webinar slides). It is NOT ' +
+    'public-speaking, presentation-skills or train-the-trainer — those are the adjacent offers to out-position. ' +
+    'Ads may not make income claims. The watched page "Prominds 博迈" is the CLIENT\'S OWN page: report what ' +
+    'it is running (other Prominds webinars may chase the same people these weeks), never as a competitor. ' +
+    'Watched pages rotate one per day, and Prominds\' camp is hidden from keyword results on purpose, so on a ' +
+    'day its page is not pulled, say nothing about it — never call it absent, paused or missing. ' +
+    'Melvin Loo IS a competitor. The job of this brief until 6 Nov: what the Chinese speaker / course-business ' +
+    'market is running, at which angle and offer, and where Nicsman\'s AI + backend angle is unoccupied.',
+  sources: {},
+})
+
 // ---------------------------------------------------------------- demo clients
 // Two more projects so the dashboard shows a portfolio rather than a single
 // client. They carry no credentials and cost nothing to run: their numbers are
