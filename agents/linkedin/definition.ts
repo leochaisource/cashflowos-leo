@@ -1,12 +1,16 @@
-// 👉 THIS FILE IS YOURS TO READ — the LinkedIn Ideas agent's knobs.
+// 👉 THIS FILE IS YOURS TO READ — the LinkedIn agent's knobs.
 //
-// Every Sunday at 9am (Malaysia time) it reads what happened in the business this
-// week and sends Leo 3–5 LinkedIn post ANGLES on Telegram, one ✅/❌ card each.
-// ✅ only QUEUES the angle. The writing, the photo and the scheduling happen in
-// the /linkedin-posts skill on Leo's laptop, where he approves every word. This
-// agent never writes a finished post and has no code path to LinkedIn.
+// AUTOPILOT ON (owner's call, 2026-11-07: "keep it auto run weekly, without my
+// attention"): every week the cloud researches, writes, fact-checks, illustrates
+// and schedules Leo's Tue/Wed/Thu 09:00 posts itself (agents/linkedin/autopilot.ts).
+// Leo hears from it only when a slot ends up empty or a post can't be scheduled.
 //
-// It also watches for a scheduled post that FAILED to publish (GHL status
+// AUTOPILOT OFF (the old way): every Sunday at 9am (Malaysia time) it reads what
+// happened in the business this week and sends Leo 3–5 LinkedIn post ANGLES on
+// Telegram, one ✅/❌ card each. ✅ only QUEUES the angle; the writing happens in
+// the /linkedin-posts skill on Leo's laptop, where he approves every word.
+//
+// Either way it also watches for a scheduled post that FAILED to publish (GHL status
 // "failed") and says so the same morning, any day of the week, so a missed post
 // never fails silently.
 //
@@ -19,7 +23,9 @@ export type WhenTrigger = 'on_photo' | 'on_new_record' | 'daily'
 // THE DIALS
 // ============================================================
 
-/** Day the angles arrive, in Malaysia time. 0 = Sunday. */
+/** true = the weekly autopilot writes and schedules the posts; false = Sunday idea cards for the laptop session. */
+export const AUTOPILOT = true
+/** Day the angles arrive (autopilot off), in Malaysia time. 0 = Sunday. */
 export const IDEAS_WEEKDAY = 0
 /** Never more than this many cards in one go — it's a menu, not homework. */
 export const MAX_ANGLES = 5

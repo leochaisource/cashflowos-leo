@@ -98,10 +98,10 @@ export const AGENTS: AgentMeta[] = [
   },
   {
     key: 'linkedin-ideas',
-    label: 'LinkedIn Ideas',
+    label: 'LinkedIn Autopilot',
     emoji: '✍️',
     autonomyNote:
-      '🟡 Sunday 9am: pitches 3–5 post angles from your week. ✅ only queues one for /linkedin-posts on your laptop — nothing is posted from here. Also flags any post that failed to publish.',
+      '🟢 Weekly, on its own (your call, 2026-11-07): Saturday research, Sunday writes and fact-checks, Monday schedules your Tue/Wed/Thu 9am posts with stock-photo carousels. You only hear from it when a slot stays empty or a post fails to publish.',
   },
 ]
 
@@ -309,7 +309,8 @@ async function queueJob(payload: any): Promise<any> {
 // `npm run linkedin -- ideas` and writes the post WITH him. A failed-post card's
 // ✅ is just "seen". No network call here, nothing leaves the building.
 async function queueLinkedIn(payload: any): Promise<any> {
-  const failed = payload?.kind === 'failed_post'
+  // A failed-post card or an autopilot note: ✅ just means "seen".
+  const failed = payload?.kind === 'failed_post' || payload?.kind === 'auto_note'
   const result = failed
     ? { kind: 'linkedin_failure_ack' as const, ghl_post_id: payload?.ghl_post_id, acked_at: new Date().toISOString() }
     : {
@@ -372,6 +373,7 @@ import { loadAdAggregates } from './marketing/load'
 import { headline as marketingHeadline, suggest as marketingSuggest } from './marketing/prompt'
 import { claudeClient } from '@/lib/claude-usage'
 import { linkedinDrafts } from './linkedin/run'
+import { PROJECTS } from '@/lib/ad-clients'
 
 // `auto: true` = this one is 🟢 graduated (autopilot: run it, then just tell me).
 // Omitted/false = 🟡 ask first (the safe default every agent starts on).
@@ -467,19 +469,24 @@ const marketingTriageCheck: ScheduledCheck = {
   },
 }
 
-// Marketing · LinkedIn Ideas: Sundays, 3–5 post angles from the week's briefs,
+// Marketing · LinkedIn: with AUTOPILOT on (agents/linkedin/definition.ts), one
+// step a morning of the weekly research → write → schedule run, carding Leo only
+// when a slot stays empty. With it off: Sundays, 3–5 post angles from the week's briefs,
 // event sales, agent decisions and competitor moves; any day, a card for a post
 // that failed to publish. Always 🟡 — ✅ only queues (queueLinkedIn above). The
 // keys are per ISO week + position, so a re-run never sends the menu twice.
 const linkedinIdeasCheck: ScheduledCheck = {
   key: 'linkedin-ideas',
-  label: 'LinkedIn Ideas',
+  label: 'LinkedIn Autopilot',
   check: async () => {
     const key = process.env.ANTHROPIC_API_KEY?.trim()
     const { drafts, notes } = await linkedinDrafts({
       db: supabaseConfigured ? supabase : null,
       anthropic: key ? claudeClient('linkedin-ideas', { apiKey: key, timeout: 180_000, maxRetries: 0 }) : null,
       now: new Date(),
+      pexelsKey: process.env.PEXELS_API_KEY?.trim() || null,
+      // Clients and the competitors watched for them never appear in a post.
+      neverName: PROJECTS.flatMap((p) => [p.name.split(' — ')[0].replace(/ Ads$/, ''), ...(p.watchPages ?? []).map((w) => w.name)]),
     })
     if (notes.length) console.log('[CFO] linkedin-ideas:', notes.join(' · '))
     return drafts

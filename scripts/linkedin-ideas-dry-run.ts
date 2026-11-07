@@ -31,7 +31,9 @@ if (has('--facts')) {
 }
 
 const t0 = Date.now()
-const { drafts, notes } = await linkedinDrafts({ db, anthropic, now, forceIdeasDay: has('--sunday') })
+// With AUTOPILOT on, this runs the autopilot's step instead of the angles, always dry here
+// (scripts/linkedin-autopilot-dry-run.ts is the tool for that, with --run for real).
+const { drafts, notes } = await linkedinDrafts({ db, anthropic, now, forceIdeasDay: has('--sunday'), autopilotDryRun: true })
 console.log(`\n${drafts.length} card(s) in ${((Date.now() - t0) / 1000).toFixed(1)}s${notes.length ? ` · ${notes.join(' · ')}` : ''}\n`)
 for (const d of drafts) console.log(`--- ${d.idempotencyKey}\n${d.text.replace(/<[^>]+>/g, '')}\n`)
 

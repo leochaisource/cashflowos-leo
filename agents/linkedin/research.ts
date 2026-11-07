@@ -62,6 +62,8 @@ For every item output exactly this block:
 - source: publisher / person, and the date
 - url: the exact URL you read it on
 
+Prefer pages anyone can open without a login, paywall or bot wall (newsrooms, news sites, company and investor pages): every item is checked against its page by an automated reader, and an unreadable page can't be used. Give the page's publication date exactly; if you can't see one, say "date not shown".
+
 Rules: only report what a source you opened actually says. Never invent a number, a quote, a role or a date. If you can't verify something, leave it out. Plain text only, no preamble.`
 
 export const RESEARCH_MODEL = 'claude-opus-5-5'
