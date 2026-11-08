@@ -19,8 +19,11 @@ export type CarouselSpec = {
   slides: SlideSpec[]
   q: string
 }
-/** Background image URLs: one for the cover, and one per inner slide (cycled if fewer). */
-export type CarouselImages = { cover: string; inner: string[] }
+/**
+ * Background images (URLs or data: URIs): one for the cover, and one per inner slide (cycled
+ * if fewer). `coverFocus` keeps a point of the cover photo in frame, e.g. Leo's face (0..1).
+ */
+export type CarouselImages = { cover: string; inner: string[]; coverFocus?: { x: number; y: number } }
 
 const W = 1080
 const H = 1350
@@ -63,6 +66,7 @@ function fonts() {
 
 /** Fetch an image once and return it as a data URI. Throws on anything but an image. */
 export async function imageData(url: string): Promise<string> {
+  if (url.startsWith('data:image/')) return url // already fetched (Leo's own photos arrive this way)
   const res = await fetch(url, { signal: AbortSignal.timeout(20_000) })
   const type = res.headers.get('content-type') || ''
   if (!res.ok || !type.startsWith('image/')) throw new Error(`image ${url.slice(0, 80)}: HTTP ${res.status} ${type}`)
@@ -84,18 +88,24 @@ const progress = (n: number, N: number, last = false) =>
     box({ flex: 1, height: 8, borderRadius: 5, background: 'rgba(255,255,255,.35)' }, box({ width: `${Math.round((n / N) * 100)}%`, height: 8, borderRadius: 5, background: BLUE })),
     text({ fontSize: 28, fontWeight: 700, color: '#fff' }, `${n}/${N}`),
   )
-const photo = (src: string, darken: number) => [
-  h('img', { src, width: W, height: H, style: { position: 'absolute', left: 0, top: 0, width: W, height: H, objectFit: 'cover' } }),
+const pct = (n: number) => `${Math.round(Math.min(1, Math.max(0, n)) * 100)}%`
+const photo = (src: string, darken: number, focus?: { x: number; y: number }) => [
+  h('img', {
+    src,
+    width: W,
+    height: H,
+    style: { position: 'absolute', left: 0, top: 0, width: W, height: H, objectFit: 'cover', objectPosition: focus ? `${pct(focus.x)} ${pct(focus.y)}` : 'center' },
+  }),
   box({ position: 'absolute', left: 0, top: 0, width: W, height: H, background: `rgba(0,0,0,${darken})` }),
 ]
 const upper = (s: string) => s.toUpperCase()
 // Post lines can start with an arrow bullet; the slide shows the words only.
 const clean = (s: string) => s.replace(/^\s*(→|->|•|-)\s*/, '').trim()
 
-function coverSlide(c: CarouselSpec['cover'], bg: string, N: number): El {
+function coverSlide(c: CarouselSpec['cover'], bg: string, N: number, focus?: { x: number; y: number }): El {
   return box(
     { width: W, height: H, position: 'relative', fontFamily: FONT, background: '#000' },
-    ...photo(bg, 0.15),
+    ...photo(bg, 0.15, focus),
     box({ position: 'absolute', left: 0, top: 0, width: W, height: H, backgroundImage: 'linear-gradient(to bottom, rgba(0,0,0,.45) 0%, rgba(0,0,0,0) 16%)' }),
     box({ position: 'absolute', left: 0, top: 0, width: W, height: H, backgroundImage: 'linear-gradient(to top, rgba(0,0,0,.92) 0%, rgba(0,0,0,.45) 40%, rgba(0,0,0,0) 68%)' }),
     box(
@@ -177,7 +187,7 @@ export async function renderCarousel(spec: CarouselSpec, images: CarouselImages)
   const inner = await Promise.all(images.inner.map(imageData))
   const N = spec.slides.length + 2
   const els = [
-    coverSlide(spec.cover, cover, N),
+    coverSlide(spec.cover, cover, N, images.coverFocus),
     ...spec.slides.map((s, i) => innerSlide(s, inner[i % inner.length], i + 2, N)),
     endSlide(spec.q, N),
   ]

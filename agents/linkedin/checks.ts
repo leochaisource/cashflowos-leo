@@ -31,9 +31,10 @@ const YEAR = (n: string) => /^\d{4}$/.test(n) && Number(n) >= 2015 && Number(n) 
 
 /**
  * Lint one post. `sourceNumbers` are the numbers in the verified excerpts of its
- * source page; `neverName` adds run-time names (projects, competitors).
+ * source page; `neverName` adds run-time names (projects, competitors, the clients in
+ * Leo's wins sheet); `factNumbers` adds the numbers Leo wrote in that sheet.
  */
-export function lintPost(p: DraftPost, opts: { sourceNumbers: string[]; neverName: string[] }): string[] {
+export function lintPost(p: DraftPost, opts: { sourceNumbers: string[]; neverName: string[]; factNumbers?: string[] }): string[] {
   const problems: string[] = []
   const body = p.body.trim()
   const ls = lines(body)
@@ -63,7 +64,7 @@ export function lintPost(p: DraftPost, opts: { sourceNumbers: string[]; neverNam
   }
 
   // Every number must come from Leo's approved facts or the verified source page.
-  const allowed = new Set([...FACT_NUMBERS, ...opts.sourceNumbers])
+  const allowed = new Set([...FACT_NUMBERS, ...(opts.factNumbers ?? []), ...opts.sourceNumbers])
   const unknown = [...new Set(numbersIn(all))].filter((x) => !allowed.has(x) && !SMALL(x) && !YEAR(x))
   if (unknown.length) problems.push(`number(s) not in the source or Leo's facts: ${unknown.join(', ')}`)
 

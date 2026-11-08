@@ -10,6 +10,9 @@ import { lintPost, numbersIn, quoteProblems } from './checks.ts'
 import { pickImages } from './images.ts'
 import { renderCarousel } from './slides.ts'
 import { leoAccount, scheduleCarousel, scheduledTimes } from './publish.ts'
+import { fetchWins, sourcesConfigured } from './sources.ts'
+import { cataloguePhotos, markPhotoUsed, pickCover } from './photos.ts'
+import type { WriterNote } from './write.ts'
 
 // 👉 THE LINKEDIN AUTOPILOT (owner's call, 2026-11-07): every week it researches,
 // writes, checks, illustrates and schedules Leo's Tue/Wed/Thu 09:00 posts with
@@ -25,8 +28,12 @@ import { leoAccount, scheduleCarousel, scheduledTimes } from './publish.ts'
 // A missed step is retried the next morning while the slot is still far enough
 // ahead. A doubled cron delivery is harmless: rows are unique per week and per slot.
 //
-// What may be said about Leo is a closed list (kit.ts); every post passes plain-
-// code checks (checks.ts) and a source check that opens the page (verify.ts).
+// What may be said about Leo is a closed list (kit.ts) plus what he adds himself to
+// his wins sheet (sources.ts, 2026-11-08); every post passes plain-code checks
+// (checks.ts) and a source check that opens the page (verify.ts).
+// His photos folder is sorted on quiet mornings (Tue-Fri, a few photos at a time;
+// photos.ts), and on Monday one of his photos replaces the stock cover when it fits
+// the post, at most once a week.
 
 const MYT = 8 * 3600_000
 const DAY = 86_400_000
@@ -66,6 +73,15 @@ function card(key: string, title: string, lines: string[]): AutopilotCard {
 /** Was this Postgres error "that row already exists" (a doubled cron run)? */
 const duplicate = (e: { code?: string } | null) => e?.code === '23505'
 
+// Words in the wins sheet's client column that describe rather than name (never blocked in posts).
+const GENERIC = /\b(client|clients|company|business|brand|agency|project|internal|own|personal|myself|speakfunnels|n\/a|none)\b/i
+/** The names in the sheet's private client column: these must never appear in a post. */
+const clientNames = (s: string) =>
+  s
+    .split(/[,/;&]|\band\b/i)
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 4 && !GENERIC.test(x))
+
 export async function autopilotStep(args: {
   db: SupabaseClient
   anthropic: Anthropic
@@ -82,7 +98,24 @@ export async function autopilotStep(args: {
   const notes: string[] = []
   const log = args.log ?? (() => {})
   const block = postingBlock(now)
-  if (now < block.opens) return { cards, notes: [`autopilot idle until ${block.opens.toISOString().slice(0, 10)} (week ${block.week})`] }
+  const started = Date.now()
+  // Sort new photos in Leo's folder with whatever time this run has left. Never on a dry
+  // run, never fatal: a photo problem only means the stock cover.
+  const catalogue = async (budgetMs: number, max: number) => {
+    if (args.dryRun || !sourcesConfigured() || budgetMs < 15_000) return
+    try {
+      const r = await cataloguePhotos({ db, anthropic, budgetMs, max, log })
+      if (r.added || r.waiting) notes.push(`photos: ${r.added} newly sorted${r.waiting ? `, ${r.waiting} still waiting` : ''}`)
+      notes.push(...r.notes.slice(0, 5).map((n) => `photos: ${n}`))
+    } catch (e) {
+      notes.push(`photos: ${(e as Error).message}`)
+    }
+  }
+  if (now < block.opens) {
+    notes.push(`autopilot idle until ${block.opens.toISOString().slice(0, 10)} (week ${block.week})`)
+    await catalogue(100_000, 15)
+    return { cards, notes }
+  }
   const today = new Date(now.getTime() + MYT).toISOString().slice(0, 10)
 
   // Monday: warn two weeks before the LinkedIn connection in GHL expires (only Leo can reconnect it).
@@ -139,6 +172,32 @@ export async function autopilotStep(args: {
   if (open.length) {
     log(`step: write ${open.length} post(s) for ${open.map((s) => s.label).join(', ')}`)
     const facts = await loadWeekFacts(db, now)
+    // Leo's own notes (his wins sheet): approved facts he adds himself. If the sheet can't be
+    // read, the week goes ahead on the facts already on file, and he's told once.
+    let leoNotes: WriterNote[] = []
+    let noteNumbers: string[] = []
+    let noteNames: string[] = []
+    if (sourcesConfigured()) {
+      try {
+        const wins = await fetchWins()
+        const { data: past } = await db
+          .from('linkedin_autopilot')
+          .select('slot, data')
+          .eq('kind', 'post')
+          .eq('status', 'scheduled')
+          .gte('slot', new Date(now.getTime() - 84 * DAY).toISOString())
+        const usedOn = new Map<string, string>()
+        for (const r of past ?? []) for (const id of (r as any).data?.post?.leo_notes_used ?? []) usedOn.set(id, dayLabel(new Date((r as any).slot)))
+        leoNotes = wins.slice(0, 40).map((w) => ({ id: w.id, date: w.date, type: w.type, text: w.text, numbers: w.numbers, usedOn: usedOn.get(w.id) }))
+        noteNumbers = wins.flatMap((w) => numbersIn(`${w.text} ${w.numbers}`))
+        noteNames = wins.flatMap((w) => clientNames(w.client))
+        notes.push(`wins sheet: ${wins.length} note(s), ${leoNotes.filter((n) => !n.usedOn).length} not used yet`)
+      } catch (e) {
+        const msg = (e as Error).message
+        notes.push(`wins sheet: ${msg}`)
+        cards.push(card(`wins:${block.week}`, "couldn't read your wins sheet.", [`${msg}.`, "This week's posts use only the facts already on file."]))
+      }
+    }
     const { data: recent } = await db
       .from('linkedin_posts')
       .select('slot, topic, hook_type')
@@ -153,6 +212,7 @@ export async function autopilotStep(args: {
       avoidHookTypes: (recent ?? []).map((r: any) => r.hook_type).filter(Boolean),
       avoidTopic: (recent ?? [])[0]?.topic ?? null,
       days: open.map((s) => s.label),
+      notes: leoNotes,
     })
     // Check every candidate (in parallel): the source page first, then the plain-code rules.
     const checked = await Promise.all(
@@ -167,7 +227,7 @@ export async function autopilotStep(args: {
           excerpts = v.excerpts
           page = v.page
         }
-        problems.push(...lintPost(p, { sourceNumbers: excerpts.flatMap(numbersIn), neverName: args.neverName }))
+        problems.push(...lintPost(p, { sourceNumbers: excerpts.flatMap(numbersIn), neverName: [...args.neverName, ...noteNames], factNumbers: noteNumbers }))
         problems.push(...quoteProblems(p.body, p.source_quotes, excerpts))
         return { post: p, problems, excerpts, page }
       }),
@@ -214,8 +274,15 @@ export async function autopilotStep(args: {
   }
 
   // ③ PHOTOS + SLIDES + SCHEDULE (normally Monday). One post at a time, within the run's budget.
-  const started = Date.now()
-  for (const r of (rows ?? []).filter((x: any) => x.status === 'drafted')) {
+  const drafted = (rows ?? []).filter((x: any) => x.status === 'drafted')
+  // A quiet morning (Tue-Fri): nothing to schedule, so sort Leo's new photos instead.
+  if (!drafted.length) {
+    await catalogue(100_000, 15)
+    return { cards, notes }
+  }
+  // Photos he added over the weekend still count for this week's covers.
+  await catalogue(25_000, 3)
+  for (const r of drafted) {
     const slot = new Date(r.slot)
     const label = dayLabel(slot)
     if (slot.getTime() < now.getTime() + 2 * HOUR) {
@@ -232,12 +299,23 @@ export async function autopilotStep(args: {
     try {
       if (!args.pexelsKey) throw new Error('PEXELS_API_KEY is not set on Vercel')
       const images = await pickImages(anthropic, args.pexelsKey, post.body.split('\n')[0], post.image_queries)
-      const slides = await renderCarousel(post.carousel, images)
+      // One of Leo's own photos as the cover, when it fits this post (photos.ts). The stock cover stays the fallback.
+      let cover: Awaited<ReturnType<typeof pickCover>> = null
+      if (sourcesConfigured()) {
+        try {
+          cover = await pickCover({ db, anthropic, week: block.week, slot, post, log })
+        } catch (e) {
+          notes.push(`${label}: kept the stock cover (${(e as Error).message})`)
+        }
+      }
+      const slides = await renderCarousel(post.carousel, cover ? { ...images, cover: cover.dataUri, coverFocus: cover.focus } : images)
       const slug = slugOf(post.body)
       const firstComment = `Source: ${post.body.split('\n').map((l) => l.trim()).filter(Boolean).pop()?.replace(/^Source:\s*/, '') ?? ''}: ${post.source_url}`
-      if (args.dryRun) return { cards, notes, preview: { slot: r.slot, images, slides, firstComment, body: post.body } }
+      if (args.dryRun) return { cards, notes, preview: { slot: r.slot, images, cover: cover && { id: cover.id, name: cover.name, why: cover.why }, slides, firstComment, body: post.body } }
       const id = await scheduleCarousel({ body: post.body, slides, slug, firstComment, slot })
-      await db.from('linkedin_autopilot').update({ status: 'scheduled', ghl_post_id: id, note: null, data: { ...r.data, images: images.ids, first_comment: firstComment }, updated_at: new Date().toISOString() }).eq('id', r.id)
+      const coverPhoto = cover ? { id: cover.id, name: cover.name, why: cover.why } : null
+      await db.from('linkedin_autopilot').update({ status: 'scheduled', ghl_post_id: id, note: null, data: { ...r.data, images: images.ids, cover_photo: coverPhoto, first_comment: firstComment }, updated_at: new Date().toISOString() }).eq('id', r.id)
+      if (cover) await markPhotoUsed(db, cover.id, slot)
       // The calendar copy the Sunday checks (and the laptop) read, so nothing repeats.
       await db.from('linkedin_posts').upsert(
         {
@@ -246,7 +324,7 @@ export async function autopilotStep(args: {
           slot: slot.toISOString(),
           topic: post.topic,
           hook_type: post.hook_type,
-          photo: `pexels-${images.ids[0]}`,
+          photo: cover ? `drive:${cover.name}` : `pexels-${images.ids[0]}`,
           hook: post.body.split('\n')[0].trim(),
           source: `autopilot: ${post.source_url}`,
           ghl_post_id: id,

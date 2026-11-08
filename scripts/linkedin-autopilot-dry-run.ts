@@ -59,12 +59,12 @@ else if (Array.isArray(p)) {
   for (const [i, c] of p.entries()) {
     console.log(`\n===== DRAFT ${i + 1} · ${c.post.hook_type} · ${c.post.topic} · ${c.problems.length ? `DROPPED (${c.problems.length})` : 'PASSES'} =====`)
     console.log(c.post.body)
-    console.log(`\nsource: ${c.post.source_url || '(none)'}\npage: ${c.page}\nleo_link: ${c.post.leo_link}`)
+    console.log(`\nsource: ${c.post.source_url || '(none)'}\npage: ${c.page}\nleo_link: ${c.post.leo_link}${c.post.leo_notes_used?.length ? `\nLeo's notes used: ${c.post.leo_notes_used.join(', ')}` : ''}`)
     for (const x of c.problems) console.log(`  ✗ ${x}`)
   }
 } else if (p?.slides) {
   const out = arg('--out') ?? join(process.cwd(), 'tmp-autopilot')
   mkdirSync(out, { recursive: true })
   p.slides.forEach((b: Buffer, i: number) => writeFileSync(join(out, `slide-${String(i + 1).padStart(2, '0')}.png`), b))
-  console.log(`\n${p.slides.length} slides for ${p.slot} → ${out}\nphotos: ${p.images.ids.join(', ')}\nfirst comment: ${p.firstComment}`)
+  console.log(`\n${p.slides.length} slides for ${p.slot} → ${out}\nphotos: ${p.images.ids.join(', ')}\ncover: ${p.cover ? `Leo's photo ${p.cover.name} (${p.cover.why})` : 'stock'}\nfirst comment: ${p.firstComment}`)
 }

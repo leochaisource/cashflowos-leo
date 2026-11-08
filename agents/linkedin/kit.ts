@@ -9,6 +9,9 @@
 //   • TAKES: his opinions.
 // Anything not on these lists can't appear, and the code checks back (checks.ts):
 // a number in a post must come from FACTS or the verified source page.
+// Since 2026-11-08 Leo also adds new wins himself, in his Google Sheet "My wins and
+// stories (for LinkedIn)" (sources.ts); those rows count as approved too. This list
+// stays the base; its copy in the sheet's "Already on file" tab is for him to read.
 //
 // ⚠️ KEEP THIS FILE RUNTIME-IMPORT-FREE (the dry-run script runs it under plain node).
 

@@ -5,8 +5,9 @@ import type { CarouselImages } from './slides.ts'
 // 👉 PHOTOS — stock backgrounds from Pexels, picked by Claude looking at the
 // actual pictures (one contact sheet per post), not by their alt text. The rules
 // are Leo's (linkedin skill, Step 5): show the hook's idea; no brand logos, no
-// readable text, no identifiable people who'd seem to endorse the post. Covers
-// are always stock in autopilot; Leo's own photos stay a laptop-session choice.
+// readable text, no identifiable people who'd seem to endorse the post. Every post
+// gets a stock cover here; photos.ts may then swap in one of Leo's own photos when
+// it fits the post (at most once a week), and this stock cover is the fallback.
 
 export const PICK_MODEL = 'claude-opus-5-5'
 
