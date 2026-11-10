@@ -11,13 +11,15 @@ import CustomerAdTable from '@/app/_components/CustomerAdTable'
 import RefreshButton from '@/app/_components/RefreshButton'
 import FunnelEntryForm from '@/app/_components/FunnelEntryForm'
 import NextSteps from '@/app/_components/NextSteps'
+import ProgressBand from '@/app/_components/ProgressBand'
+import { progressSince, type ProgressLine } from '@/lib/progress'
 import ProjectTabs from '@/app/_components/ProjectTabs'
 import { findWorkProject, stepsFor, type WorkProject } from '@/lib/work-projects'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { journeyFor } from '@/lib/funnel-config'
 import { funnelView } from '@/lib/funnel-view'
 import type { Rec } from '@/lib/records'
-import { money, num, pct, times, whenShort, dateLong, daysUntil, DASH } from '@/lib/format'
+import { money, num, pct, times, whenShort, dateLong, daysUntil, DASH, klToday } from '@/lib/format'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,6 +36,12 @@ export const dynamic = 'force-dynamic'
 // Matches the home grid — see the note there on why 30 and not 14.
 const WINDOW_DAYS = 30
 
+/** What got done for this client in the last two weeks (lib/progress.ts). Never breaks the page. */
+async function recentProgress(project: string): Promise<ProgressLine[]> {
+  if (!supabaseConfigured) return []
+  return progressSince(supabase, new Date(Date.now() - 14 * 86_400_000).toISOString(), project).catch(() => [])
+}
+
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const project = getProject(id)
@@ -43,20 +51,23 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     const rows = await getRecords()
     const work = findWorkProject(rows, id)
     if (!work) notFound()
-    return <WorkProjectPage work={work} rows={rows} />
+    return <WorkProjectPage work={work} rows={rows} progress={await recentProgress(work.slug)} />
   }
   // A demo project doesn't exist while the demo switch is off — 404, rather than
   // a live-looking page for a client that isn't yours reachable by URL.
   if (project.demo && !(await demoEnabled())) notFound()
 
-  const [s, allRecords, funnel] = await Promise.all([
+  const [s, allRecords, funnel, progress] = await Promise.all([
     projectScorecard(project, WINDOW_DAYS),
     getRecords(),
     // Ads by customers, not by cost per lead (owner, 2026-10-22) — where the
     // leads' purchases are known. Elsewhere the CPL tables stay.
     journeyFor(project.id) && supabaseConfigured ? funnelView(supabase, project).catch(() => null) : Promise.resolve(null),
+    recentProgress(project.id),
   ])
-  const steps = stepsFor(allRecords, project.id)
+  // Malaysia's date, not UTC: before 8am the UTC date is still yesterday.
+  const today = klToday()
+  const steps = stepsFor(allRecords, project.id, today)
   // One customer from a handful of leads is luck, not a winner (the Funnel tab lists every ad).
   const withCustomers = funnel?.creatives.filter((c) => c.customers >= 2 && c.spend) ?? []
   const bestAds = [...withCustomers].sort((a, b) => a.costPerCustomer! - b.costPerCustomer!).slice(0, 6)
@@ -128,7 +139,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       )}
 
       {/* ─────────────────────────────── NEXT STEPS (the mini PM) */}
-      <NextSteps projectId={project.id} open={steps.open} done={steps.done} today={todayISO()} />
+      <NextSteps projectId={project.id} open={steps.open} done={steps.done} today={today} />
+      <ProgressBand lines={progress} today={today} />
 
       {/* ─────────────────────────────── ADS */}
       <p className="rowlabel">Ads — from Meta</p>
@@ -514,8 +526,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
 // and whatever receipts have been filed against it. Dr Tariq's malware fix and
 // the Firstin5 build live here; the ads scorecard above is for ad clients.
 // ============================================================
-function WorkProjectPage({ work, rows }: { work: WorkProject; rows: Rec[] }) {
-  const today = todayISO()
+function WorkProjectPage({ work, rows, progress }: { work: WorkProject; rows: Rec[]; progress: ProgressLine[] }) {
+  const today = klToday()
   const steps = stepsFor(rows, work.slug, today)
   const overdueProject = !!work.due && work.due < today && !['done', 'completed', 'closed'].includes(work.status.toLowerCase())
   const dueDays = daysUntil(work.due)
@@ -569,6 +581,7 @@ function WorkProjectPage({ work, rows }: { work: WorkProject; rows: Rec[] }) {
       {work.notes ? <div className="banner info">{work.notes}</div> : null}
 
       <NextSteps projectId={work.slug} open={steps.open} done={steps.done} today={today} />
+      <ProgressBand lines={progress} today={today} />
 
       {costs.length > 0 && (
         <div className="band">

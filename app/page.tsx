@@ -4,6 +4,8 @@ import { scorecards, ratio } from '@/lib/metrics'
 import { getRecords, todayISO } from '@/lib/records'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import ProjectCard from '@/app/_components/ProjectCard'
+import TodayBand from '@/app/_components/TodayBand'
+import { loadDigest } from '@/lib/progress'
 import Stat from '@/app/_components/Stat'
 import { workProjectsFrom, stepsSummary } from '@/lib/work-projects'
 import { money, num } from '@/lib/format'
@@ -40,10 +42,12 @@ export default async function Home() {
   // Which projects exist right now depends on the demo switch (lib/settings.ts).
   // Ranked projects first — the focus list the morning brief covers — then the rest.
   const projects = (await activeProjects()).slice().sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99))
-  const [cards, waiting, rows] = await Promise.all([
+  const [cards, waiting, rows, digest] = await Promise.all([
     scorecards(projects, WINDOW_DAYS),
     proposedCount(),
     getRecords(),
+    // The Today band: client to-dos and progress (lib/progress.ts). Never breaks Home.
+    supabaseConfigured ? loadDigest(supabase).catch(() => null) : Promise.resolve(null),
   ])
 
   const all = projects.map((p) => ({ project: p, card: cards.get(p.id)! }))
@@ -76,6 +80,8 @@ export default async function Home() {
         <Stat label="Active ads" value={activeAds} />
         <Stat label="🙋 Needs your YES" value={waiting} yes={waiting > 0} href="/approvals" />
       </div>
+
+      {digest ? <TodayBand digest={digest} /> : null}
 
       {focus.length > 0 && (
         <>

@@ -87,6 +87,16 @@ export async function addStep(
   return { ok: true, message: due ? `Added — due ${due}.` : 'Added (no deadline).' }
 }
 
+/** Take a step off the list without calling it done (a wrong or stale auto-added one). Reopen it from "Show done". */
+export async function dismissStep(taskId: number): Promise<ActionResult> {
+  if (!Number.isInteger(taskId)) return { ok: false, message: 'Unknown task.' }
+  if (!supabaseConfigured) return { ok: false, message: 'Supabase isn’t connected yet.' }
+  const { error } = await supabase.from('records').update({ status: 'dismissed' }).eq('id', taskId).eq('category', 'task')
+  if (error) return { ok: false, message: error.message }
+  revalidatePath('/', 'layout')
+  return { ok: true, message: 'Removed from the list.' }
+}
+
 /** Tick a step off, or untick it. Flips status only — nothing is deleted. */
 export async function setStepDone(taskId: number, done: boolean): Promise<ActionResult> {
   if (!Number.isInteger(taskId)) return { ok: false, message: 'Unknown task.' }

@@ -18,7 +18,9 @@ import { todayISO } from './records'
 // server-only import: the crons, the pages and the bot all reuse it against the
 // one getRecords() call they each already make.
 
-const DONE = new Set(['done', 'completed', 'complete', 'closed', 'shipped', 'reversed'])
+// dismissed = removed from the list by hand; expired = an undated Claude-added
+// to-do nobody touched for 28 days (lib/progress.ts). Both can be reopened.
+const DONE = new Set(['done', 'completed', 'complete', 'closed', 'shipped', 'reversed', 'dismissed', 'expired'])
 export const isDone = (r: Rec) => DONE.has((r.status || '').toLowerCase())
 
 export type WorkProject = {
@@ -70,6 +72,10 @@ export type Step = {
   done: boolean
   overdue: boolean
   owner: string | null
+  /** Where an automatically added step came from (lib/progress.ts): code | chat | telegram. */
+  from: string | null
+  /** How a closed step was closed, when not simply done. */
+  closedAs: 'dismissed' | 'expired' | null
 }
 
 /**
@@ -86,6 +92,8 @@ export function stepsFor(rows: Rec[], projectId: string, today = todayISO()): { 
       done: isDone(r),
       overdue: !isDone(r) && !!r.due_date && r.due_date < today,
       owner: (r.meta?.owner as string) ?? null,
+      from: (r.meta?.from as string) ?? null,
+      closedAs: (['dismissed', 'expired'].includes((r.status || '').toLowerCase()) ? r.status.toLowerCase() : null) as Step['closedAs'],
     }))
   const open = all
     .filter((s) => !s.done)

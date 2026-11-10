@@ -1,7 +1,7 @@
 'use client'
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { addStep, setStepDone } from '@/app/projects/[id]/actions'
+import { addStep, dismissStep, setStepDone } from '@/app/projects/[id]/actions'
 import type { Step } from '@/lib/work-projects'
 
 // The mini project-management band: the project's next steps, tick-offable,
@@ -10,6 +10,10 @@ import type { Step } from '@/lib/work-projects'
 //
 // Ticking is optimistic: the row greys instantly, the server catches up, and
 // router.refresh() re-renders the page (and the sidebar counts) from truth.
+//
+// Steps Claude added from a session, a chat or Telegram (lib/progress.ts) carry a
+// small "from …" label, and any open step can be removed with ✕ (dismissed, not
+// done) — the owner's way to throw out a to-do that was picked up wrongly.
 
 export default function NextSteps({
   projectId,
@@ -38,6 +42,17 @@ export default function NextSteps({
       if (!r.ok) setMsg({ ok: false, text: r.message })
       router.refresh()
     })
+
+  const dismiss = (id: number) =>
+    start(async () => {
+      setBusy(id)
+      const r = await dismissStep(id)
+      setBusy(null)
+      if (!r.ok) setMsg({ ok: false, text: r.message })
+      router.refresh()
+    })
+
+  const FROM: Record<string, string> = { code: 'from Claude · Code', chat: 'from Claude · chat', telegram: 'from Telegram' }
 
   const add = () =>
     start(async () => {
@@ -82,8 +97,21 @@ export default function NextSteps({
                 disabled={pending && busy === s.id}
                 onClick={() => tick(s.id, true)}
               />
-              <span className="t">{s.title}</span>
+              <span className="t">
+                {s.title}
+                {s.from ? <span className="from">{FROM[s.from] ?? `from ${s.from}`}</span> : null}
+              </span>
               <span className="d">{dueLabel(s)}</span>
+              <button
+                type="button"
+                className="stepx"
+                aria-label={`Remove “${s.title}” from the list`}
+                title="Remove from the list (not done)"
+                disabled={pending && busy === s.id}
+                onClick={() => dismiss(s.id)}
+              >
+                ✕
+              </button>
             </li>
           ))}
         </ul>
@@ -127,7 +155,7 @@ export default function NextSteps({
                     ✓
                   </button>
                   <span className="t">{s.title}</span>
-                  <span className="d">{s.due ?? ''}</span>
+                  <span className="d">{s.closedAs === 'dismissed' ? 'removed' : s.closedAs === 'expired' ? 'expired' : (s.due ?? '')}</span>
                 </li>
               ))}
             </ul>

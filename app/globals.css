@@ -611,6 +611,30 @@ h1, h2, h3, .ph { font-family: var(--font-head); }
 .stepchk:hover { border-color: var(--good); }
 .stepchk.on { background: var(--good); border-color: var(--good); }
 .stepchk:disabled { opacity: .5; cursor: default; }
+/* a step Claude added (lib/progress.ts), and the ✕ that removes any open step */
+.step .from { display: inline-block; margin-left: 8px; font-size: 10.5px; font-weight: 700; letter-spacing: .02em; color: var(--accent-ink); background: var(--accent-tint); border-radius: var(--r-pill); padding: 1px 7px; vertical-align: 1px; white-space: nowrap; }
+.stepx { flex-shrink: 0; width: 28px; height: 28px; border: none; background: none; color: var(--ink-faint); border-radius: 8px; cursor: pointer; font-size: 13px; line-height: 1; opacity: .55; transition: opacity .15s ease, background .15s ease, color .15s ease; }
+.step:hover .stepx, .stepx:focus-visible { opacity: 1; }
+.stepx:hover { background: var(--bad-tint); color: var(--bad-ink); }
+.stepx:disabled { opacity: .3; cursor: default; }
+@media (hover: none) { .stepx { opacity: .8; } }
+
+/* ---- client progress: the Progress band (project pages) and the Today band (Home) ---- */
+.prog-day { font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); margin: 14px 0 6px; }
+.prog-day:first-child { margin-top: 0; }
+.prog { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.prog li { display: flex; gap: 9px; align-items: baseline; font-size: 14px; color: var(--ink); line-height: 1.45; }
+.prog li::before { content: '✓'; color: var(--good-ink); font-weight: 700; flex-shrink: 0; }
+.prog .src { flex-shrink: 0; margin-left: auto; font-size: 11px; color: var(--ink-faint); white-space: nowrap; }
+.today-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.today-client h3 { font-family: var(--font-head); font-size: 14px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 8px; }
+.today-client h3 a { color: var(--ink); text-decoration: none; }
+.today-client h3 a:hover { color: var(--accent-ink); }
+.today-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 13.5px; }
+.today-list .late { color: var(--bad-ink); font-weight: 600; }
+.today-list .now { color: var(--warn-ink); font-weight: 600; }
+.today-list .did { color: var(--ink-soft); }
+.today-list .did::before { content: '✓ '; color: var(--good-ink); font-weight: 700; }
 .pc-steps { font-size: 12px; color: var(--ink-soft); margin: 8px 0 0; }
 .pc-steps .late { color: var(--bad-ink); font-weight: 700; }
 
