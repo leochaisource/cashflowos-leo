@@ -7,6 +7,7 @@ import { accountInsights } from './meta'
 import { loadSheetLeads, type SheetLead } from './leads-sheet'
 import { todayISO, type Rec } from './records'
 import { clip } from './format'
+import { BOT_LIBRARY_TOOLS, LIBRARY_TOOL_NAMES, runBotLibraryTool } from './bot-library-tools'
 import {
   searchArchivedAds,
   loadAdFacets,
@@ -249,6 +250,8 @@ export const BOT_ADS_TOOLS = [
       required: [],
     },
   },
+  // The AI Library (lib/bot-library-tools.ts): case studies + the Saturday ideas.
+  ...BOT_LIBRARY_TOOLS,
 ]
 
 export const ADS_TOOL_NAMES = new Set(BOT_ADS_TOOLS.map((t) => t.name))
@@ -402,6 +405,8 @@ async function lookupPerson(q: string, rows: Rec[], pool: Project[] = PROJECTS):
 // ---------------------------------------------------------------- execution
 export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []): Promise<string> {
   try {
+    if (LIBRARY_TOOL_NAMES.has(name)) return await runBotLibraryTool(name, input)
+
     const days = Number.isFinite(Number(input?.days)) ? Math.min(Math.max(Number(input.days), 1), 90) : WINDOW
 
     // Which clients exist right now — the demo switch can hide the samples.

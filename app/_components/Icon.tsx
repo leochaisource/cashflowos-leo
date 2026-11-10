@@ -3,7 +3,7 @@
 // files, so nothing here can be caught by the passcode gate in proxy.ts.
 export type IconName =
   | 'grid' | 'chart' | 'agency' | 'cash-in' | 'cash-out' | 'leads' | 'customers'
-  | 'content' | 'tasks' | 'approvals' | 'bot' | 'vault' | 'settings' | 'more' | 'sun' | 'moon'
+  | 'content' | 'tasks' | 'approvals' | 'bot' | 'vault' | 'settings' | 'more' | 'sun' | 'moon' | 'book'
 
 const PATHS: Record<IconName, React.ReactNode> = {
   grid: (
@@ -76,6 +76,13 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <rect x="4.5" y="8" width="15" height="12" rx="3" />
       <path d="M12 4.5V8M9.5 13v1.5M14.5 13v1.5M2.5 13v3M21.5 13v3" />
       <circle cx="12" cy="3.5" r="1" />
+    </>
+  ),
+  // The AI Library: an open book.
+  book: (
+    <>
+      <path d="M12 6.5C10.2 5.2 7.6 4.5 4 4.5v13c3.6 0 6.2.7 8 2 1.8-1.3 4.4-2 8-2v-13c-3.6 0-6.2.7-8 2z" />
+      <path d="M12 6.5v13" />
     </>
   ),
   vault: (

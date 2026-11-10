@@ -103,6 +103,13 @@ export const AGENTS: AgentMeta[] = [
     autonomyNote:
       '🟢 Weekly, on its own (your call, 2026-11-07): Saturday research, Sunday writes and fact-checks, Monday schedules your Tue/Wed/Thu 9am posts with stock-photo carousels. You only hear from it when a slot stays empty or a post fails to publish.',
   },
+  {
+    key: 'ai-library',
+    label: 'AI Library Researcher',
+    emoji: '📚',
+    autonomyNote:
+      '🟢 Tue–Fri, on its own: finds up to 3 real AI case studies a morning, checks each page, and files them in your AI Library. 🟡 Saturday: 3 ideas for your own setup; ✅ puts one on your Tasks, ❌ = not for me.',
+  },
 ]
 
 // ------------------------------------------------------------
@@ -325,6 +332,28 @@ async function queueLinkedIn(payload: any): Promise<any> {
   return result
 }
 
+// ---- aiLibraryIdea: the Saturday idea ✅ -------------------------------------
+// ✅ = "I want this": the idea goes on the Tasks tab with its first step, and the
+// library marks it wanted (next Saturday's ideas read that). A note card's ✅ is
+// just "seen". No network call, nothing leaves the building.
+async function aiLibraryIdea(payload: any): Promise<any> {
+  if (payload?.kind !== 'ai_idea') {
+    await logRun('ai-library', 'ok', { seen: true })
+    return { kind: 'ai_library_note_seen', seen_at: new Date().toISOString() }
+  }
+  const task = await writeRecord('ai-library', {
+    op: 'insert',
+    category: 'task',
+    title: `AI idea: ${String(payload?.title ?? 'from the AI Library')}`,
+    note: `First step: ${String(payload?.first_step ?? '')}\nFrom the AI Library's ideas for ${String(payload?.week ?? 'this week')}.`,
+    meta: { from: 'ai-library', suggestion_id: payload?.suggestion_id ?? null },
+  })
+  if (payload?.suggestion_id && supabaseConfigured) {
+    await supabase.from('ai_library_suggestions').update({ status: 'wanted', updated_at: new Date().toISOString() }).eq('id', payload.suggestion_id)
+  }
+  return { ...task, kind: 'ai_idea_wanted', suggestion_id: payload?.suggestion_id ?? null }
+}
+
 export const EXECUTORS: Record<string, Executor> = {
   // The two that write money/docs (Vault = the photo pipeline, Expense = its
   // threshold specialisation). Both file into the ONE records table.
@@ -351,6 +380,8 @@ export const EXECUTORS: Record<string, Executor> = {
   job_apply: (p) => queueJob(p),
   // LinkedIn Ideas — approval only queues an angle; the post is written with you in /linkedin-posts.
   'linkedin-ideas': (p) => queueLinkedIn(p),
+  // AI Library — ✅ on a Saturday idea puts it on Tasks; nothing else happens.
+  'ai-library': (p) => aiLibraryIdea(p),
 }
 
 // ============================================================
@@ -374,6 +405,8 @@ import { headline as marketingHeadline, suggest as marketingSuggest } from './ma
 import { claudeClient } from '@/lib/claude-usage'
 import { linkedinDrafts } from './linkedin/run'
 import { PROJECTS } from '@/lib/ad-clients'
+import { APP_URL } from '@/lib/brief-digest'
+import { stepFor as libraryStepFor } from './ai-library/run'
 
 // `auto: true` = this one is 🟢 graduated (autopilot: run it, then just tell me).
 // Omitted/false = 🟡 ask first (the safe default every agent starts on).
@@ -493,4 +526,44 @@ const linkedinIdeasCheck: ScheduledCheck = {
   },
 }
 
-export const SCHEDULED: ScheduledCheck[] = [overdueInvoiceCheck, marketingTriageCheck, linkedinIdeasCheck]
+// Learning · AI Library: Tue–Sun this only STARTS /api/ai-library, its own request
+// with its own 300 seconds (research Tue–Fri, ideas Saturday, Sunday catch-up;
+// agents/ai-library/run.ts), and the route sends its own cards. It runs before the
+// LinkedIn check so a long LinkedIn morning can't delay the start. Only a failed
+// start becomes a card here, once a day.
+const aiLibraryCheck: ScheduledCheck = {
+  key: 'ai-library',
+  label: 'AI Library Researcher',
+  check: async (_rows, today) => {
+    const planned = libraryStepFor(new Date())
+    if (!planned) return []
+    const secret = process.env.CRON_SECRET?.trim()
+    let why = 'CRON_SECRET is not set'
+    if (secret) {
+      try {
+        const r = await fetch(`${APP_URL}/api/ai-library`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${secret}` },
+          signal: AbortSignal.timeout(20_000),
+        })
+        if (r.status === 202) return []
+        why = `it answered ${r.status}`
+      } catch (e) {
+        why = (e as Error).name === 'TimeoutError' ? 'it timed out' : (e as Error).message.slice(0, 120)
+      }
+    }
+    const what = planned.step === 'suggest' ? "this week's ideas" : "today's research"
+    return [
+      {
+        idempotencyKey: `ai-library:start:${today}`,
+        payload: { kind: 'auto_note', text: `AI Library: ${what} didn't start (${why})` },
+        text:
+          `⚠️ <b>AI Library</b>: ${what} didn't start (${why}). ` +
+          (planned.step === 'suggest' ? 'It tries again tomorrow morning.' : 'Tomorrow morning researches as usual.') +
+          '\n✅ or ❌ = seen.',
+      },
+    ]
+  },
+}
+
+export const SCHEDULED: ScheduledCheck[] = [overdueInvoiceCheck, marketingTriageCheck, aiLibraryCheck, linkedinIdeasCheck]

@@ -40,6 +40,7 @@ export const navGroups = (projects: NavProject[]): { label: string; tabs: NavTab
   { label: 'Robot', tabs: [
     { href: '/approvals', label: 'Approvals', icon: 'approvals' },
     { href: '/employees', label: 'AI Employees', icon: 'bot' },
+    { href: '/library', label: 'AI Library', icon: 'book' },
     { href: '/vault', label: 'Vault', icon: 'vault' },
     { href: '/settings', label: 'Settings', icon: 'settings' },
   ] },
