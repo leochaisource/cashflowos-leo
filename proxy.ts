@@ -33,6 +33,9 @@ export function proxy(req: NextRequest) {
 //   • /api/intent-batch       — the overnight half-price lead judging, same hourly trigger (same Bearer)
 //   • /api/lead-journey       — the funnel's Call Log feed + morning journey rebuild, same trigger (same Bearer)
 //   • /api/ai-library         — the AI Library's research/ideas run, started by the 9am cron (fail-closed CRON_SECRET Bearer)
+//   • /api/progress           — the laptop's client-progress sync (fail-closed PROGRESS_SECRET Bearer)
+//   • /api/mcp/<key>          — the claude.ai / Cowork connector; called from Anthropic's cloud, which can't
+//     log in, so it carries its own unguessable key in the path (wrong key → 404)
 //   • /api/calendar           — the ICS feed Google Calendar subscribes to; calendar
 //     fetchers can't log in or send headers, so it carries its own URL token
 //   • /manifest.webmanifest   — the REAL PWA manifest (app/manifest.ts serves HERE);
@@ -44,6 +47,6 @@ export function proxy(req: NextRequest) {
 // A single missed exclusion here = a locked webhook on class day, so this list is tested.
 export const config = {
   matcher: [
-    '/((?!login|api/login|api/telegram|api/cron-daily|api/cron-ads|api/sync-ads|api/eventops|api/hotleads-sync|api/hotlist-tick|api/intent-batch|api/lead-journey|api/closer-coach|api/ai-library|api/calendar|manifest\\.webmanifest|manifest\\.json|icons|icon\\.png|_next|favicon\\.ico).*)',
+    '/((?!login|api/login|api/telegram|api/cron-daily|api/cron-ads|api/sync-ads|api/eventops|api/hotleads-sync|api/hotlist-tick|api/intent-batch|api/lead-journey|api/closer-coach|api/ai-library|api/progress|api/mcp|api/calendar|manifest\\.webmanifest|manifest\\.json|icons|icon\\.png|_next|favicon\\.ico).*)',
   ],
 }
