@@ -31,6 +31,13 @@ export type ClaudeJsonArgs = {
   cacheSystem?: boolean
   user: string
   schema: Record<string, unknown>
+  /**
+   * Per-call SDK limits. The default (4 retries, the SDK's 10-minute timeout) can
+   * outlast a 300s Vercel function; a caller that retries on its next run anyway
+   * (the progress sorter) passes something short.
+   */
+  timeoutMs?: number
+  maxRetries?: number
 }
 
 /** The request body claudeJson sends, without the server-side fallback — also what a Batch API request carries. */
@@ -65,7 +72,7 @@ export async function claudeJson<T>(args: ClaudeJsonArgs & { anthropic: Anthropi
     }
     return args.anthropic.beta.messages.create(
       params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
-      { maxRetries: 4 },
+      { maxRetries: args.maxRetries ?? 4, ...(args.timeoutMs ? { timeout: args.timeoutMs } : {}) },
     )
   }
   let model = args.model

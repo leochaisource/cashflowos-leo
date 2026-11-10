@@ -45,6 +45,7 @@ const FEATURE_LABEL: Record<string, string> = {
   'linkedin-ideas': 'LinkedIn ideas',
   'ai-library-research': 'AI Library research (Tue–Fri)',
   'ai-library-ideas': 'AI Library Saturday ideas',
+  'progress-sort': 'Client progress: sorting Code sessions',
   'jarvis-chat': 'Jarvis chat on Telegram',
   'receipt-reader': 'Receipt reader',
 }

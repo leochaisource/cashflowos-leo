@@ -76,6 +76,21 @@ export function dateLong(iso: string | null | undefined): string {
   return d.toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric', timeZone: TZ })
 }
 
+/** Today's calendar date in Malaysia, "2026-11-10" — not the UTC date todayISO() gives. */
+export function klToday(now = new Date()): string {
+  return klDay(now)
+}
+
+/**
+ * The WORK day an instant belongs to, in Malaysia, with the day rolling over at
+ * 04:00 rather than midnight: the owner works past midnight, and a session at
+ * 1am is still "yesterday's" work in the morning's progress list.
+ */
+export function workDay(iso: string | Date): string {
+  const t = typeof iso === 'string' ? Date.parse(iso) : iso.getTime()
+  return klDay(new Date(t - 4 * 3600_000))
+}
+
 /** Days from today until a date. Negative = in the past. */
 export function daysUntil(iso: string | null | undefined): number | null {
   if (!iso) return null
