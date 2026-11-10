@@ -5,6 +5,8 @@ import { rm } from './records'
 import { runAutopilot, proposeAndNotify } from './actions'
 import { matchProject } from './ad-clients'
 import { matchableProjects } from './settings'
+import { supabase } from './supabase'
+import { allTasks, isOpen, loadClients, textKey } from './progress'
 
 // 🔒 Don't edit — this keeps your robot safe.
 // The Jarvis bot's WRITE hands (V2). Where lib/bot-tools.ts only READS, these
@@ -64,6 +66,36 @@ export const BOT_ACTION_TOOLS = [
         },
       },
       required: ['title'],
+    },
+  },
+  {
+    name: 'log_progress',
+    description:
+      'Log something the owner GOT DONE for a client, so it shows on that client\'s dashboard page and in ' +
+      'tomorrow\'s 9am Today message. Use for "done: sent Starcity the weekly report", "finished Sandra\'s ' +
+      'landing page". Log-only and reversible, so it just does it (🟢). Not for to-dos (use add_task).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project: { type: 'string', description: 'The client it was for, as the owner named it ("Starcity", "Nicsman", "Dr Tariq").' },
+        done: { type: 'string', description: 'What got done, one short past-tense line.' },
+      },
+      required: ['project', 'done'],
+    },
+  },
+  {
+    name: 'complete_task',
+    description:
+      'Tick off one of the owner\'s open to-dos (next steps) when he says it\'s done: "tick: call Mok", ' +
+      '"done with the Zoom capacity question". Finds it by its words; if several match, returns them so you ' +
+      'can ask which. Reversible on the dashboard (untick), so it just does it (🟢).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        task: { type: 'string', description: 'Words from the to-do\'s title.' },
+        project: { type: 'string', description: 'Optional client it belongs to, if the owner named one.' },
+      },
+      required: ['task'],
     },
   },
   {
@@ -219,6 +251,63 @@ export async function runBotAction(name: string, input: any, ctx: BotActionCtx):
         project: project?.name ?? null,
         undo: `/undo-${done.row.id}`,
         tell_user: 'Added it (autopilot, reversible). Offer the /undo id.' + (project ? ` Tagged to ${project.name}.` : ''),
+      })
+    }
+
+    // ---- 🟢 log_progress — a "done" line for a client (lib/progress.ts) → autopilot. ----
+    if (name === 'log_progress') {
+      const done = String(input?.done || '').trim()
+      if (!done) return JSON.stringify({ status: 'error', message: 'What got done?' })
+      const clients = await loadClients(supabase)
+      const m = matchProject(String(input?.project || ''), clients)
+      if (!m.project)
+        return JSON.stringify({
+          status: 'ambiguous',
+          message: 'Which client was it for?',
+          candidates: m.candidates.slice(0, 8).map((c) => c.name),
+        })
+      const ran = await runAutopilot('log-progress', {
+        project: m.project.id,
+        done,
+        idempotencyKey: randomUUID(),
+      })
+      if (!ran) return JSON.stringify({ status: 'noop', message: 'Already logged.' })
+      return JSON.stringify({
+        status: 'logged', zone: 'green', client: m.project.name, done,
+        tell_user: `Logged for ${m.project.name}. It shows on their dashboard page and in tomorrow's Today message.`,
+      })
+    }
+
+    // ---- 🟢 complete_task — tick one open to-do, found by its words → autopilot. ----
+    if (name === 'complete_task') {
+      const words = textKey(String(input?.task || ''))
+      if (!words) return JSON.stringify({ status: 'error', message: 'Which to-do?' })
+      const clients = await loadClients(supabase)
+      const scope = input?.project ? matchProject(String(input.project), clients).project?.id : undefined
+      const open = (await allTasks(supabase)).filter((t) => isOpen(t) && (!scope || t.meta?.project === scope))
+      const hits = open.filter((t) => {
+        const k = textKey(t.title)
+        return k.includes(words) || words.split(' ').filter((w) => w.length > 2).every((w) => k.includes(w))
+      })
+      if (!hits.length) return JSON.stringify({ status: 'not_found', message: 'No open to-do matches that. Ask for a few more words from it.' })
+      if (hits.length > 1)
+        return JSON.stringify({
+          status: 'ambiguous',
+          message: 'Several open to-dos match. Which one?',
+          candidates: hits.slice(0, 6).map((t) => t.title),
+        })
+      const t = hits[0]
+      const ran = await runAutopilot('complete-task', {
+        op: 'update',
+        record_id: t.id,
+        status: 'done',
+        meta: { ...t.meta, done_by: 'telegram', done_at: new Date().toISOString() },
+        idempotencyKey: randomUUID(),
+      })
+      if (!ran) return JSON.stringify({ status: 'noop', message: 'Already ticked.' })
+      return JSON.stringify({
+        status: 'ticked', zone: 'green', task: t.title,
+        tell_user: 'Ticked off. If that was the wrong one, untick it on the client\'s dashboard page.',
       })
     }
 

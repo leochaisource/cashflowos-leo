@@ -362,6 +362,9 @@ export const EXECUTORS: Record<string, Executor> = {
   // The Jarvis bot ACTION tools (V2) — all write through writeRecord, all pass the
   // same CAS/approval funnel. 🟢 add-task/add-lead autopilot; 🟡 the rest ask first.
   'add-task': (p) => writeRecord('add-task', p),
+  // Client progress from Telegram (lib/progress.ts): tick a to-do, log a "done" line.
+  'complete-task': (p) => writeRecord('complete-task', p),
+  'log-progress': (p) => logProgressLine(p),
   'add-lead': (p) => writeRecord('add-lead', p),
   'log-cash-in': (p) => writeRecord('log-cash-in', p),
   'mark-paid': (p) => writeRecord('mark-paid', p),
@@ -407,6 +410,15 @@ import { linkedinDrafts } from './linkedin/run'
 import { PROJECTS } from '@/lib/ad-clients'
 import { APP_URL } from '@/lib/brief-digest'
 import { stepFor as libraryStepFor } from './ai-library/run'
+import { logProgress } from '@/lib/progress'
+
+// A "done" line the owner sent the bot (lib/bot-actions.ts log_progress).
+async function logProgressLine(p: any): Promise<any> {
+  const added = await logProgress(supabase, [{ project: String(p?.project), text: String(p?.done || ''), source: 'telegram' }])
+  const result = { kind: 'progress_logged', project: p?.project, added }
+  await logRun('log-progress', 'ok', result)
+  return result
+}
 
 // `auto: true` = this one is 🟢 graduated (autopilot: run it, then just tell me).
 // Omitted/false = 🟡 ask first (the safe default every agent starts on).
