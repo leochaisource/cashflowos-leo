@@ -2,6 +2,7 @@ import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { AD_CLIENTS } from '@/lib/ad-clients'
 import { runHotListTick } from '@/lib/hot-list-tick'
 import { sendMessage } from '@/lib/telegram'
+import { beat } from '@/lib/heartbeat'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -34,6 +35,8 @@ export async function POST(req: Request) {
   } catch (e) {
     r = { ok: false, error: (e as Error).message, pings: [], ari: [], parked: [], errors: [], dryRun }
   }
+  // Proof the sheet's hourly clock still fires (the 9am watchdog reads it).
+  if (!dryRun) await beat(supabase, 'hotlist-tick', r.ok, r.ok ? undefined : String(r.error))
   const owner = process.env.OWNER_CHAT_ID?.trim()
   if (!r.ok && owner && !dryRun) await sendMessage(owner, `⚠️ Ariella's hourly list check failed: ${String(r.error).slice(0, 300)}`).catch(() => {})
   return Response.json({

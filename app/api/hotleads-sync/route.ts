@@ -5,6 +5,7 @@ import { AD_CLIENTS } from '@/lib/ad-clients'
 import { syncHotLeadsDay, localDay } from '@/lib/hot-leads-sync'
 import { sendMessage } from '@/lib/telegram'
 import { APP_URL } from '@/lib/brief-digest'
+import { beat } from '@/lib/heartbeat'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300 // WhatsApp export + the model's judging take 1–3 minutes
@@ -89,6 +90,8 @@ async function runAndReport(judge: boolean) {
   } catch (e) {
     result = { ok: false, error: (e as Error).message }
   }
+  // Proof the sheet's 5-a-day clock still fires (the 9am watchdog reads it).
+  if (supabaseConfigured) await beat(supabase, 'hotleads-sync', result.ok, result.ok ? undefined : result.error)
   const owner = process.env.OWNER_CHAT_ID?.trim()
   if (!result.ok && owner)
     await sendMessage(owner, `⚠️ Hot leads sheet — the daytime update failed: ${result.error.slice(0, 300)}`).catch(() => {})

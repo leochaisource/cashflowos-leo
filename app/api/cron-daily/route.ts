@@ -4,12 +4,19 @@ import { claimScheduledRun } from '@/lib/cron-claim'
 import { getRecords, rm, todayISO, type Rec } from '@/lib/records'
 import { propose, proposeAndNotify, runAutopilot } from '@/lib/actions'
 import { AGENTS, SCHEDULED, type ProposalDraft } from '@/agents/registry'
-import { activeProjects } from '@/lib/settings'
+import { activeProjects, focusProjects } from '@/lib/settings'
 import { workProjectsFrom, urgentStepLines } from '@/lib/work-projects'
+import { syncProjectAds } from '@/lib/ad-sync'
+import { logRun } from '@/lib/runs'
+import { runWatchdog, watchdogCrashed, watchdogSection, weekSummary, saveWatchdog, type WatchdogReport } from '@/lib/watchdog'
 
 // 🔒 Don't edit — this keeps your robot safe.
 // THE ONE daily cron (Vercel Hobby allows 2; the other is the 8am ads brief).
-// It runs three things in order, once a day:
+// It runs four things in order, once a day:
+//   ⓪ the WATCHDOG (lib/watchdog.ts, owner 2026-11-10): did the unattended jobs run
+//      and do their numbers add up? It retries what is safe to repeat, and its
+//      findings go to the OWNER ONLY, inside this message, only when something is
+//      wrong (plus a "still alive" line on Mondays),
 //   ① tidy: proposals nobody answered in time are marked 'expired', so every
 //      "waiting on your YES" count (this brief, Home, Approvals) is the same, true number,
 //   ② the 9am brief — ONLY WHEN SOMETHING NEEDS THE OWNER, and only that thing:
@@ -104,19 +111,64 @@ export async function GET(req: Request) {
   )
   const newlyOverdue = overdue.filter((r) => r.due_date === yesterday)
 
+  // ⓪ THE WATCHDOG. Runs BEFORE the message so its findings ride in it, and
+  // before the sweep so it sees what yesterday's sweep left (the LinkedIn step).
+  // A 60s budget for retries: the sweep after it can need most of the 300s on a
+  // Sunday. A crash here becomes one line, never a lost 9am message.
+  const owner = process.env.OWNER_CHAT_ID?.trim()
+  let wd: WatchdogReport | null = null
+  let wdText: string | null = null
+  if (supabaseConfigured) {
+    try {
+      wd = await runWatchdog({
+        db: supabase,
+        focus: await focusProjects(),
+        deadline: Date.now() + 60_000,
+        retry: {
+          resync: (client) => syncProjectAds(client, 7),
+          send: (chat, text) => sendMessage(chat, text, { noPreview: true }),
+        },
+      })
+    } catch (e) {
+      console.error('[CFO] watchdog crashed:', e)
+      wd = watchdogCrashed(e)
+    }
+    const monday = new Date(`${today}T12:00:00Z`).getUTCDay() === 1
+    const quiet = !wd.problems.length && !wd.fixed.length
+    const week = monday && quiet ? await weekSummary(supabase, wd.day).catch(() => null) : null
+    wdText = watchdogSection(wd, { week })
+  }
+
   const needsYou = urgent.length > 0 || proposed.length > 0 || newlyOverdue.length > 0
   const to = recipients()
   let sent = 0
-  if (needsYou) {
-    const message = buildBrief(urgent, proposed, newlyOverdue, overdue)
-    const sends = await Promise.allSettled(to.map((id) => sendMessage(id, message)))
-    // sendMessage reports failure in its value; a fulfilled promise is not a delivery.
-    sent = sends.filter((r) => r.status === 'fulfilled' && r.value.ok).length
-  }
+  let wdSent: boolean | null = wdText ? false : null
+  const brief = needsYou ? buildBrief(urgent, proposed, newlyOverdue, overdue) : null
+  // The watchdog goes to the OWNER only: the team list may include people who
+  // shouldn't read about other clients' faults. Under Telegram's limit it shares
+  // the owner's message; otherwise it follows as its own.
+  const together = !!brief && !!wdText && brief.length + wdText.length < 3800
+  const sends = await Promise.allSettled(
+    to.map(async (id) => {
+      const isOwner = id === owner
+      const first = isOwner && together ? `${brief}\n\n${wdText}` : brief
+      const r = first ? await sendMessage(id, first) : null
+      if (isOwner && wdText && !together) {
+        const w = await sendMessage(id, wdText, { noPreview: true })
+        wdSent = w.ok
+      } else if (isOwner && wdText) wdSent = !!r?.ok
+      return r
+    }),
+  )
+  // sendMessage reports failure in its value; a fulfilled promise is not a delivery.
+  sent = sends.filter((r) => r.status === 'fulfilled' && r.value?.ok).length
+  if (wdText && owner && !to.includes(owner)) wdSent = (await sendMessage(owner, wdText, { noPreview: true })).ok
+  // The record of this morning: the 8am dead-man check and Monday's line read it.
+  if (wd) await saveWatchdog(supabase, wd, { delivered: wdSent })
 
   // ③ SWEEP the scheduled agents — CREATE proposals only (they pass through ASK).
-  const owner = process.env.OWNER_CHAT_ID?.trim()
   let created = 0
+  const crashed: { label: string; error: string }[] = []
   for (const agent of SCHEDULED) {
     let drafts: ProposalDraft[] = []
     try {
@@ -126,6 +178,10 @@ export async function GET(req: Request) {
       drafts = await agent.check(rows, today)
     } catch (e) {
       console.error(`[CFO] scheduled check "${agent.key}" threw:`, e)
+      // Used to vanish into the logs. Now the owner hears it (below) and it's audited.
+      const error = (e as Error)?.message ?? String(e)
+      crashed.push({ label: agent.label, error })
+      await logRun(agent.key, 'failed', { where: 'cron-daily sweep', error })
       continue
     }
     for (const d of drafts) {
@@ -161,10 +217,19 @@ export async function GET(req: Request) {
     }
   }
 
+  // A scheduled agent that crashed: one short line to the owner, in words.
+  // Nothing is retried today; tomorrow's run is the retry.
+  if (crashed.length && owner) {
+    const lines = crashed.map((c) => `• ${esc(c.label)}: ${esc(c.error.slice(0, 160))}`).join('\n')
+    await sendMessage(owner, `⚠️ <b>9am run</b>: ${crashed.length === 1 ? 'one job' : `${crashed.length} jobs`} crashed and did nothing today.\n${lines}\nThey run again tomorrow morning. Ask Claude if this repeats.`)
+  }
+
   return Response.json({
     ok: true,
     sent,
     recipients: to.length,
+    watchdog: wd ? { problems: wd.problems.length, fixed: wd.fixed.length, delivered: wdSent, checks: wd.checks } : null,
+    sweep_crashed: crashed.map((c) => c.label),
     skipped: needsYou ? null : 'nothing needs you today — no brief sent',
     needs_yes: proposed.length,
     urgent_steps: urgent.length,

@@ -3,6 +3,7 @@ import { claudeClient } from '@/lib/claude-usage'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
 import { claimScheduledRun } from '@/lib/cron-claim'
+import { deadManCheck } from '@/lib/watchdog'
 import { flattenAds, normaliseAd, competitorSection, stripLoneSurrogates, mediaUrls, isRelevant, type NormalisedAd, type PriorAd } from '@/lib/adyntel'
 import { persistThumbnails } from '@/lib/creatives'
 import { refreshProfiles } from '@/lib/competitor-profiles'
@@ -1254,6 +1255,16 @@ export async function GET(req: Request) {
 
   // A second delivery of this morning's scheduled run: the brief already went out.
   if (!(await claimScheduledRun(req, 'cron-ads'))) return Response.json({ ok: true, duplicate: true })
+
+  // THE WATCHDOG'S OWN WATCHDOG (owner, 2026-11-10). The watchdog runs inside the
+  // 9am job, so if that job dies it can't say so. This one can: did yesterday's
+  // 9am check finish? Scheduled runs only (once a day, thanks to the claim above);
+  // a manual ?client= run never nags.
+  if (req.headers.get('x-vercel-cron-schedule') && supabaseConfigured) {
+    const owner = process.env.OWNER_CHAT_ID?.trim()
+    const alarm = await deadManCheck(supabase).catch(() => null)
+    if (alarm && owner) await sendMessage(owner, alarm, { noPreview: true }).catch(() => {})
+  }
 
   // ?client=<id> runs just one, for testing without spending every client's credit.
   const only = new URL(req.url).searchParams.get('client')
