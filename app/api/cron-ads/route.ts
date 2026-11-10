@@ -56,6 +56,7 @@ import { projectScorecard } from '@/lib/metrics'
 import { syncProjectAds } from '@/lib/ad-sync'
 import { getRecords, type Rec } from '@/lib/records'
 import { stepsFor } from '@/lib/work-projects'
+import { loadDigest, renderClientLines } from '@/lib/progress'
 
 // The 8am ads brief, once per client. For each client in lib/ad-clients.ts:
 //   ① Meta Marketing API — yesterday vs the trailing 7-day average, per campaign.
@@ -1122,12 +1123,20 @@ async function runClient(client: AdClient, records: Rec[]) {
         return ''
       })
     : ''
+  // What got done for this client and what's next (lib/progress.ts: his Code
+  // sessions, chats and Telegram notes). Operator copy only; never breaks the brief.
+  const progressLine = supabaseConfigured
+    ? await loadDigest(supabase)
+        .then((d) => renderClientLines(d.clients.find((c) => c.client.id === client.id), d.today))
+        .catch(() => null)
+    : null
   const alerts = operatorAlerts(notes)
   const text = [
     perfText ? esc(perfText) : spent > 0 || !focus ? header : '',
     // Operator copy only (clientChunks is built from perfText alone).
     followupsOwnerLine ? esc(followupsOwnerLine) : '',
     funnelLine ? esc(funnelLine) : '',
+    progressLine ? esc(progressLine) : '',
     digest,
     report ? esc(report) : '',
     focus ? competitorsLink(client.id, competitorCount) : '',

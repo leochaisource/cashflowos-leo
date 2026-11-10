@@ -9,6 +9,10 @@ import { workProjectsFrom, urgentStepLines } from '@/lib/work-projects'
 import { syncProjectAds } from '@/lib/ad-sync'
 import { logRun } from '@/lib/runs'
 import { runWatchdog, watchdogCrashed, watchdogSection, weekSummary, saveWatchdog, type WatchdogReport } from '@/lib/watchdog'
+import { loadDigest, expireStaleTodos, markTodaySent, renderTodaySection } from '@/lib/progress'
+import { trackingNotes } from '@/lib/progress-sort'
+import { klToday } from '@/lib/format'
+import { APP_URL } from '@/lib/brief-digest'
 
 // 🔒 Don't edit — this keeps your robot safe.
 // THE ONE daily cron (Vercel Hobby allows 2; the other is the 8am ads brief).
@@ -19,12 +23,14 @@ import { runWatchdog, watchdogCrashed, watchdogSection, weekSummary, saveWatchdo
 //      wrong (plus a "still alive" line on Mondays),
 //   ① tidy: proposals nobody answered in time are marked 'expired', so every
 //      "waiting on your YES" count (this brief, Home, Approvals) is the same, true number,
-//   ② the 9am brief — ONLY WHEN SOMETHING NEEDS THE OWNER, and only that thing:
-//      steps overdue or due today/tomorrow, live approvals, invoices that went
-//      overdue since yesterday. Nothing needs him → no message. (Owner's call,
-//      2026-09-26: the old brief — funnel river, all-time money totals and a
-//      narrative paragraph every morning — was noise he had stopped reading.
-//      Those numbers still live on the Agency page.)
+//   ② the TODAY message to the OWNER, every morning (owner, 2026-11-10): his
+//      clients' to-dos and what got done since yesterday's message (lib/progress.ts,
+//      fed by his Code sessions, claude.ai / Cowork chats and Telegram notes), then
+//      the rest that needs him — other steps due, live approvals, invoices that
+//      went overdue. Anyone else on TELEGRAM_TEAM_CHAT_IDS keeps the old rule: a
+//      brief only when something needs doing, and never the client progress.
+//      (2026-09-26: the old daily brief — funnel river, all-time money totals and
+//      a narrative paragraph — was noise he had stopped reading. Still gone.)
 //   ③ a sweep of every 'daily' scheduled agent — each only CREATES proposals
 //      (still passes through the ASK zone; nothing executes here).
 //
@@ -144,25 +150,61 @@ export async function GET(req: Request) {
   let sent = 0
   let wdSent: boolean | null = wdText ? false : null
   const brief = needsYou ? buildBrief(urgent, proposed, newlyOverdue, overdue) : null
+
+  // ② THE OWNER'S TODAY MESSAGE. Built in code, so it arrives when the API is
+  // down; if building it fails, he gets the old brief plus one line saying why.
+  let ownerText: string | null = brief
+  let todayBuilt = false
+  let expiredTodos: string[] = []
+  if (supabaseConfigured && owner) {
+    try {
+      const digest = await loadDigest(supabase, { today: klToday() })
+      expiredTodos = await expireStaleTodos(supabase, digest.tasks)
+      const notes = await trackingNotes(supabase, digest.since)
+      if (expiredTodos.length)
+        notes.push(
+          `Closed ${expiredTodos.length} old Claude to-do${expiredTodos.length === 1 ? '' : 's'} (no date, untouched for 28 days). Reopen any from "Show done" on the client's page.`,
+        )
+      // Client steps are in the client section; this keeps the rest (his own brand, etc.).
+      const clientIds = new Set(digest.clientIds)
+      const otherUrgent = urgentStepLines(
+        rows,
+        [...ads.map((p) => ({ id: p.id, name: p.client ?? p.name })), ...workProjectsFrom(rows).map((w) => ({ id: w.slug, name: w.name }))].filter(
+          (p) => !clientIds.has(p.id),
+        ),
+        today,
+      )
+      ownerText = buildToday(digest, notes, otherUrgent, proposed, newlyOverdue, overdue)
+      todayBuilt = true
+    } catch (e) {
+      console.error('[CFO] today message failed:', e)
+      const why = `<i>Today's client to-do list couldn't be built (${esc(String((e as Error)?.message ?? e).slice(0, 120))}). Ask Claude to look at /api/cron-daily.</i>`
+      ownerText = brief ? `${brief}\n\n${why}` : `☀️ <b>Today</b>\n\n${why}`
+    }
+  }
+
   // The watchdog goes to the OWNER only: the team list may include people who
   // shouldn't read about other clients' faults. Under Telegram's limit it shares
   // the owner's message; otherwise it follows as its own.
-  const together = !!brief && !!wdText && brief.length + wdText.length < 3800
-  const sends = await Promise.allSettled(
-    to.map(async (id) => {
-      const isOwner = id === owner
-      const first = isOwner && together ? `${brief}\n\n${wdText}` : brief
-      const r = first ? await sendMessage(id, first) : null
-      if (isOwner && wdText && !together) {
-        const w = await sendMessage(id, wdText, { noPreview: true })
-        wdSent = w.ok
-      } else if (isOwner && wdText) wdSent = !!r?.ok
-      return r
-    }),
-  )
+  const together = !!ownerText && !!wdText && ownerText.length + wdText.length < 3800
+  let ownerOk = false
+  const toOwner = async (): Promise<{ ok: boolean }> => {
+    const first = together ? `${ownerText}\n\n${wdText}` : ownerText
+    let ok = false
+    if (first) for (const piece of pieces(first)) ok = (await sendMessage(owner!, piece, { noPreview: true })).ok
+    ownerOk = ok
+    if (wdText && !together) wdSent = (await sendMessage(owner!, wdText, { noPreview: true })).ok
+    else if (wdText) wdSent = ok
+    return { ok }
+  }
+  const sends = await Promise.allSettled(to.map(async (id) => (id === owner ? toOwner() : brief ? sendMessage(id, brief) : null)))
   // sendMessage reports failure in its value; a fulfilled promise is not a delivery.
   sent = sends.filter((r) => r.status === 'fulfilled' && r.value?.ok).length
-  if (wdText && owner && !to.includes(owner)) wdSent = (await sendMessage(owner, wdText, { noPreview: true })).ok
+  if (owner && !to.includes(owner) && (ownerText || wdText)) {
+    if ((await toOwner()).ok) sent++
+  }
+  // "Since yesterday's message" starts from here next time.
+  if (todayBuilt && ownerOk) await markTodaySent(supabase).catch(() => {})
   // The record of this morning: the 8am dead-man check and Monday's line read it.
   if (wd) await saveWatchdog(supabase, wd, { delivered: wdSent })
 
@@ -230,7 +272,9 @@ export async function GET(req: Request) {
     recipients: to.length,
     watchdog: wd ? { problems: wd.problems.length, fixed: wd.fixed.length, delivered: wdSent, checks: wd.checks } : null,
     sweep_crashed: crashed.map((c) => c.label),
-    skipped: needsYou ? null : 'nothing needs you today — no brief sent',
+    today_message: todayBuilt ? (ownerOk ? 'sent' : 'not delivered') : 'not built',
+    expired_todos: expiredTodos.length,
+    skipped: needsYou || todayBuilt ? null : 'nothing needs you today — no brief sent',
     needs_yes: proposed.length,
     urgent_steps: urgent.length,
     newly_overdue_invoices: newlyOverdue.length,
@@ -239,10 +283,44 @@ export async function GET(req: Request) {
   })
 }
 
+// Telegram caps a message at 4,096 characters: split on blank lines.
+function pieces(text: string, max = 3800): string[] {
+  const out: string[] = []
+  let cur = ''
+  for (const block of text.split('\n\n')) {
+    if (cur && cur.length + block.length + 2 > max) {
+      out.push(cur)
+      cur = ''
+    }
+    cur = cur ? `${cur}\n\n${block}` : block.slice(0, max)
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+// The owner's Today message: his clients first (lib/progress.ts), then the rest
+// of what needs him, in the old brief's words. Deterministic — no model.
+function buildToday(
+  digest: Awaited<ReturnType<typeof loadDigest>>,
+  notes: string[],
+  otherUrgent: string[],
+  proposed: { agent_key: string; payload: any }[],
+  newlyOverdue: Rec[],
+  overdue: Rec[],
+): string {
+  const day = new Date(`${digest.today}T12:00:00Z`).toLocaleDateString('en-MY', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
+  const rest = briefSections(otherUrgent, proposed, newlyOverdue, overdue)
+  return [`☀️ <b>Today</b> · ${day}`, renderTodaySection(digest, { notes }), ...rest, `<a href="${APP_URL}">Open the Command Centre</a>`].join('\n\n')
+}
+
 // The 9am brief: only the sections that have something in them. Deterministic —
 // no model, no API key, nothing to go missing.
 function buildBrief(urgent: string[], proposed: { agent_key: string; payload: any }[], newlyOverdue: Rec[], overdue: Rec[]): string {
-  const parts: string[] = ['☀️ <b>What needs you today</b>']
+  return ['☀️ <b>What needs you today</b>', ...briefSections(urgent, proposed, newlyOverdue, overdue)].join('\n\n')
+}
+
+function briefSections(urgent: string[], proposed: { agent_key: string; payload: any }[], newlyOverdue: Rec[], overdue: Rec[]): string[] {
+  const parts: string[] = []
 
   if (urgent.length) {
     const shown = urgent.slice(0, 8)
@@ -284,5 +362,5 @@ function buildBrief(urgent: string[], proposed: { agent_key: string; payload: an
     )
   }
 
-  return parts.join('\n\n')
+  return parts
 }
