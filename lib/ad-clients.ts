@@ -240,6 +240,13 @@ export type AdClient = {
      * the number of new conversations the CS team actually has to work.
      */
     whatsappWindows?: boolean
+    /**
+     * A free webinar that runs every week on the same day (owner, 2026-11-10:
+     * Claude Malaysia's Tuesday webinar). The closing coach reminds the follow-up
+     * owner to get its Zoom link at least `zoomLinkDaysBefore` days ahead.
+     * `weekday` is 0 = Sunday … 6 = Saturday, in the client's time zone.
+     */
+    weeklyWebinar?: { weekday: number; zoomLinkDaysBefore: number }
   }
 
   /**
@@ -388,6 +395,9 @@ export const AD_CLIENTS: AdClient[] = [
       followups: true, // unpaid checkouts + yesterday's WhatsApp chats by buying intent (owner, 2026-09-28)
       // GHL user "Ariella A" (owner, 2026-09-29); Telegram = her private chat with the bot, for the 9am closing coach (2026-10-08).
       followupAssignee: { userId: 'EaYYLKFAWMRPqVZXgm3c', name: 'Ariella', telegramChatId: '8867468846' },
+      // The weekly Tuesday webinar: Ariella's coach reminds her to get the Zoom
+      // link at least 3 days before (owner, 2026-11-10).
+      weeklyWebinar: { weekday: 2, zoomLinkDaysBefore: 3 },
       // Her one list (owner, 2026-10-14) — the pipeline was made in GHL that day.
       hotList: {
         pipeline: 'CM1D Hot Leads',

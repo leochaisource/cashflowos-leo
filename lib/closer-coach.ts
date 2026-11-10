@@ -337,10 +337,33 @@ const longDay = (iso: string) => {
 const mins = (n: number | null) => (n === null ? 'n/a' : n < 60 ? `${n} min` : `${Math.round(n / 6) / 10} h`)
 
 /**
+ * The weekly webinar's Zoom-link reminder for the closer (owner, 2026-11-10:
+ * "get the Zoom link at least 3 days before the Tuesday webinar"). Pure — it
+ * takes today's date where the client is, "YYYY-MM-DD", so it can be tested.
+ * Shown from two days before the deadline to the deadline itself, then as a
+ * warning until the day before the webinar; nothing on webinar day or after.
+ */
+export function zoomLinkReminder(today: string, w: { weekday: number; zoomLinkDaysBefore: number }): string | null {
+  const t = new Date(`${today}T12:00:00Z`)
+  const daysToWebinar = (w.weekday - t.getUTCDay() + 7) % 7
+  if (daysToWebinar === 0) return null
+  const webinar = longDay(new Date(t.getTime() + daysToWebinar * 86400000).toISOString().slice(0, 10))
+  const deadlineIso = new Date(t.getTime() + (daysToWebinar - w.zoomLinkDaysBefore) * 86400000).toISOString().slice(0, 10)
+  const ahead = `${w.zoomLinkDaysBefore} day${w.zoomLinkDaysBefore === 1 ? '' : 's'} before`
+  if (daysToWebinar > w.zoomLinkDaysBefore + 2) return null
+  if (daysToWebinar > w.zoomLinkDaysBefore)
+    return `📌 <b>Zoom link:</b> get the link for the webinar on ${webinar} — you need it by ${longDay(deadlineIso)}, ${ahead}.`
+  if (daysToWebinar === w.zoomLinkDaysBefore)
+    return `📌 <b>Zoom link:</b> today is the day to have the link for the webinar on ${webinar} (${ahead}).`
+  return `⚠️ <b>Zoom link:</b> the webinar on ${webinar} is in ${daysToWebinar} day${daysToWebinar === 1 ? '' : 's'}. If you don't have the link yet, get it today.`
+}
+
+/**
  * The Telegram message (HTML). Numbers always; the coaching when the model
  * answered; and, with `list`, her GHL list at the end — "close today" picks
  * that aren't on it are dropped, so this message never names a lead her list
- * doesn't (owner, 2026-10-14).
+ * doesn't (owner, 2026-10-14). `reminders` are lines that open the message,
+ * such as the webinar's Zoom link.
  */
 export function renderCoach(
   stats: CoachStats,
@@ -348,10 +371,12 @@ export function renderCoach(
   closer: string,
   error: string | null,
   list?: { open: ListCard[]; stages: string[]; pipeline: string },
+  reminders: string[] = [],
 ): string {
   const listBlock = () =>
     list ? ['', renderHotList(list.open, list.stages, { title: `📋 Your list in GHL (Opportunities → ${list.pipeline})`, max: 8 })] : []
   const out: string[] = [`🎯 <b>Closing coach</b> · ${esc(longDay(stats.day))}`, '']
+  if (reminders.length) out.push(...reminders, '')
   out.push(
     `${stats.leadsWrote} lead${stats.leadsWrote === 1 ? '' : 's'} wrote · paid: <b>${stats.paidFromThreads.length}</b>` +
       (stats.paidFromThreads.length ? ` (${esc(stats.paidFromThreads.slice(0, 4).join(', '))})` : ''),

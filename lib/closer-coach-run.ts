@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AdClient } from './ad-clients.ts'
 import { dayBounds } from './ghl.ts'
 import { eventFor } from './deal.ts'
-import { gatherCoachInput, coachReport, coachRequest, renderCoach } from './closer-coach.ts'
+import { gatherCoachInput, coachReport, coachRequest, renderCoach, zoomLinkReminder } from './closer-coach.ts'
 import { coachBatchSent, submitCoachRequest, takeBatchedCoach, type CoachBatchStep } from './coach-batch.ts'
 import { sendMessage } from './telegram.ts'
 import { readHotList } from './hot-list.ts'
@@ -125,7 +125,10 @@ export async function runCloserCoach(args: {
     : args.anthropic
       ? await coachReport(args.anthropic, input, product, closer.name, list?.open)
       : { report: null, error: 'ANTHROPIC_API_KEY not set' }
-  let text = renderCoach(input.stats, report, closer.name, error, list)
+  // Reminders run on TODAY's date where the client is (the review is of yesterday).
+  const todayHere = new Date().toLocaleDateString('en-CA', { timeZone: tz })
+  const zoom = g.weeklyWebinar ? zoomLinkReminder(todayHere, g.weeklyWebinar) : null
+  let text = renderCoach(input.stats, report, closer.name, error, list, zoom ? [zoom] : [])
   if (hl?.error) text += `\n\n<i>Your GHL list couldn't be read this morning (${hl.error.slice(0, 120)}).</i>`
 
   const owner = process.env.OWNER_CHAT_ID?.trim()
