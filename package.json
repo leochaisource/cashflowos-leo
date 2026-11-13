@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "check": "node scripts/check.mjs",
     "webhook:set": "node --env-file-if-exists=.env scripts/set-webhook.mjs",
     "webhook:info": "node --env-file-if-exists=.env scripts/webhook-info.mjs",
     "import": "node --env-file-if-exists=.env scripts/import.mjs",

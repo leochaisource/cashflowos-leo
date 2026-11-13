@@ -10,19 +10,27 @@
 # commit stops until someone acknowledges the count:
 #   PUSH_OK=<n> git push                          (Git Bash)
 #   $env:PUSH_OK='<n>'; git push; Remove-Item Env:PUSH_OK   (PowerShell)
-# Give that only when every listed commit is yours, or Leo OK'd the others.
+# Give that only when every listed commit is yours, or Leo OK'd them.
+#
+# Then the pushed commits go through scripts/check.mjs (2026-11-13): the
+# CLAUDE.md lessons written as rules (login gate, public files, KL time,
+# secrets, script imports). Any problem stops the push. It reads the pushed
+# commits, not the working tree. There's no skip switch; never use --no-verify.
 
 remote="$1"
 zero=0000000000000000000000000000000000000000
 status=0
+top=$(git rev-parse --show-toplevel)
 
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$zero" ] && continue                 # deleting a remote branch
 
   if [ "$remote_sha" = "$zero" ]; then                     # a new branch: whatever no remote has yet
     range="$local_sha --not --remotes=$remote"
+    base=$(git merge-base "$local_sha" "refs/remotes/$remote/main" 2>/dev/null)
   elif git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
     range="$remote_sha..$local_sha"
+    base=$remote_sha
   else
     continue                                               # remote moved on; git will refuse the push itself
   fi
@@ -37,6 +45,16 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     echo "" >&2
     echo "Stopped: other sessions commit in this folder, so some of these may not be yours." >&2
     echo "If every one is yours or Leo OK'd them, push again with PUSH_OK=$n." >&2
+    status=1
+  fi
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Stopped: the pre-push check needs Node, and 'node' isn't on this shell's PATH." >&2
+    status=1
+  elif [ ! -f "$top/scripts/check.mjs" ]; then
+    echo "Stopped: scripts/check.mjs is missing from this folder, so the pushed commits can't be checked." >&2
+    status=1
+  elif ! node "$top/scripts/check.mjs" "${base:-$zero}" "$local_sha"; then
     status=1
   fi
 done

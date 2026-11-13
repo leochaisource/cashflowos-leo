@@ -86,6 +86,33 @@ more than one commit stops until you run it again with `PUSH_OK=<n> git push` (i
 `$env:PUSH_OK='<n>'` first). Give `PUSH_OK` only after reading the list, and never pass
 `--no-verify` to get past the hook.
 
+The same hook then runs **`scripts/check.mjs`** (2026-11-13): lessons from this file written as
+rules that stop the push. It reads the pushed commits, not the working tree, so another session's
+uncommitted files can't affect it. The rules:
+
+- **Login gate** (whole tree). A route that checks a secret, or that something calls without a login
+  (Vercel's cron, the sheet's Apps Script, the app itself, a laptop script), must be outside
+  `proxy.ts`'s matcher. A route outside the matcher must check a secret of its own, or carry
+  `check-ok: public - <why>`. A cron or Apps Script call to a route that doesn't exist fails too.
+- **Public files** (whole tree). Everything in `public/` and the app's icon files must be served past
+  the gate.
+- **KL time** (added lines). `toLocaleDateString`, `toLocaleTimeString`, `Intl.DateTimeFormat`, and
+  `toLocaleString` on a date, need `timeZone`. Number formatting is fine.
+- **Secrets** (added lines and files). Key-shaped values (Anthropic, Meta, GitHub, AWS, GHL,
+  Telegram, Supabase, Slack) and `.env*` (except `.env.example`), `.pem`, `.key` or `id_rsa` files.
+  The message gives the file and line, never the value.
+- **Script imports** (whole tree). Whatever `scripts/` loads with plain Node must not reach `@/…` or
+  `server-only`, and relative imports need their `.ts` ending.
+
+Run it by hand with `npm run check` (the commits not on origin/main yet) or
+`node scripts/check.mjs <base> <head>`. If a line is right despite a rule, add a
+`check-ok: <reason>` comment on it; the summary counts them. If the check itself crashes, that stops
+the push too: fix the check, don't route around it.
+
+**A new lesson:** if the mistake can be spotted in the code, add it as a rule in `scripts/check.mjs`
+instead of only writing it down here. Prove the rule fails on a commit that had the mistake, then add
+it to the list above.
+
 ## Competitor research (Adyntel)
 
 - **Tune filters offline, for free.** Every ad's raw data is stored, so test keyword and relevance
