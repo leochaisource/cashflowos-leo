@@ -26,17 +26,40 @@ export const STACK: { name: string; what: string }[] = [
   { name: 'Claude API meter', what: 'Prices every Claude call and alerts Leo once a day when spend passes US$0.80.' },
   { name: 'Webinar hype-up reminders', what: 'Reminds Ariella to post the WhatsApp community sequence from 5 days before each webinar.' },
   { name: 'AI Library (this)', what: 'Researches real AI case studies Tue–Fri and sends 3 ideas every Saturday.' },
+  { name: 'Watchdog (one daily health check)', what: "Every morning in the 9am run it checks that each unattended job ran and produced believable numbers (the 8am briefs, the Meta sync, funnel numbers, the LinkedIn autopilot, and heartbeats from Ariella's hourly list check and the hot leads sheet refresh). It retries only what is safe to repeat (re-sync Meta, re-send a brief that failed to reach Leo) and tells Leo only when something is wrong, with a Monday 'still alive' line. The 8am job checks that the watchdog itself ran." },
+  { name: 'Client progress tracker', what: 'Picks up progress per client from Claude Code sessions, claude.ai/Cowork (a connector) and Telegram, keeps a to-do list per client, and sends Leo a 9am "Today" message.' },
+  { name: 'Claude Malaysia event report script', what: 'A laptop script that builds the post-event campaign report: pulls every paid ticket from GHL, credits each to an ad or organic source, pulls Meta spend and the leads, and checks that the totals tie out.' },
   { name: 'Job search app (separate, private)', what: 'Finds and scores job openings, drafts outreach and runs an apply robot in his browser, with Telegram alerts.' },
   { name: 'Video editing with ChatCut', what: 'Claude edits videos in ChatCut Desktop on the laptop: talking-head ads, splitting testimonial videos, joining seminar footage.' },
   { name: 'Claude Code skills', what: 'A landing-page pipeline (copy, build, design and conversion reviews), LinkedIn post drafting, rebuilding pages inside GHL, and a skill that improves his skills from session notes.' },
 ]
 
-/** Gaps already known (2026-11-10). Ideas that close one of these are welcome; don't present them as new discoveries. */
+/** Gaps already known (2026-11-15). Ideas that close one of these are welcome; don't present them as new discoveries. */
 export const KNOWN_GAPS = [
   'Call outcomes are typed by hand; nothing turns a call into notes, a next step and a call-back time.',
-  'No single health check across all the crons, sheet triggers and batches: each failure alerts on its own, and some failures were only found days later (a lead event that changed, a renamed campaign).',
+  'The watchdog checks that jobs ran, not that the landing pages and forms behind the ads still work.',
   'The sales stack (intent judge, hot list, coach, Funnel X-ray) runs for Claude Malaysia only, not the other clients.',
   'No pre-call card for the closer (which ad they clicked, their opt-in answers, last message, a suggested opener).',
+  'No webinar attendance data: nothing records who showed up, so show-up rate per night or per ad is unknown.',
+]
+
+/** Leo's ranked build list (Google Sheet "AI agents to build next", 2026-11-15), planned but not built.
+ *  An idea that sharpens one of these is welcome if it says which one; don't present them as new.
+ *  When one is built, move it to STACK above and drop it here. */
+export const ROADMAP = [
+  'Call notes from a voice note (Ariella)',
+  'Pre-call card',
+  'Weekly creative brief per client (ad winners and losers plus competitor angles turned into hooks)',
+  'Sales stack for Starcity (Hong Kong Chinese)',
+  'First WhatsApp question within minutes of an opt-in',
+  'Webinar show-up tracker (Zoom attendance, replay to no-shows)',
+  'Daily landing page and form check',
+  'Event report script for the other clients',
+  'New-client starter pack (chains the worksheet, competitor, landing page and ad skills)',
+  'Client promise tracker (from the client group chats)',
+  'LinkedIn results reader (post analytics back into the autopilot)',
+  'Expense filer that learns vendor categories',
+  'Claude cost per agent, with cheaper-model tests',
 ]
 
 export const CONSTRAINTS = [
@@ -56,6 +79,9 @@ export function stackText(): string {
     '',
     'KNOWN GAPS:',
     ...KNOWN_GAPS.map((g) => `- ${g}`),
+    '',
+    "ON LEO'S BUILD LIST (planned, not built yet):",
+    ...ROADMAP.map((r) => `- ${r}`),
     '',
     'CONSTRAINTS:',
     ...CONSTRAINTS.map((c) => `- ${c}`),
