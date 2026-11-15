@@ -103,11 +103,12 @@ function resolve(clients: ProgressClient[], name: unknown): ProgressClient | str
 /** Writes a chat made today, against the daily cap. */
 async function writesToday(db: SupabaseClient): Promise<number> {
   const start = new Date(`${klToday()}T00:00:00+08:00`).toISOString()
-  const [{ count: lines }, { count: todos }] = await Promise.all([
+  const [{ count: lines }, { count: todos }, { count: ticks }] = await Promise.all([
     db.from('progress_log').select('id', { count: 'exact', head: true }).eq('source', 'chat').gte('created_at', start),
     db.from('records').select('id', { count: 'exact', head: true }).eq('category', 'task').eq('meta->>from', 'chat').gte('created_at', start),
+    db.from('records').select('id', { count: 'exact', head: true }).eq('category', 'task').eq('meta->>done_by', 'chat').gte('meta->>done_at', start),
   ])
-  return (lines ?? 0) + (todos ?? 0)
+  return (lines ?? 0) + (todos ?? 0) + (ticks ?? 0)
 }
 
 export async function callTool(db: SupabaseClient, name: string, args: Record<string, any>, opts: { dry?: boolean } = {}): Promise<ToolOut> {

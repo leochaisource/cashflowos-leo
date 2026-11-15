@@ -177,8 +177,12 @@ export async function addTodos(
     openClaude++
   }
   if (rows.length && !opts.dry) {
-    const { error } = await db.from('records').insert(rows)
+    const { data, error } = await db.from('records').insert(rows).select('id, title, status, due_date, meta, created_at')
     if (error) throw new Error(`to-dos not added: ${error.message}`)
+    opts.tasks?.push(...((data ?? []) as TaskRow[]))
+  } else if (rows.length) {
+    const now = new Date().toISOString()
+    opts.tasks?.push(...rows.map((r, i) => ({ ...(r as Omit<TaskRow, 'id' | 'created_at'>), id: -1 - i, created_at: now }) as TaskRow))
   }
   return rows.map((r) => String(r.title))
 }
@@ -211,12 +215,23 @@ export async function markLooksDone(db: SupabaseClient, id: number, ref: string)
   await db.from('records').update({ meta: { ...(data.meta ?? {}), looks_done_at: new Date().toISOString(), looks_done_ref: ref } }).eq('id', id)
 }
 
-/** Done lines since an instant, newest first (all clients, or one). */
-export async function progressSince(db: SupabaseClient, sinceIso: string, project?: string): Promise<ProgressLine[]> {
+/**
+ * Done lines since an instant, newest first (all clients, or one). `by: 'logged'`
+ * (the Today message) counts from when a line was written, so work logged late (a
+ * backlog sync after the laptop was off, a session that went quiet just before
+ * 9am) still shows once; the default counts from when the work happened (the
+ * dashboard's last 14 days).
+ */
+export async function progressSince(
+  db: SupabaseClient,
+  sinceIso: string,
+  project?: string,
+  opts: { by?: 'happened' | 'logged' } = {},
+): Promise<ProgressLine[]> {
   let q = db
     .from('progress_log')
     .select('id, project, happened_at, happened_on, text, source')
-    .gte('happened_at', sinceIso)
+    .gte(opts.by === 'logged' ? 'created_at' : 'happened_at', sinceIso)
     .order('happened_at', { ascending: false })
     .limit(300)
   if (project) q = q.eq('project', project)
@@ -227,7 +242,8 @@ export async function progressSince(db: SupabaseClient, sinceIso: string, projec
 
 /** Close undated Claude to-dos nobody touched for STALE_DAYS (they can be reopened on the dashboard). */
 export async function expireStaleTodos(db: SupabaseClient, tasks: TaskRow[], opts: { dry?: boolean } = {}): Promise<string[]> {
-  const stale = tasks.filter((t) => isOpen(t) && t.meta?.from && !t.due_date && Date.now() - Date.parse(t.created_at) > STALE_DAYS * DAY)
+  const touched = (t: TaskRow) => Math.max(Date.parse(t.created_at), Date.parse(t.meta?.reopened_at ?? '') || 0)
+  const stale = tasks.filter((t) => isOpen(t) && t.meta?.from && !t.due_date && Date.now() - touched(t) > STALE_DAYS * DAY)
   if (stale.length && !opts.dry) {
     for (const t of stale)
       await db.from('records').update({ status: 'expired', meta: { ...t.meta, expired_at: new Date().toISOString() } }).eq('id', t.id).eq('category', 'task')
@@ -252,7 +268,7 @@ export type Digest = {
   since: string
   clientIds: string[] // every client, with or without something today
   clients: ClientDay[]
-  ticked: TaskRow[] // closed by Claude since `since`
+  ticked: TaskRow[] // closed by Claude (a session or a chat) since `since`
   looksDone: TaskRow[] // his own to-dos a session says are finished
   stale: TaskRow[] // Monday: the oldest undated Claude to-dos
   chatAdds: TaskRow[] // to-dos a chat or Telegram added since `since`
@@ -283,7 +299,7 @@ export function buildDigest(args: { clients: ProgressClient[]; tasks: TaskRow[];
     since,
     clientIds: clients.map((c) => c.id),
     clients: days,
-    ticked: mine.filter((t) => (t.status || '').toLowerCase() === 'done' && t.meta?.done_by && t.meta.done_by !== 'dashboard' && after(t.meta.done_at)),
+    ticked: mine.filter((t) => (t.status || '').toLowerCase() === 'done' && ['claude', 'chat'].includes(t.meta?.done_by) && after(t.meta.done_at)),
     looksDone: open.filter((t) => !t.meta?.from && after(t.meta?.looks_done_at)),
     stale: monday ? open.filter((t) => t.meta?.from && !t.due_date).sort((a, b) => a.id - b.id).slice(0, 5) : [],
     chatAdds: open.filter((t) => (t.meta?.from === 'chat' || t.meta?.from === 'telegram') && after(t.created_at)),
@@ -315,7 +331,7 @@ export async function loadDigest(db: SupabaseClient, opts: { since?: string; tod
   const floor = new Date(Date.now() - 3 * DAY).toISOString()
   const marked = opts.since ?? (await lastTodaySent(db)) ?? new Date(Date.now() - DAY).toISOString()
   const since = marked < floor ? floor : marked
-  const [clients, tasks, progress] = await Promise.all([loadClients(db), allTasks(db), progressSince(db, since)])
+  const [clients, tasks, progress] = await Promise.all([loadClients(db), allTasks(db), progressSince(db, since, undefined, { by: 'logged' })])
   return { ...buildDigest({ clients, tasks, progress, today, since }), tasks }
 }
 
@@ -358,7 +374,7 @@ export function renderTodaySection(d: Digest, opts: { notes?: string[]; dashboar
     parts.push(`✅ <b>Done since yesterday's message</b>\n${lines.join('\n')}`)
   }
   if (d.ticked.length)
-    parts.push(`☑️ <b>Ticked off for you</b> (a session said they're finished)\n${d.ticked.slice(0, 6).map((t) => `• ${esc(t.title)}`).join('\n')}`)
+    parts.push(`☑️ <b>Ticked off for you</b> (a session or a chat said they're finished)\n${d.ticked.slice(0, 6).map((t) => `• ${esc(t.title)}`).join('\n')}`)
   if (d.looksDone.length)
     parts.push(`❓ <b>Looks done?</b> Tick them on the dashboard if so\n${d.looksDone.slice(0, 5).map((t) => `• ${esc(t.title)}`).join('\n')}`)
   if (d.chatAdds.length)

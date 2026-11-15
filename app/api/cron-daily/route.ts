@@ -11,7 +11,7 @@ import { logRun } from '@/lib/runs'
 import { runWatchdog, watchdogCrashed, watchdogSection, weekSummary, saveWatchdog, type WatchdogReport } from '@/lib/watchdog'
 import { loadDigest, expireStaleTodos, markTodaySent, renderTodaySection } from '@/lib/progress'
 import { trackingNotes } from '@/lib/progress-sort'
-import { klToday } from '@/lib/format'
+import { klToday, clip } from '@/lib/format'
 import { APP_URL } from '@/lib/brief-digest'
 
 // 🔒 Don't edit — this keeps your robot safe.
@@ -158,8 +158,10 @@ export async function GET(req: Request) {
   let expiredTodos: string[] = []
   if (supabaseConfigured && owner) {
     try {
-      const digest = await loadDigest(supabase, { today: klToday() })
+      let digest = await loadDigest(supabase, { today: klToday() })
       expiredTodos = await expireStaleTodos(supabase, digest.tasks)
+      // Re-read so the to-dos just closed aren't listed under "To do" as well.
+      if (expiredTodos.length) digest = await loadDigest(supabase, { today: klToday() })
       const notes = await trackingNotes(supabase, digest.since)
       if (expiredTodos.length)
         notes.push(
@@ -190,8 +192,8 @@ export async function GET(req: Request) {
   let ownerOk = false
   const toOwner = async (): Promise<{ ok: boolean }> => {
     const first = together ? `${ownerText}\n\n${wdText}` : ownerText
-    let ok = false
-    if (first) for (const piece of pieces(first)) ok = (await sendMessage(owner!, piece, { noPreview: true })).ok
+    let ok = !!first
+    if (first) for (const piece of pieces(first)) ok = (await sendMessage(owner!, piece, { noPreview: true })).ok && ok
     ownerOk = ok
     if (wdText && !together) wdSent = (await sendMessage(owner!, wdText, { noPreview: true })).ok
     else if (wdText) wdSent = ok
@@ -283,16 +285,22 @@ export async function GET(req: Request) {
   })
 }
 
-// Telegram caps a message at 4,096 characters: split on blank lines.
+// Telegram caps a message at 4,096 characters: split on blank lines, and a block
+// too long for one message between its lines, never inside a line (a cut tag or
+// emoji makes Telegram reject the whole piece).
 function pieces(text: string, max = 3800): string[] {
   const out: string[] = []
   let cur = ''
-  for (const block of text.split('\n\n')) {
-    if (cur && cur.length + block.length + 2 > max) {
+  const add = (part: string, sep: string) => {
+    if (cur && cur.length + sep.length + part.length > max) {
       out.push(cur)
       cur = ''
     }
-    cur = cur ? `${cur}\n\n${block}` : block.slice(0, max)
+    cur = cur ? `${cur}${sep}${part}` : part
+  }
+  for (const block of text.split('\n\n')) {
+    if (block.length <= max) add(block, '\n\n')
+    else block.split('\n').forEach((line, i) => add(line.length > max ? clip(line.replace(/<[^>]*>/g, ''), max) : line, i ? '\n' : '\n\n'))
   }
   if (cur) out.push(cur)
   return out

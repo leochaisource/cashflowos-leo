@@ -101,9 +101,16 @@ export async function dismissStep(taskId: number): Promise<ActionResult> {
 export async function setStepDone(taskId: number, done: boolean): Promise<ActionResult> {
   if (!Number.isInteger(taskId)) return { ok: false, message: 'Unknown task.' }
   if (!supabaseConfigured) return { ok: false, message: 'Supabase isn’t connected yet.' }
+  // Reopening stamps meta.reopened_at: the 28-day expiry of undated Claude to-dos
+  // (lib/progress.ts) ages from it, so a reopened one isn't closed again overnight.
+  let meta: Record<string, unknown> | undefined
+  if (!done) {
+    const { data } = await supabase.from('records').select('meta').eq('id', taskId).eq('category', 'task').maybeSingle()
+    if (data) meta = { ...((data.meta as Record<string, unknown> | null) ?? {}), reopened_at: new Date().toISOString() }
+  }
   const { error } = await supabase
     .from('records')
-    .update({ status: done ? 'done' : 'open' })
+    .update({ status: done ? 'done' : 'open', ...(meta ? { meta } : {}) })
     .eq('id', taskId)
     .eq('category', 'task') // never let a task id flip some other kind of row
   if (error) return { ok: false, message: error.message }

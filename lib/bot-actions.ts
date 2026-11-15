@@ -285,9 +285,10 @@ export async function runBotAction(name: string, input: any, ctx: BotActionCtx):
       const clients = await loadClients(supabase)
       const scope = input?.project ? matchProject(String(input.project), clients).project?.id : undefined
       const open = (await allTasks(supabase)).filter((t) => isOpen(t) && (!scope || t.meta?.project === scope))
+      const long = words.split(' ').filter((w) => w.length > 2)
       const hits = open.filter((t) => {
         const k = textKey(t.title)
-        return k.includes(words) || words.split(' ').filter((w) => w.length > 2).every((w) => k.includes(w))
+        return k.includes(words) || (long.length > 0 && long.every((w) => k.includes(w)))
       })
       if (!hits.length) return JSON.stringify({ status: 'not_found', message: 'No open to-do matches that. Ask for a few more words from it.' })
       if (hits.length > 1)

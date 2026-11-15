@@ -154,6 +154,7 @@ export function cleanItems(raw: unknown): SummaryItem[] {
     .filter((x): x is SummaryItem => !!x && typeof x === 'object' && typeof (x as SummaryItem).ref === 'string')
     .filter((x) => /^mem:[\w.-]+:\d+$/.test(x.ref) && typeof x.session === 'string' && !Number.isNaN(Date.parse(x.at)))
     .filter((x) => (x.project ?? '').toLowerCase() !== 'jobhunt')
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at)) // over the cap, keep the newest
     .slice(0, 300)
     .map((x) => ({
       ref: x.ref,
@@ -194,16 +195,23 @@ async function claim(db: SupabaseClient, items: SummaryItem[], ledger: Map<strin
     if (error) throw new Error(`ledger not written: ${error.message}`)
     for (const r of data ?? []) claimed.add(r.ref)
   }
-  const retry = items.filter((i) => ledger.has(i.ref)).map((i) => i.ref)
-  if (retry.length) {
-    const stale = new Date(Date.now() - STALE_CLAIM_MIN * 60_000).toISOString()
+  const stale = new Date(Date.now() - STALE_CLAIM_MIN * 60_000).toISOString()
+  const retry = items
+    .map((i) => ledger.get(i.ref))
+    .filter((l): l is Ledger => !!l && l.attempts < MAX_ATTEMPTS && (l.status === 'error' || (l.status === 'processing' && l.claimed_at < stale)))
+  for (const l of retry) {
+    const attempts = l.status === 'processing' ? l.attempts + 1 : l.attempts
+    // Re-checked in the update itself, so a parallel run can't claim it twice.
     const { data } = await db
       .from('progress_ingest')
-      .update({ status: 'processing', claimed_at: new Date().toISOString() })
-      .in('ref', retry)
-      .or(`and(status.eq.error,attempts.lt.${MAX_ATTEMPTS}),and(status.eq.processing,claimed_at.lt."${stale}")`)
+      .update({ status: 'processing', claimed_at: new Date().toISOString(), attempts })
+      .eq('ref', l.ref)
+      .or(`and(status.eq.error,attempts.lt.${MAX_ATTEMPTS}),and(status.eq.processing,claimed_at.lt."${stale}",attempts.lt.${MAX_ATTEMPTS})`)
       .select('ref')
-    for (const r of data ?? []) claimed.add(r.ref)
+    for (const r of data ?? []) {
+      claimed.add(r.ref)
+      l.attempts = attempts
+    }
   }
   return claimed
 }
@@ -302,9 +310,11 @@ export async function ingestSummaries(args: {
   const bySession = new Map<string, SummaryItem[]>()
   for (const c of chunks) bySession.set(c.session, [...(bySession.get(c.session) ?? []), c].sort((a, b) => a.at.localeCompare(b.at)))
 
+  const finished = new Set<string>()
   const finish = async (refs: string[], patch: Record<string, unknown>) => {
     if (dry || !refs.length) return
     await db.from('progress_ingest').update({ ...patch, processed_at: new Date().toISOString() }).in('ref', refs)
+    for (const r of refs) finished.add(r)
   }
 
   try {
@@ -399,8 +409,8 @@ export async function ingestSummaries(args: {
     result.ok = false
     result.error = msg
     if (!dry) {
-      // One more attempt used for every chunk of this run; retried next time.
-      for (const c of chunks) {
+      // One more attempt used for every chunk of this run not already finished; retried next time.
+      for (const c of chunks.filter((x) => !finished.has(x.ref))) {
         const prev = ledger.get(c.ref)?.attempts ?? 0
         await db.from('progress_ingest').update({ status: 'error', attempts: prev + 1, last_error: msg }).eq('ref', c.ref)
       }
@@ -439,7 +449,7 @@ export async function trackingNotes(db: SupabaseClient, sinceIso: string, now = 
     const h = (now.getTime() - Date.parse(last.at)) / 3_600_000
     if (h > 48)
       notes.push(
-        `Your laptop hasn't sent Code sessions for ${Math.round(h / 24)} days. If it's been on, open Task Scheduler and run "SpeakFunnels progress sync".`,
+        `Your laptop hasn't sent Code sessions for ${Math.round(h / 24)} days. If it's been on: in Task Scheduler, run "SpeakFunnels progress sync"; if that task isn't there, run scripts\\progress-sync-task.ps1 once (docs/progress-sync.md).`,
       )
     else if (!last.ok) notes.push(`The last progress sync from your laptop failed (${cleanLine(last.error ?? 'unknown', 90)}). It retries every 30 minutes.`)
   }
