@@ -4,11 +4,13 @@
 // clears it, so the stage goes back to the median of the finished events.
 
 import { revalidatePath } from 'next/cache'
+import { signedIn } from '@/lib/signed-in'
 import { getProject } from '@/lib/ad-clients'
 import { RATES } from '@/lib/funnel-config'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 
 export async function setBenchmark(formData: FormData): Promise<void> {
+  if (!(await signedIn())) return
   const project = String(formData.get('project') ?? '')
   const funnel = String(formData.get('funnel') ?? 'all')
   const rate = String(formData.get('rate') ?? '')

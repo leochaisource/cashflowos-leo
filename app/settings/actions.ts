@@ -1,11 +1,13 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { signedIn, SIGNED_OUT } from '@/lib/signed-in'
 import { setDemoEnabled } from '@/lib/settings'
 
 // The demo switch, flipped from the UI. Thin 'use server' wrapper so the client
 // toggle never imports lib/supabase.ts (which is behind `server-only`).
 export async function toggleDemo(on: boolean): Promise<{ ok: boolean; on: boolean; message: string }> {
+  if (!(await signedIn())) return { ok: false, on: !on, message: SIGNED_OUT }
   try {
     await setDemoEnabled(on)
     // Everything reads the switch, so everything has to re-render.

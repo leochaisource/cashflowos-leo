@@ -10,6 +10,7 @@
 // still be tapped in the chat.
 
 import { revalidatePath } from 'next/cache'
+import { signedIn, SIGNED_OUT } from '@/lib/signed-in'
 import { claim, executeClaimed, summarizeResult } from '@/lib/actions'
 import { editMessageReplyMarkup, sendMessage } from '@/lib/telegram'
 import { logRun } from '@/lib/runs'
@@ -20,6 +21,7 @@ const approverId = () => (process.env.OWNER_CHAT_ID ? Number(process.env.OWNER_C
 const plain = (s: string) => s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&')
 
 export async function approveAction(id: number): Promise<{ ok: boolean; message: string }> {
+  if (!(await signedIn())) return { ok: false, message: SIGNED_OUT }
   const claimed = await claim(id, approverId(), 'executing')
   if (!claimed) {
     revalidatePath('/approvals')
@@ -45,6 +47,7 @@ export async function approveAction(id: number): Promise<{ ok: boolean; message:
 }
 
 export async function rejectAction(id: number): Promise<{ ok: boolean; message: string }> {
+  if (!(await signedIn())) return { ok: false, message: SIGNED_OUT }
   const claimed = await claim(id, approverId(), 'rejected')
   if (!claimed) {
     revalidatePath('/approvals')

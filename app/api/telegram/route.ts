@@ -89,14 +89,11 @@ const HELP_CARD =
 
 // Open this route in a browser to confirm your env is wired (reveals only WHETHER
 // each value exists, never the values themselves).
+// A plain "the webhook is reachable" answer for anyone who opens the URL (the
+// passcode-gate canary in docs/dry-run-brief.md). It no longer says which keys are
+// set or how many users are allowed (2026-11-15): that was a map for an attacker.
 export async function GET() {
-  return Response.json({
-    ok: true,
-    botTokenSet: !!process.env.TELEGRAM_BOT_TOKEN,
-    webhookSecretSet: !!process.env.TELEGRAM_WEBHOOK_SECRET,
-    anthropicKeySet: !!process.env.ANTHROPIC_API_KEY,
-    allowedUsers: ALLOWED.length,
-  })
+  return Response.json({ ok: true })
 }
 
 // ------------------------------------------------------------

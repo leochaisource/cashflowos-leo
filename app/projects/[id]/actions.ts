@@ -8,6 +8,7 @@
 // and holds the service_role key).
 
 import { revalidatePath } from 'next/cache'
+import { signedIn, SIGNED_OUT } from '@/lib/signed-in'
 import { getProject } from '@/lib/ad-clients'
 import { syncProjectAds } from '@/lib/ad-sync'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
@@ -16,6 +17,7 @@ export type ActionResult = { ok: boolean; message: string }
 
 /** Pull the last `days` from Meta into ad_daily, then re-render the page. */
 export async function refreshProject(id: string, days = 14): Promise<ActionResult> {
+  if (!(await signedIn())) return { ok: false, message: SIGNED_OUT }
   const project = getProject(id)
   if (!project) return { ok: false, message: 'Unknown project.' }
   try {
@@ -70,6 +72,7 @@ export async function addStep(
   title: string,
   due: string,
 ): Promise<ActionResult> {
+  if (!(await signedIn())) return { ok: false, message: SIGNED_OUT }
   const t = title.trim()
   if (!t) return { ok: false, message: 'What is the step?' }
   if (due && !/^\d{4}-\d{2}-\d{2}$/.test(due)) return { ok: false, message: 'Bad date.' }
@@ -89,6 +92,7 @@ export async function addStep(
 
 /** Take a step off the list without calling it done (a wrong or stale auto-added one). Reopen it from "Show done". */
 export async function dismissStep(taskId: number): Promise<ActionResult> {
+  if (!(await signedIn())) return { ok: false, message: SIGNED_OUT }
   if (!Number.isInteger(taskId)) return { ok: false, message: 'Unknown task.' }
   if (!supabaseConfigured) return { ok: false, message: 'Supabase isn’t connected yet.' }
   const { error } = await supabase.from('records').update({ status: 'dismissed' }).eq('id', taskId).eq('category', 'task')
@@ -99,6 +103,7 @@ export async function dismissStep(taskId: number): Promise<ActionResult> {
 
 /** Tick a step off, or untick it. Flips status only — nothing is deleted. */
 export async function setStepDone(taskId: number, done: boolean): Promise<ActionResult> {
+  if (!(await signedIn())) return { ok: false, message: SIGNED_OUT }
   if (!Number.isInteger(taskId)) return { ok: false, message: 'Unknown task.' }
   if (!supabaseConfigured) return { ok: false, message: 'Supabase isn’t connected yet.' }
   // Reopening stamps meta.reopened_at: the 28-day expiry of undated Claude to-dos
@@ -123,6 +128,7 @@ export async function saveFunnelNumbers(
   date: string,
   input: FunnelInput,
 ): Promise<ActionResult> {
+  if (!(await signedIn())) return { ok: false, message: SIGNED_OUT }
   const project = getProject(id)
   if (!project) return { ok: false, message: 'Unknown project.' }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, message: 'Pick a date first.' }
