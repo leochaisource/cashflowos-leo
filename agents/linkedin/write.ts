@@ -113,20 +113,57 @@ export type WrittenPost = DraftPost & { leo_link: string; leo_notes_used?: strin
 /** One of Leo's own notes as the writer sees it (sources.ts, minus the private client name). */
 export type WriterNote = { id: string; date: string; type: string; text: string; numbers: string; usedOn?: string }
 
-/** Write `count` posts (the caller asks for one more than it needs). Throws on API errors. */
+/** A draft that failed the checks, handed to the second try so it can be fixed instead of thrown away. */
+export type RejectedDraft = { post: WrittenPost; problems: string[]; excerpts: string[] }
+
+/**
+ * Write `count` posts (the caller asks for spares). Throws on API errors.
+ * `skip`: brief items the checker can't use ("url: why"), so no post is wasted on them.
+ * `retry`: the second try for slots nothing passed in, with the drafts that failed and why.
+ */
 export async function writePosts(
   anthropic: Anthropic,
-  args: { count: number; research: string; facts: string; avoidHookTypes: string[]; avoidTopic: string | null; days: string[]; notes?: WriterNote[] },
+  args: {
+    count: number
+    research: string
+    facts: string
+    avoidHookTypes: string[]
+    avoidTopic: string | null
+    days: string[]
+    notes?: WriterNote[]
+    skip?: string[]
+    retry?: { taken: string[]; rejected: RejectedDraft[] }
+    timeoutMs?: number
+  },
 ): Promise<WrittenPost[]> {
   const notes = (args.notes ?? []).map(
     (n) =>
       `[${n.id}] ${n.date || 'undated'}${n.type ? ` · ${n.type}` : ''}: ${n.text}${n.numbers ? ` (numbers: ${n.numbers})` : ''}` +
       `${n.usedOn ? ` [used in the post of ${n.usedOn}: reuse only with a new angle]` : ''}`,
   )
+  const r = args.retry
+  const retry = r
+    ? `SECOND TRY: the first drafts for these days failed the checks. ` +
+      `${r.taken.length ? `This week's other posts already use these sources, so don't: ${r.taken.join(', ')}. ` : ''}` +
+      `You may fix a failed draft below (keep its source_url, change only what its problems name, and state only what its page excerpts support; drop a sentence rather than stretch it), or write a new post on another usable brief item.\n\n` +
+      r.rejected
+        .map(
+          (d, i) =>
+            `--- Failed draft ${i + 1} (source_url: ${d.post.source_url || 'none'}) ---\n${d.post.body}\n` +
+            `Problems:\n${d.problems.map((p) => `- ${p}`).join('\n')}\n` +
+            `What the checker read on the page:\n${d.excerpts.map((e) => `- "${e}"`).join('\n') || '- (nothing)'}`,
+        )
+        .join('\n\n') +
+      '\n\n'
+    : ''
   const input =
     `Write ${args.count} posts, in posting order, each on a different brief item. They go out on: ${args.days.join(', ')} (the extra ones are spares).\n\n` +
     `ROTATION: avoid hook types ${args.avoidHookTypes.join(', ') || '(none)'}; the first post must not use topic ${args.avoidTopic ?? '(none)'}.\n\n` +
+    retry +
     `RESEARCH BRIEF (sourced, with URLs):\n\n${args.research.trim()}\n\n` +
+    (args.skip?.length
+      ? `BRIEF ITEMS NOT TO USE (the checker can't open or accept their pages, or a recent post used them):\n${args.skip.map((s) => `- ${s}`).join('\n')}\n\n`
+      : '') +
     `LEO'S OWN NOTES (newest first; approved by him):\n\n${notes.join('\n') || '(none yet)'}\n\n` +
     `LEO'S WEEK AND RECENT POSTS:\n\n${args.facts.trim() || '(nothing this week)'}\n\n` +
     `Two posts Leo approved, as the bar for voice and shape:\n\n${EXAMPLES.map((e, i) => `--- Example ${i + 1} ---\n${e}`).join('\n\n')}`
@@ -141,7 +178,10 @@ export async function writePosts(
     messages: [{ role: 'user', content: input }],
   }
   // `fallbacks` is newer than this SDK's types; the API accepts it on the beta endpoint.
-  const res = await anthropic.beta.messages.create(params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming)
+  const res = await anthropic.beta.messages.create(
+    params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+    args.timeoutMs ? { timeout: args.timeoutMs, maxRetries: 0 } : undefined,
+  )
   if (res.stop_reason === 'refusal') throw new Error('the writer declined this week\'s brief')
   if (res.stop_reason === 'max_tokens') throw new Error('the writer ran out of room (max_tokens)')
   const text = res.content

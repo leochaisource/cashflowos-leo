@@ -4,7 +4,8 @@
 -- One row per research brief (kind 'research', one per posting week) and one per
 -- post (kind 'post', one per slot). The daily cron moves each row along:
 --   Saturday  research brief            → research 'ready'
---   Sunday    write + check + pick photos → post 'drafted' (or 'dropped', with the reason)
+--   Sunday    write + check             → post 'drafted' (or 'rewrite': one second writing pass, then
+--                                          'drafted' or 'dropped', with the reason)
 --   Monday+   draw slides + schedule     → post 'scheduled' (or 'failed', with the reason)
 -- The unique indexes make a doubled cron delivery harmless: a second insert for
 -- the same week or slot simply finds the row already there.
@@ -16,11 +17,11 @@ create table if not exists linkedin_autopilot (
   week         text        not null,              -- ISO week of the posting days, e.g. 2026-W46
   kind         text        not null check (kind in ('research', 'post')),
   slot         timestamptz,                        -- posts: when it goes live
-  status       text        not null,               -- research: ready | failed · post: drafted | scheduled | dropped | failed
+  status       text        not null,               -- research: ready | failed · post: drafted | rewrite | scheduled | dropped | failed
   data         jsonb       not null default '{}'::jsonb, -- the brief, or the post: body, comment, slides, photos, checks
   ghl_post_id  text,                               -- set once GHL accepts the post
   note         text,                               -- why it was dropped or failed, in plain words
-  attempts     int         not null default 0,     -- scheduling attempts (retried daily while the slot is ahead)
+  attempts     int         not null default 0,     -- scheduling attempts (retried daily while the slot is ahead); for a rewrite row, second-pass attempts
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );

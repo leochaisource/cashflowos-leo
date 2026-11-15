@@ -50,7 +50,8 @@ const SCHEMA = {
 export type Verification = { ok: boolean; problems: string[]; excerpts: string[]; page: string }
 
 /** Check one post against its source page. Never throws for a content problem; returns ok=false with reasons. */
-export async function verifyPost(anthropic: Anthropic, post: DraftPost): Promise<Verification> {
+export async function verifyPost(anthropic: Anthropic, post: DraftPost, opts: { timeoutMs?: number } = {}): Promise<Verification> {
+  const deadline = opts.timeoutMs ? Date.now() + opts.timeoutMs : 0
   let host = ''
   try {
     host = new URL(post.source_url).hostname.replace(/^www\./, '')
@@ -69,6 +70,8 @@ export async function verifyPost(anthropic: Anthropic, post: DraftPost): Promise
   let text = ''
   // A server tool can pause a long turn (stop_reason "pause_turn"): send it back to continue.
   for (let round = 0; round < 3; round++) {
+    const left = deadline ? deadline - Date.now() : 0
+    if (deadline && left < 5_000) return { ok: false, problems: ['the source check ran out of time'], excerpts: [], page: '' }
     const params = {
       model: VERIFY_MODEL,
       max_tokens: 12000,
@@ -80,7 +83,10 @@ export async function verifyPost(anthropic: Anthropic, post: DraftPost): Promise
       messages,
     }
     // Same cast as prompt.ts: `fallbacks` and this tool version are newer than this SDK's types.
-    const res = await anthropic.beta.messages.create(params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming)
+    const res = await anthropic.beta.messages.create(
+      params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+      deadline ? { timeout: left, maxRetries: 0 } : undefined,
+    )
     if (res.stop_reason === 'refusal') return { ok: false, problems: ['the checker declined to read this source'], excerpts: [], page: '' }
     text = res.content
       .filter((b): b is Anthropic.Beta.Messages.BetaTextBlock => b.type === 'text')
