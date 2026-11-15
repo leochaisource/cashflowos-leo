@@ -19,7 +19,7 @@ import { AUTOPILOT, isoWeek } from '../agents/linkedin/definition.ts'
 //     (deadManCheck below): if this morning's check never finished, 8am says so.
 //
 // Every check works from evidence the jobs already leave (brief_daily,
-// cron_claims, ad_daily, funnel_daily, linkedin_autopilot, cfo-cache markers),
+// cron_claims, ad_daily, funnel_daily, linkedin_autopilot, linkedin_posts, cfo-cache markers),
 // plus heartbeats for the jobs driven by the sheet's Apps Script (lib/heartbeat.ts).
 // A check that throws becomes one plain line; it never takes the others down.
 //
@@ -455,6 +455,11 @@ const checkBot: Check = async (ctx) => {
 // on Sunday the watchdog looks for Saturday's research, on Monday for Sunday's
 // posts, and on Tuesday for Monday's scheduling. Single empty slots are not
 // checked here: the autopilot sends its own card for those.
+//
+// Leo's manual posts (/linkedin-posts) win their slots: the autopilot leaves them
+// alone, and Monday drops its own row ("slot taken by a manual post"). So a Tuesday
+// with nothing scheduled by the autopilot is still fine when a manual post holds
+// today's 09:00 (owner, 2026-11-15: the AI-builds series held all of W47).
 const checkLinkedIn: Check = async (ctx) => {
   if (!AUTOPILOT) return { skipped: 'the LinkedIn autopilot is switched off' }
   const wd = klWeekday(ctx.now)
@@ -470,8 +475,30 @@ const checkLinkedIn: Check = async (ctx) => {
     push("Saturday's research step didn't finish.", 'It tries again in this morning\'s run. If this is still here tomorrow, the Tue–Thu posts are at risk: ask Claude to look at the autopilot.')
   if (wd === 1 && !posts.length)
     push("Sunday's writing step produced no posts.", 'It tries again this morning. If it still has none tomorrow, ask Claude to look before Tuesday 9am.')
-  if (wd === 2 && !posts.some((r) => r.status === 'scheduled'))
-    push("Monday's step scheduled nothing for Tue–Thu, so today's 9am post didn't go out.", 'Ask Claude to check the autopilot and GHL (npm run linkedin -- list).')
+  if (wd === 2 && !posts.some((r) => r.status === 'scheduled')) {
+    const manual = await manualPostAt(ctx.db, new Date(`${tue}T09:00:00+08:00`))
+    if (manual) return { detail: `the autopilot scheduled nothing, but a manual post holds today's 09:00 (${manual})` }
+    push("Monday's step scheduled nothing for Tue–Thu, and no manual post holds today's 09:00, so nothing went out this morning.", 'Ask Claude to check the autopilot and GHL (npm run linkedin -- list).')
+  }
+}
+
+// A manual post in GHL within 30 minutes of `at` (the autopilot's own slot rule), read
+// from the calendar mirror: `npm run linkedin -- sync` writes it after every schedule,
+// with the post file's slot, status and GHL id. Cheaper than asking GHL, and still right
+// after 09:00, when GHL no longer lists the post as scheduled. The autopilot's own mirror
+// rows (file auto/…) don't count: its status is in linkedin_autopilot. Returns the file.
+async function manualPostAt(db: SupabaseClient, at: Date): Promise<string | null> {
+  const { data, error } = await db
+    .from('linkedin_posts')
+    .select('file')
+    .in('status', ['scheduled', 'published'])
+    .not('ghl_post_id', 'is', null)
+    .not('file', 'like', 'auto/%')
+    .gt('slot', new Date(at.getTime() - 30 * 60_000).toISOString())
+    .lt('slot', new Date(at.getTime() + 30 * 60_000).toISOString())
+    .limit(1)
+  if (error) throw new Error(`linkedin_posts: ${error.message}`)
+  return (data?.[0] as { file?: string } | undefined)?.file ?? null
 }
 
 // ---------------------------------------------------------------- the run
