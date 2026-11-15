@@ -25,6 +25,7 @@ import type { WriterNote } from './write.ts'
 //   Saturday   research brief (web search)                 → research row
 //   Sunday     write posts + one spare, fact-check each    → post rows 'drafted' / 'dropped'
 //   Monday     pick photos, draw slides, schedule in GHL   → 'scheduled' / retried tomorrow / 'failed'
+//              (or 'dropped' when a manual post has taken the slot in GHL since Sunday)
 // A missed step is retried the next morning while the slot is still far enough
 // ahead. A doubled cron delivery is harmless: rows are unique per week and per slot.
 //
@@ -69,6 +70,9 @@ function card(key: string, title: string, lines: string[]): AutopilotCard {
     text: [`⚠️ <b>LinkedIn autopilot</b>: ${esc(title)}`, ...lines.map(esc), '', '✅ or ❌ = seen. Nothing else needs you.'].join('\n'),
   }
 }
+
+/** A post already scheduled in GHL within 30 minutes of a slot takes it. The same rule on Sunday (②) and Monday (③). */
+const slotTaken = (taken: number[], at: number) => taken.some((t) => Math.abs(t - at) < 30 * 60_000)
 
 /** Was this Postgres error "that row already exists" (a doubled cron run)? */
 const duplicate = (e: { code?: string } | null) => e?.code === '23505'
@@ -165,7 +169,7 @@ export async function autopilotStep(args: {
   const { data: rows } = await db.from('linkedin_autopilot').select('id, slot, status, data, attempts').eq('kind', 'post').eq('week', block.week).order('slot')
   const handled = new Set((rows ?? []).map((r: any) => Date.parse(r.slot)))
   const open = block.slots.filter(
-    (s) => s.at.getTime() >= now.getTime() + 25 * HOUR && !handled.has(s.at.getTime()) && !taken.some((t) => Math.abs(t - s.at.getTime()) < 30 * 60_000),
+    (s) => s.at.getTime() >= now.getTime() + 25 * HOUR && !handled.has(s.at.getTime()) && !slotTaken(taken, s.at.getTime()),
   )
 
   // ② WRITE + CHECK (normally Sunday).
@@ -297,6 +301,14 @@ export async function autopilotStep(args: {
     const post = r.data?.post as WrittenPost
     log(`step: schedule ${label}`)
     try {
+      // Ask GHL again before drawing and sending: a manual post (/linkedin-posts) may have taken
+      // this slot since Sunday's check in ②. The manual post wins; this one is dropped, with no
+      // card (the slot isn't empty). A failed check lands in the catch below, so nothing is sent.
+      if (slotTaken(await scheduledTimes(new Date(slot.getTime() - HOUR), new Date(slot.getTime() + HOUR)), slot.getTime())) {
+        notes.push(`${label}: slot taken by a manual post in GHL, so this one ${args.dryRun ? 'would be' : 'was'} dropped`)
+        if (!args.dryRun) await db.from('linkedin_autopilot').update({ status: 'dropped', note: 'slot taken by a manual post', updated_at: new Date().toISOString() }).eq('id', r.id)
+        continue
+      }
       if (!args.pexelsKey) throw new Error('PEXELS_API_KEY is not set on Vercel')
       const images = await pickImages(anthropic, args.pexelsKey, post.body.split('\n')[0], post.image_queries)
       // One of Leo's own photos as the cover, when it fits this post (photos.ts). The stock cover stays the fallback.
