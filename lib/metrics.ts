@@ -163,36 +163,54 @@ const dayISO = (offset = 0) => {
   return d.toISOString().slice(0, 10)
 }
 
-/** Every ad row for these projects since `since`. One query for the whole home page. */
+// PAGED (2026-11-15): Supabase answers at most 1,000 rows per request, with no
+// error. Claude Malaysia alone has ~1,100 ad rows in 90 days, so the home page,
+// the Marketing head and (from ~18 Nov) the 8am brief were silently losing the
+// oldest spend and leads. Pages are ordered by id so none is skipped or repeated.
+const PAGE = 1000
+
+/** Every ad row for these projects since `since`. One query (paged) for the whole home page. */
 export async function loadAdRows(projectIds: string[], since: string): Promise<AdRow[]> {
   if (!supabaseConfigured || !projectIds.length) return []
-  const { data, error } = await supabase
-    .from('ad_daily')
-    .select(
-      'project, date, ad_id, ad_name, campaign_name, effective_status, spend, impressions, reach, clicks, link_clicks, leads, currency, synced_at',
-    )
-    .in('project', projectIds)
-    .gte('date', since)
-  if (error) {
-    console.warn('[CFO] ad_daily read failed:', error.message)
-    return []
+  const rows: (AdRow & { project: string })[] = []
+  for (let at = 0; ; at += PAGE) {
+    const { data, error } = await supabase
+      .from('ad_daily')
+      .select(
+        'project, date, ad_id, ad_name, campaign_name, effective_status, spend, impressions, reach, clicks, link_clicks, leads, currency, synced_at',
+      )
+      .in('project', projectIds)
+      .gte('date', since)
+      .order('id')
+      .range(at, at + PAGE - 1)
+    if (error) {
+      console.warn('[CFO] ad_daily read failed:', error.message)
+      return []
+    }
+    rows.push(...((data ?? []) as (AdRow & { project: string })[]))
+    if (!data || data.length < PAGE) return rows
   }
-  return (data ?? []) as (AdRow & { project: string })[]
 }
 
 /** Every funnel row for these projects since `since`. */
 export async function loadFunnelRows(projectIds: string[], since: string): Promise<FunnelRow[]> {
   if (!supabaseConfigured || !projectIds.length) return []
-  const { data, error } = await supabase
-    .from('project_funnel')
-    .select('project, date, leads, attended, appointments, signups, cash_collected')
-    .in('project', projectIds)
-    .gte('date', since)
-  if (error) {
-    console.warn('[CFO] project_funnel read failed:', error.message)
-    return []
+  const rows: (FunnelRow & { project: string })[] = []
+  for (let at = 0; ; at += PAGE) {
+    const { data, error } = await supabase
+      .from('project_funnel')
+      .select('project, date, leads, attended, appointments, signups, cash_collected')
+      .in('project', projectIds)
+      .gte('date', since)
+      .order('id')
+      .range(at, at + PAGE - 1)
+    if (error) {
+      console.warn('[CFO] project_funnel read failed:', error.message)
+      return []
+    }
+    rows.push(...((data ?? []) as (FunnelRow & { project: string })[]))
+    if (!data || data.length < PAGE) return rows
   }
-  return (data ?? []) as (FunnelRow & { project: string })[]
 }
 
 // ---------------------------------------------------------------- the scorecard
