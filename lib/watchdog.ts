@@ -4,6 +4,7 @@ import type { AdClient } from './ad-clients.ts'
 import { journeyFor } from './funnel-config.ts'
 import { readBeats, type Beat } from './heartbeat.ts'
 import { AUTOPILOT, isoWeek } from '../agents/linkedin/definition.ts'
+import { stepFor } from '../agents/ai-library/run.ts'
 
 // 🩺 THE WATCHDOG (owner, 2026-11-10). Every morning at 9am it checks that the
 // automations which run without anyone watching actually ran and produced
@@ -19,8 +20,9 @@ import { AUTOPILOT, isoWeek } from '../agents/linkedin/definition.ts'
 //     (deadManCheck below): if this morning's check never finished, 8am says so.
 //
 // Every check works from evidence the jobs already leave (brief_daily,
-// cron_claims, ad_daily, funnel_daily, linkedin_autopilot, linkedin_posts, cfo-cache markers),
-// plus heartbeats for the jobs driven by the sheet's Apps Script (lib/heartbeat.ts).
+// cron_claims, ad_daily, funnel_daily, linkedin_autopilot, linkedin_posts,
+// ai_library_runs, cfo-cache markers), plus heartbeats for the jobs driven by the
+// sheet's Apps Script (lib/heartbeat.ts). No model calls: it must stay cheap.
 // A check that throws becomes one plain line; it never takes the others down.
 //
 // Shared with scripts/watchdog.ts (a dry run): no server-only imports, and the
@@ -70,7 +72,7 @@ const whenLabel = (iso: string) =>
   new Date(iso).toLocaleString('en-GB', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
 const money = (cur: string, v: number) => `${cur}${Math.round(v).toLocaleString('en-MY')}`
 const norm = (s: string) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : /(s|sh|ch|x)$/.test(w) ? 'es' : 's'}`
 const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 /** Shorten by code points, so "fancy" two-unit letters are never cut in half (see lib/format.ts clip()). */
 const clip = (s: string, n: number) => {
@@ -109,6 +111,9 @@ type BriefRow = {
   performance_text: string | null
   report_text: string | null
 }
+
+/** Seconds from the 8am job's start (its cron claim) to a brief's record: above this, it nearly ran out of time. */
+const SLOW_BRIEF_S = 240
 
 /** A chat id in words, never the raw id. */
 function chatLabel(chat: string, client: AdClient): string {
@@ -167,6 +172,7 @@ const checkBriefs: Check = async (ctx) => {
     return { skipped: 'the 8am job started under 8 minutes ago and is still running' }
 
   const owner = process.env.OWNER_CHAT_ID?.trim()
+  let slowest = { id: '', s: 0 }
   for (const client of focus) {
     const row = rows.find((r) => r.project === client.id)
     if (!row) {
@@ -183,6 +189,18 @@ const checkBriefs: Check = async (ctx) => {
         text: `${nameOf(client)}: the brief went out without its written analysis, so the Claude step failed.`,
         fix: 'Usually API credit: check platform.claude.com → Settings → Billing (claude.ai credit does not pay for the API).',
       })
+    // Early warning: the run clock (RUN_BUDGET_MS in app/api/cron-ads/route.ts) sends the
+    // brief by about 235s, before Vercel's 300s limit kills the run. Claude Malaysia's
+    // took up to 250s before the clock, and on 8 and 11 Nov it died unsent. Later than
+    // 10 minutes is a re-run by hand (it rewrites sent_at), not this morning's timing.
+    const tookS = claimedAt ? Math.round((Date.parse(row.sent_at) - Date.parse(claimedAt)) / 1000) : 0
+    if (tookS > SLOW_BRIEF_S && tookS <= 600)
+      report.problems.push({
+        check: 'briefs',
+        text: `${nameOf(client)}: early warning, the 8am brief took ${Math.floor(tookS / 60)}m ${tookS % 60}s to go out, close to the 5-minute limit where Vercel stops the run and the brief is lost.`,
+        fix: "Ask Claude to read this morning's Vercel log for /api/cron-ads and find the slow step; the run clock should send it within 4 minutes.",
+      })
+    if (tookS > 0 && tookS <= 600 && tookS > slowest.s) slowest = { id: client.id, s: tookS }
 
     for (const f of row.failed ?? []) {
       const id = String(f.chat).split(' ')[0]
@@ -225,6 +243,7 @@ const checkBriefs: Check = async (ctx) => {
       })
     }
   }
+  return slowest.s ? { detail: `slowest brief: ${slowest.id}, ${slowest.s}s after the 8am job started` } : undefined
 }
 
 // ---------------------------------------------------------------- ② Meta spend is fresh
@@ -377,16 +396,97 @@ const checkFunnels: Check = async (ctx) => {
 // ---------------------------------------------------------------- ⑤ the sheet's Apps Script clocks
 const TRIGGER_FIX =
   'Open the Hot leads sheet → Extensions → Apps Script → Triggers (the clock icon). If the triggers are gone, run installSyncTriggers once. If they show errors, Executions says why (often the script needs authorising again).'
+const MISSED_RUN_FIX =
+  'Hot leads sheet → Extensions → Apps Script → Executions: no run at that hour means the clock skipped it; a run there means Vercel stopped the work, so ask Claude to read the Vercel log for that route at that time.'
+
+// The sheet's daily refresh hours (apps-script/hot-leads.gs SYNC_HOURS, KL time).
+// 3pm is also the run that judges buying intent (JUDGE_HOURS in /api/hotleads-sync).
+const SYNC_HOURS = [9, 12, 15, 18, 21]
+const JUDGE_HOUR = 15
+
+type BeatJob = { job: string; label: string; maxGapH: number; hours?: number[] }
+
+const hourLabel = (h: number) => (h === 0 ? '12am' : h < 12 ? `${h}am` : h === 12 ? '12pm' : `${h - 12}pm`)
+
+// Yesterday, run by run. The last-beat check above only sees a clock that has STOPPED;
+// on Wed 11 Nov the 3pm refresh never happened (no beat from 12:07 to 18:01), the
+// clock carried on, and nothing said so. So: every fixed hour needs a beat, an hourly
+// job may not go quiet for longer than its limit, and a failed run counts as one.
+// Beats older than the oldest one kept (KEEP in lib/heartbeat.ts) can't be judged,
+// so those hours are left out. Fail soft: a "not tracked" note, never a false alarm.
+function yesterdayProblems(j: BeatJob, beats: Beat[], yesterday: string): { problems: Problem[]; note: string } {
+  const from = klStart(yesterday).getTime()
+  const to = from + DAY
+  const oldest = Date.parse(beats[0].at)
+  const inDay = beats.filter((b) => Date.parse(b.at) >= from && Date.parse(b.at) < to)
+  const problems: Problem[] = []
+  const day = dayLabel(yesterday)
+  let note: string
+
+  if (oldest >= to) return { problems, note: 'yesterday not tracked yet' }
+  if (j.hours) {
+    // A run belongs to an hour from 1h before it to 90 minutes after: the trigger fires
+    // within ~15 minutes of the hour, and the beat lands when the run ends (≤ 5 minutes).
+    // The hours are 3h apart, so the windows never overlap. An hour is judged only when
+    // its window ends after the oldest beat kept.
+    const win = (h: number) => [from + (h - 1) * HOUR, from + (h + 1.5) * HOUR]
+    const judged = j.hours.filter((h) => win(h)[1] > oldest)
+    const missing = judged.filter((h) => {
+      const [a, b] = win(h)
+      return !inDay.some((x) => Date.parse(x.at) >= a && Date.parse(x.at) < b)
+    })
+    note = judged.length ? `${judged.length - missing.length} of ${judged.length} runs yesterday` : 'yesterday not tracked yet'
+    if (missing.length)
+      problems.push({
+        check: 'triggers',
+        text:
+          `${j.label} ran ${judged.length - missing.length} of ${judged.length} times yesterday (${day}): no ${missing.map(hourLabel).join(', ')} run` +
+          `${missing.includes(JUDGE_HOUR) ? `, and ${hourLabel(JUDGE_HOUR)} is the run that judges buying intent, so the day's new chats waited for the overnight batch` : ''}.`,
+        fix: MISSED_RUN_FIX,
+      })
+  } else {
+    // The longest quiet spell that STARTED yesterday, so each spell is judged on exactly
+    // one morning. A spell still open now is the last-beat check's (it ran first).
+    const times = beats.map((b) => Date.parse(b.at))
+    let worst = { gap: 0, a: 0, b: 0 }
+    for (let i = 1; i < times.length; i++) {
+      const [a, b] = [times[i - 1], times[i]]
+      if (a >= from && a < to && b - a > worst.gap) worst = { gap: b - a, a, b }
+    }
+    note = `${inDay.length} runs yesterday, longest gap ${Math.round((worst.gap / HOUR) * 10) / 10}h${oldest > from ? ' (only partly tracked)' : ''}`
+    if (worst.gap > j.maxGapH * HOUR) {
+      const [a, b] = [new Date(worst.a), new Date(worst.b)]
+      const clock = (d: Date) => d.toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false })
+      problems.push({
+        check: 'triggers',
+        text: `${j.label} went quiet for ${Math.round(worst.gap / HOUR)}h yesterday (${day}): no run from ${clock(a)} to ${klDay(b) === klDay(a) ? clock(b) : whenLabel(b.toISOString())}.`,
+        fix: MISSED_RUN_FIX,
+      })
+    }
+  }
+
+  const failed = inDay.filter((b) => !b.ok)
+  if (failed.length) {
+    const last = failed[failed.length - 1]
+    problems.push({
+      check: 'triggers',
+      text: `${j.label}: ${failed.length} of yesterday's ${plural(inDay.length, 'run')} failed (last at ${whenLabel(last.at)}: ${clip(last.error ?? 'no reason recorded', 100)}).`,
+      fix: 'Each failure was also sent to you when it happened. If it keeps failing, ask Claude to read the Vercel log for that route.',
+    })
+    note += `, ${failed.length} failed`
+  }
+  return { problems, note }
+}
 
 const checkTriggers: Check = async (ctx) => {
   const { db, focus, now, yesterday, report } = ctx
   const notes: string[] = []
   const hotList = focus.find((c) => c.ghl?.hotList)
   if (hotList) {
-    const jobs: { job: string; label: string; maxGapH: number }[] = [
+    const jobs: BeatJob[] = [
       { job: 'hotlist-tick', label: "Ariella's hourly list check", maxGapH: 3 },
       // Runs at 9am, 12, 3, 6 and 9pm: the longest normal gap is 9pm → 9am.
-      { job: 'hotleads-sync', label: 'The Hot leads sheet refresh', maxGapH: 13.5 },
+      { job: 'hotleads-sync', label: 'The Hot leads sheet refresh', maxGapH: 13.5, hours: SYNC_HOURS },
     ]
     for (const j of jobs) {
       const beats: Beat[] | null = await readBeats(db, j.job)
@@ -396,12 +496,17 @@ const checkTriggers: Check = async (ctx) => {
       }
       const last = beats[beats.length - 1]
       const gapH = (now.getTime() - Date.parse(last.at)) / HOUR
-      if (gapH > j.maxGapH)
+      if (gapH > j.maxGapH) {
         report.problems.push({
           check: 'triggers',
           text: `${j.label} hasn't run since ${whenLabel(last.at)} (${Math.round(gapH)}h ago). The sheet's clock has probably stopped.`,
           fix: TRIGGER_FIX,
         })
+        continue // stopped: yesterday's run-by-run lines would only repeat it
+      }
+      const y = yesterdayProblems(j, beats, yesterday)
+      report.problems.push(...y.problems)
+      notes.push(`${j.job}: ${y.note}`)
     }
   }
   // The Funnel X-ray rebuilds yesterday from 6am, on the same hourly trigger, and
@@ -501,6 +606,37 @@ async function manualPostAt(db: SupabaseClient, at: Date): Promise<string | null
   return (data?.[0] as { file?: string } | undefined)?.file ?? null
 }
 
+// ---------------------------------------------------------------- ⑧ the AI Library researched
+// Tue–Fri the 9am sweep starts one research run (agents/ai-library/run.ts), after this
+// check, so the watchdog judges yesterday's. Saturday's card names runs that failed or
+// never ran, but a run that finished empty looked fine: on Fri 13 Nov the model stopped
+// without a single web search (status "partial", 0 searches, 0 cases) and nothing said so.
+type LibraryRun = { status: string; added: number | null; notes: unknown }
+const LIBRARY_FIX = 'It researches again on the next research morning (Tue–Fri). If this shows up twice in a row, ask Claude to look at agents/ai-library/research.ts.'
+
+const checkLibrary: Check = async (ctx) => {
+  if (stepFor(new Date(`${ctx.yesterday}T12:00:00+08:00`))?.step !== 'research') return { skipped: 'no research run was due yesterday' }
+  const { data, error } = await ctx.db.from('ai_library_runs').select('status,added,notes').eq('key', `research:${ctx.yesterday}`).maybeSingle()
+  if (error) throw new Error(`ai_library_runs: ${error.message}`)
+  const run = data as LibraryRun | null
+  const day = dayLabel(ctx.yesterday)
+  const push = (text: string, fix = LIBRARY_FIX) => ctx.report.problems.push({ check: 'library', text: `AI Library: ${day}'s research ${text}`, fix })
+  if (!run) return void push("didn't run.", 'The 9am sweep starts it (agents/registry.ts → /api/ai-library). Ask Claude to read the Vercel log for /api/ai-library.')
+  const notes = Array.isArray(run.notes) ? run.notes.map(String) : []
+  if (run.status === 'failed') return void push(`failed (${clip((notes.find((n) => n.startsWith('failed:')) ?? 'no reason recorded').replace(/^failed:\s*/, ''), 120)}).`)
+  if (run.status === 'running') return void push("never finished: Vercel probably stopped it at its time limit.")
+  // research() writes "wrote up N case(s) after M search(es)" first.
+  const m = notes.join('\n').match(/wrote up (\d+) case\(s\) after (\d+) search/)
+  const [written, searches] = m ? [Number(m[1]), Number(m[2])] : [null, null]
+  const added = Number(run.added) || 0
+  if (searches === 0) return void push('stopped without searching the web, so it added no cases.')
+  if (!added)
+    return void push(
+      written ? `wrote up ${plural(written, 'case')}, but the page check left ${written === 1 ? 'it' : 'them all'} out, so it added none.` : `found nothing to write up${searches ? ` after ${plural(searches, 'search')}` : ''}, so it added no cases.`,
+    )
+  return { detail: `${day}: ${plural(added, 'case')} added after ${plural(searches ?? 0, 'search')}` }
+}
+
 // ---------------------------------------------------------------- the run
 const CHECKS: [string, Check][] = [
   ['briefs', checkBriefs],
@@ -509,6 +645,7 @@ const CHECKS: [string, Check][] = [
   ['triggers', checkTriggers],
   ['bot', checkBot],
   ['linkedin', checkLinkedIn],
+  ['library', checkLibrary],
 ]
 const LABEL: Record<string, string> = {
   briefs: '8am briefs',
@@ -517,6 +654,7 @@ const LABEL: Record<string, string> = {
   triggers: 'sheet triggers',
   bot: 'Telegram bot',
   linkedin: 'LinkedIn autopilot',
+  library: 'AI Library research',
 }
 
 export async function runWatchdog(deps: WatchdogDeps): Promise<WatchdogReport> {
