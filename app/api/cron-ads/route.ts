@@ -80,6 +80,26 @@ import { loadDigest, renderClientLines } from '@/lib/progress'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
+// THE RUN CLOCK (2026-11-15). Claude Malaysia's run took 91-250s of the 300 allowed
+// in Oct-Nov, and twice (8 and 11 Nov, both the morning after an event) it died
+// after the analysis, so neither the owner nor the group got a brief and nothing
+// said why. The slow steps after the analysis now race this clock: when it runs
+// out, the brief goes out without them and says so. 65s are left for the sends,
+// the archive write and the other clients' tails.
+const RUN_BUDGET_MS = 235_000
+const OUT_OF_TIME = Symbol('out of time')
+function beforeDeadline<T>(work: Promise<T>, deadline: number): Promise<T | typeof OUT_OF_TIME> {
+  const left = deadline - Date.now()
+  if (left <= 0) {
+    work.catch(() => {}) // it keeps running; a late failure must not crash the run
+    return Promise.resolve(OUT_OF_TIME)
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([work, new Promise<typeof OUT_OF_TIME>((r) => (timer = setTimeout(() => r(OUT_OF_TIME), left)))]).finally(() =>
+    clearTimeout(timer),
+  )
+}
+
 const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const fmt = (cur: string, n: number) => cur + n.toLocaleString('en-MY', { maximumFractionDigits: 2 })
 
@@ -430,7 +450,7 @@ function chunk(text: string): string[] {
 }
 
 // ------------------------------------------------------------- one client
-async function runClient(client: AdClient, records: Rec[]) {
+async function runClient(client: AdClient, records: Rec[], deadline = Date.now() + RUN_BUDGET_MS) {
   const notes: string[] = []
   const cur = client.currency
   const money = (n: number) => fmt(cur, n)
@@ -981,7 +1001,11 @@ async function runClient(client: AdClient, records: Rec[]) {
           },
         ],
       }
-      const res = await anthropic.beta.messages.create(params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming)
+      // Bounded by the run clock: the SDK's default would wait up to 10 minutes.
+      const res = await anthropic.beta.messages.create(params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming, {
+        timeout: Math.min(90_000, Math.max(20_000, (deadline - Date.now()) / 2)),
+        maxRetries: 1,
+      })
       report = clampAnalysis(
         res.content
           .filter((b): b is Anthropic.Beta.Messages.BetaTextBlock => b.type === 'text')
@@ -1016,102 +1040,132 @@ async function runClient(client: AdClient, records: Rec[]) {
   let followupsPrivate = ''
   let followupsOwnerLine = ''
   if (followupsP && perf) {
-    const f = await followupsP
-    if (f) {
-      const g = client.ghl!
-      const token = process.env[g.tokenEnv]!.trim()
-      const who = g.followupAssignee
-      const leads = f.chats.filter((c) => c.intent !== 'not_a_lead')
-      let tasks: AssignedTask[] = []
-      let list: HotListSync | null = null
-      if (who) {
-        const today = new Date(Date.parse(`${perf.date}T00:00:00Z`) + 864e5).toISOString().slice(0, 10)
-        // Her ONE list (owner, 2026-10-14): the GHL pipeline replaces the daily
-        // tasks. The intent tags stay. `tasks` now records the list as it stood
-        // this morning, so tomorrow's line can check what she did with it.
-        if (g.hotList) {
-          list = await syncHotList({ client, f, db: supabaseConfigured ? supabase : null })
-          if (!list.ok) notes.push(`${who.name}'s list not updated: ${list.error}`)
-          if (list.errors.length) notes.push(`${who.name}'s list: ${list.errors.length} GHL error(s) — ${list.errors[0]}`)
-        }
-        const a = await assignFollowups(f, { token, assigneeId: who.userId, dueISO: new Date(`${today}T18:00:00+08:00`).toISOString(), tasks: !g.hotList })
-        tasks = list?.ok
-          ? list.open.map((c) => ({ contactId: c.contactId, taskId: c.cardId, kind: /^(Payment|Started the checkout)/.test(c.why) ? ('unpaid' as const) : ('hot' as const), name: c.name }))
-          : a.tasks
-        if (a.errors.length) notes.push(`Follow-up tasks: ${a.errors.length} failed in GHL — ${a.errors[0]}`)
-        // The leads handed to her yesterday morning (yesterday's brief_daily
-        // payload): did she actually message them on WhatsApp, and did they pay?
-        // (owner, 2026-10-08 — the old "X/Y tasks ticked" said neither.)
-        const yesterday = new Date(Date.parse(`${perf.date}T00:00:00Z`) - 864e5).toISOString().slice(0, 10)
-        const prev = await supabase.from('brief_daily').select('payload, sent_at').eq('project', client.id).eq('date', yesterday).maybeSingle()
-        const prevTasks = ((prev.data?.payload as { followups?: { tasks?: AssignedTask[] } } | null)?.followups?.tasks ?? []) as AssignedTask[]
-        const tz = g.timeZone ?? 'Asia/Kuala_Lumpur'
-        const reportDay = dayBounds(perf.date, tz)
-        const reviews = prevTasks.length
-          ? await reviewFollowups({
-              token,
-              tasks: prevTasks,
-              assigneeId: who.userId,
-              sinceISO: (prev.data?.sent_at as string | null) ?? reportDay.start,
-              untilISO: reportDay.end,
-              messages: f.messages,
-              paidAt: f.paidAt,
-            }).catch((e) => {
-              notes.push(`Follow-up review failed: ${(e as Error).message}`)
-              return null
-            })
-          : null
-        const count = (k: AssignedTask['kind']) => tasks.filter((t) => t.kind === k).length
-        followupsOwnerLine = renderFollowupReview(
-          who.name,
-          reviews,
-          list?.ok && g.hotList
-            ? `Today: ${listCounts(list.open, g.hotList.openStages)} on ${who.name}'s list in GHL` +
-                ` · this morning +${list.added.length} new · ${list.paid.length} paid${list.reopened.length ? ` · ${list.reopened.length} back` : ''}`
-            : `Today: ${tasks.length} task${tasks.length === 1 ? '' : 's'} in GHL (${count('hot')} hot · ${count('warm')} warm · ${count('unpaid')} unpaid)`,
-        )
-      }
-      // The hot leads also go into the shared "Leads Follow Up List" Google
-      // Sheet (owner, 2026-10-01) — via the sheet's Apps Script.
-      const sheetUrl = process.env.SHEETS_HOTLEADS_URL?.trim()
-      const sheetSecret = process.env.SHEETS_HOTLEADS_SECRET?.trim()
-      if (sheetUrl && sheetSecret && client.deal) {
-        try {
-          const common = {
-            f,
-            project: client.id,
-            locationId: process.env[g.locationEnv]!.trim(),
-            token,
-            agreementDate: client.deal.agreementDate,
-            assignee: who?.name ?? null,
-            funnels: g.funnels.map((x) => ({ formId: x.formId, label: x.label })),
-            db: supabase,
+    // The slow part of the run (her GHL list, the tasks, yesterday's review, the
+    // sheet: hundreds of GHL calls the morning after an event) races the run
+    // clock. Out of time, the brief goes out without it. It also can't take the
+    // brief down by throwing any more. Its lines are built here and used only if
+    // it finished in time.
+    const p = perf
+    const fp = followupsP
+    const work = (async () => {
+      const notes: string[] = []
+      const perf = p
+      let perfText = ''
+      let followupsPrivate = ''
+      let followupsOwnerLine = ''
+      const f = await fp
+      if (f) {
+        const g = client.ghl!
+        const token = process.env[g.tokenEnv]!.trim()
+        const who = g.followupAssignee
+        const leads = f.chats.filter((c) => c.intent !== 'not_a_lead')
+        let tasks: AssignedTask[] = []
+        let list: HotListSync | null = null
+        if (who) {
+          const today = new Date(Date.parse(`${perf.date}T00:00:00Z`) + 864e5).toISOString().slice(0, 10)
+          // Her ONE list (owner, 2026-10-14): the GHL pipeline replaces the daily
+          // tasks. The intent tags stay. `tasks` now records the list as it stood
+          // this morning, so tomorrow's line can check what she did with it.
+          if (g.hotList) {
+            list = await syncHotList({ client, f, db: supabaseConfigured ? supabase : null })
+            if (!list.ok) notes.push(`${who.name}'s list not updated: ${list.error}`)
+            if (list.errors.length) notes.push(`${who.name}'s list: ${list.errors.length} GHL error(s) — ${list.errors[0]}`)
           }
-          // With her GHL list, the sheet is a copy of it (2026-10-14).
-          const rows = list?.ok ? await hotListRows({ ...common, cards: list.all }) : await hotLeadRows(common)
-          const res = list?.ok ? await pushHotLeads(sheetUrl, sheetSecret, rows, [], 'list') : await pushHotLeads(sheetUrl, sheetSecret, rows, paidList(f))
-          if (!res.ok) notes.push(`Hot leads sheet not updated: ${res.error ?? 'unknown error'}`)
-          else if (followupsOwnerLine && !list?.ok) followupsOwnerLine += ` · ${rows.length} hot lead${rows.length === 1 ? '' : 's'} added to the sheet`
-        } catch (e) {
-          notes.push(`Hot leads sheet not updated: ${(e as Error).message}`)
+          const a = await assignFollowups(f, { token, assigneeId: who.userId, dueISO: new Date(`${today}T18:00:00+08:00`).toISOString(), tasks: !g.hotList })
+          tasks = list?.ok
+            ? list.open.map((c) => ({ contactId: c.contactId, taskId: c.cardId, kind: /^(Payment|Started the checkout)/.test(c.why) ? ('unpaid' as const) : ('hot' as const), name: c.name }))
+            : a.tasks
+          if (a.errors.length) notes.push(`Follow-up tasks: ${a.errors.length} failed in GHL — ${a.errors[0]}`)
+          // The leads handed to her yesterday morning (yesterday's brief_daily
+          // payload): did she actually message them on WhatsApp, and did they pay?
+          // (owner, 2026-10-08 — the old "X/Y tasks ticked" said neither.)
+          const yesterday = new Date(Date.parse(`${perf.date}T00:00:00Z`) - 864e5).toISOString().slice(0, 10)
+          const prev = await supabase.from('brief_daily').select('payload, sent_at').eq('project', client.id).eq('date', yesterday).maybeSingle()
+          const prevTasks = ((prev.data?.payload as { followups?: { tasks?: AssignedTask[] } } | null)?.followups?.tasks ?? []) as AssignedTask[]
+          const tz = g.timeZone ?? 'Asia/Kuala_Lumpur'
+          const reportDay = dayBounds(perf.date, tz)
+          const reviews = prevTasks.length
+            ? await reviewFollowups({
+                token,
+                tasks: prevTasks,
+                assigneeId: who.userId,
+                sinceISO: (prev.data?.sent_at as string | null) ?? reportDay.start,
+                untilISO: reportDay.end,
+                messages: f.messages,
+                paidAt: f.paidAt,
+              }).catch((e) => {
+                notes.push(`Follow-up review failed: ${(e as Error).message}`)
+                return null
+              })
+            : null
+          const count = (k: AssignedTask['kind']) => tasks.filter((t) => t.kind === k).length
+          followupsOwnerLine = renderFollowupReview(
+            who.name,
+            reviews,
+            list?.ok && g.hotList
+              ? `Today: ${listCounts(list.open, g.hotList.openStages)} on ${who.name}'s list in GHL` +
+                  ` · this morning +${list.added.length} new · ${list.paid.length} paid${list.reopened.length ? ` · ${list.reopened.length} back` : ''}`
+              : `Today: ${tasks.length} task${tasks.length === 1 ? '' : 's'} in GHL (${count('hot')} hot · ${count('warm')} warm · ${count('unpaid')} unpaid)`,
+          )
         }
+        // The hot leads also go into the shared "Leads Follow Up List" Google
+        // Sheet (owner, 2026-10-01) — via the sheet's Apps Script.
+        const sheetUrl = process.env.SHEETS_HOTLEADS_URL?.trim()
+        const sheetSecret = process.env.SHEETS_HOTLEADS_SECRET?.trim()
+        if (sheetUrl && sheetSecret && client.deal) {
+          try {
+            const common = {
+              f,
+              project: client.id,
+              locationId: process.env[g.locationEnv]!.trim(),
+              token,
+              agreementDate: client.deal.agreementDate,
+              assignee: who?.name ?? null,
+              funnels: g.funnels.map((x) => ({ formId: x.formId, label: x.label })),
+              db: supabase,
+            }
+            // With her GHL list, the sheet is a copy of it (2026-10-14).
+            const rows = list?.ok ? await hotListRows({ ...common, cards: list.all }) : await hotLeadRows(common)
+            const res = list?.ok ? await pushHotLeads(sheetUrl, sheetSecret, rows, [], 'list') : await pushHotLeads(sheetUrl, sheetSecret, rows, paidList(f))
+            if (!res.ok) notes.push(`Hot leads sheet not updated: ${res.error ?? 'unknown error'}`)
+            else if (followupsOwnerLine && !list?.ok) followupsOwnerLine += ` · ${rows.length} hot lead${rows.length === 1 ? '' : 's'} added to the sheet`
+          } catch (e) {
+            notes.push(`Hot leads sheet not updated: ${(e as Error).message}`)
+          }
+        }
+        // No follow-up owner: the owner gets the full list privately, as before.
+        if (!who) followupsPrivate = renderPrivateFollowups(f, process.env[g.locationEnv]!.trim(), client.client ?? client.name)
+        perf.followups = {
+          text: renderGroupFollowups(
+            f,
+            who?.name,
+            list?.ok && g.hotList ? { open: list.open, counts: listCounts(list.open, g.hotList.openStages) } : undefined,
+          ),
+          unpaid: f.unpaid.length,
+          chats: leads.length,
+          hot: leads.filter((c) => c.intent === 'hot').length,
+          warm: leads.filter((c) => c.intent === 'warm').length,
+          tasks,
+        }
+        perfText = renderPerformance(perf)
+        if (f.intentError) notes.push(`Follow-up intent: ${f.intentError}`)
       }
-      // No follow-up owner: the owner gets the full list privately, as before.
-      if (!who) followupsPrivate = renderPrivateFollowups(f, process.env[g.locationEnv]!.trim(), client.client ?? client.name)
-      perf.followups = {
-        text: renderGroupFollowups(
-          f,
-          who?.name,
-          list?.ok && g.hotList ? { open: list.open, counts: listCounts(list.open, g.hotList.openStages) } : undefined,
-        ),
-        unpaid: f.unpaid.length,
-        chats: leads.length,
-        hot: leads.filter((c) => c.intent === 'hot').length,
-        warm: leads.filter((c) => c.intent === 'warm').length,
-        tasks,
-      }
-      perfText = renderPerformance(perf)
-      if (f.intentError) notes.push(`Follow-up intent: ${f.intentError}`)
+      return { notes, perfText, followupsPrivate, followupsOwnerLine }
+    })()
+    const out = await beforeDeadline(work, deadline).catch((e: unknown) => {
+      notes.push(`Follow-ups failed: ${e instanceof Error ? e.message : String(e)}`)
+      return null
+    })
+    if (out === OUT_OF_TIME) {
+      const who = client.ghl?.followupAssignee?.name
+      notes.push(
+        `Out of time: ${who ? `${who}'s` : 'the'} follow-up list and the hot leads sheet weren't updated before this brief; the next hot-leads sync (around noon) catches the list up.`,
+      )
+    } else if (out) {
+      notes.push(...out.notes)
+      if (out.perfText) perfText = out.perfText
+      followupsPrivate = out.followupsPrivate
+      followupsOwnerLine = out.followupsOwnerLine
     }
   }
 
@@ -1261,6 +1315,7 @@ export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET?.trim()
   const authed = !!secret && req.headers.get('authorization') === `Bearer ${secret}`
   if (!authed) return new Response('forbidden', { status: 401 })
+  const deadline = Date.now() + RUN_BUDGET_MS // the run clock, from the moment the job starts
 
   // A second delivery of this morning's scheduled run: the brief already went out.
   if (!(await claimScheduledRun(req, 'cron-ads'))) return Response.json({ ok: true, duplicate: true })
@@ -1324,7 +1379,7 @@ export async function GET(req: Request) {
     const batch = runnable.slice(i, i + CONCURRENCY)
     const settled = await Promise.all(
       batch.map((client) =>
-        runClient(client, records).catch((e) => {
+        runClient(client, records, deadline).catch((e) => {
           // One client failing must never take the others down with it.
           console.error(`[CFO] client ${client.id} failed:`, e)
           return { client: client.id, ok: false, error: (e as Error).message }

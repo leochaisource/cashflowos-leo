@@ -160,6 +160,9 @@ export function operatorAlerts(notes: string[], max = 2): string[] {
   notes = credit ? notes.filter((n) => !/credit balance is too low/i.test(n) || /^Claude unavailable/i.test(n)) : notes
   const rules: [RegExp, (n: string) => string][] = [
     [/credit balance is too low/i, () => 'Anthropic API is out of credit — no AI analysis or new USPs today. Top up at platform.claude.com → Billing.'],
+    // The run clock in app/api/cron-ads/route.ts (2026-11-15): said in full, it's rare and it's news.
+    [/^Out of time:/i, (n) => clip(n, 200)],
+    [/^Follow-ups failed/i, (n) => `Follow-up list failed: ${short(n)}`],
     [/Meta is NOT connected/i, () => 'Meta ad account not connected — own ad performance is unavailable (not zero).'],
     [/out of credits/i, () => 'Adyntel is out of credits — no competitor search today.'],
     [/^Adyntel unavailable/i, (n) => `Competitor search failed: ${short(n)}`],
