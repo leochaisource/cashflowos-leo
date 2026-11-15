@@ -62,6 +62,12 @@ mid-task. `git add -p` is interactive and unavailable. To commit only your chang
    `BLOB=$(git hash-object -w --stdin --path=<path> < mine.txt)` then
    `git update-index --cacheinfo 100644,$BLOB,<path>`. Afterwards `git diff --cached` shows only your
    change, and `git diff` still shows the other session's.
+4. **Commit in the same command that stages, or in a private index.** The index is shared too: a plain
+   `git commit` from another session takes whatever is staged at that moment. On 2026-11-15 one session's
+   commit swept up six files another had staged a second earlier. Safest: `GIT_INDEX_FILE=<temp file>`
+   with `git read-tree HEAD`, `update-index`, `write-tree` and `commit-tree`, then
+   `git update-ref refs/heads/main <new> <old>` (it refuses if HEAD moved), then
+   `git checkout HEAD -- <your paths>`. Or commit by path: `git commit -- <paths>`.
 
 To prove the commit builds without disturbing anyone's dev server, build it in a separate
 `git worktree` on D: and run `npm ci` inside it. A `node_modules` junction is fine for `tsc` but
