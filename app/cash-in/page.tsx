@@ -1,7 +1,8 @@
 // 👉 This is your Cash In tab — money coming IN. Safe to edit the columns/labels.
 // It reads the ONE `records` table, filtered to category='cash_in'. Copy this file's
 // shape when you add your own money tab.
-import { getRecords, rm, m, todayISO } from '@/lib/records'
+import { getRecords, rm, m } from '@/lib/records'
+import { klToday } from '@/lib/format'
 import Empty from '@/app/_components/Empty'
 import Stat from '@/app/_components/Stat'
 
@@ -19,7 +20,7 @@ export default async function CashIn() {
   // Overdue = still waiting AND the due date is in the past. We flag it, but never
   // change the stored status — the robot only surfaces it, the human decides.
   const isOverdue = (r: (typeof rows)[number]) =>
-    isWaiting(r) && !!r.due_date && r.due_date < todayISO()
+    isWaiting(r) && !!r.due_date && r.due_date < klToday()
 
   const paid = rows.filter(r => !isWaiting(r)).reduce((s, r) => s + Number(r.amount || 0), 0)
   const waiting = rows.filter(isWaiting).reduce((s, r) => s + Number(r.amount || 0), 0)

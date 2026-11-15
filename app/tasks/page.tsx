@@ -1,7 +1,8 @@
 // 👉 This is a normal tab — safe to tweak. It reads the ONE `records` table,
 // filters to category==='task', and lists your ops to-dos with overdue ones
 // flagged red. Copy this file's shape (see docs/add-a-tab-prompt.md) for new tabs.
-import { getRecords, todayISO } from '@/lib/records'
+import { getRecords } from '@/lib/records'
+import { klToday } from '@/lib/format'
 import Empty from '@/app/_components/Empty'
 import Stat from '@/app/_components/Stat'
 
@@ -10,7 +11,7 @@ export const dynamic = 'force-dynamic'
 // Your ops to-dos. category==='task'. Anything past its due_date and not done is
 // flagged as overdue (red). Sorted soonest-due first; undated tasks sink last.
 export default async function Tasks() {
-  const today = todayISO()
+  const today = klToday()
   const all = await getRecords()
   const rows = all
     .filter(r => r.category === 'task')

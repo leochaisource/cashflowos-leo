@@ -1,6 +1,7 @@
 import 'server-only'
 import type { Rec } from './records'
-import { rm, todayISO, getFunnel } from './records'
+import { rm, getFunnel } from './records'
+import { klToday } from './format'
 
 // 🔒 Don't edit — this keeps your robot safe.
 // The Jarvis bot's HANDS. Instead of dumping your whole table into the prompt,
@@ -214,7 +215,7 @@ export function runBotTool(name: string, input: any, rows: Rec[]): string {
     }
 
     if (name === 'list_overdue') {
-      const today = todayISO()
+      const today = klToday()
       const overdue = rows
         .filter(r => r.due_date && r.due_date < today && !PAID.has((r.status || '').toLowerCase()))
         .map(r => ({
@@ -287,7 +288,7 @@ export function runBotTool(name: string, input: any, rows: Rec[]): string {
     }
 
     if (name === 'list_owed' || name === 'list_overdue_invoices') {
-      const today = todayISO()
+      const today = klToday()
       const onlyOverdue = name === 'list_overdue_invoices'
       const unpaid = rows.filter(
         r => r.category === 'cash_in' && !PAID.has((r.status || '').toLowerCase()),
@@ -311,10 +312,10 @@ export function runBotTool(name: string, input: any, rows: Rec[]): string {
     }
 
     if (name === 'tasks_due') {
-      const today = todayISO()
+      const today = klToday()
       const window: 'today' | 'week' | 'all' =
         input?.window === 'today' || input?.window === 'all' ? input.window : 'week'
-      const weekAhead = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10)
+      const weekAhead = new Date(Date.parse(today) + 7 * 86_400_000).toISOString().slice(0, 10)
       const openTasks = rows.filter(r => r.category === 'task' && !PAID.has((r.status || '').toLowerCase()))
       const picked = openTasks.filter(r => {
         if (window === 'all') return true
@@ -348,7 +349,7 @@ export function runBotTool(name: string, input: any, rows: Rec[]): string {
     }
 
     if (name === 'who_to_followup') {
-      const today = Date.parse(todayISO())
+      const today = Date.parse(klToday())
       const people = rows.filter(
         r =>
           r.category === 'customer' ||
@@ -392,7 +393,7 @@ export function runBotTool(name: string, input: any, rows: Rec[]): string {
     }
 
     if (name === 'attention_today') {
-      const today = todayISO()
+      const today = klToday()
       const overdueInv = rows
         .filter(r => r.category === 'cash_in' && !PAID.has((r.status || '').toLowerCase()) && r.due_date && r.due_date < today)
         .map(r => ({ what: r.title, who: r.meta?.customer || null, amount: rm(r.amount), days_late: daysLate(r.due_date!, today) }))

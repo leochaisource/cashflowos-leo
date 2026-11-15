@@ -1,7 +1,7 @@
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { sendMessage } from '@/lib/telegram'
 import { claimScheduledRun } from '@/lib/cron-claim'
-import { getRecords, rm, todayISO, type Rec } from '@/lib/records'
+import { getRecords, rm, type Rec } from '@/lib/records'
 import { propose, proposeAndNotify, runAutopilot } from '@/lib/actions'
 import { AGENTS, SCHEDULED, type ProposalDraft } from '@/agents/registry'
 import { activeProjects, focusProjects } from '@/lib/settings'
@@ -69,7 +69,7 @@ export async function GET(req: Request) {
   // A second delivery of this morning's scheduled run: the brief already went out.
   if (!(await claimScheduledRun(req, 'cron-daily'))) return Response.json({ ok: true, duplicate: true })
 
-  const today = todayISO()
+  const today = klToday()
   const yesterday = new Date(Date.parse(today) - 864e5).toISOString().slice(0, 10)
   const rows = await getRecords()
   const now = new Date().toISOString()

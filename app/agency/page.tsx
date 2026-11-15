@@ -1,4 +1,5 @@
-import { getRecords, getFunnel, rm, todayISO } from '@/lib/records'
+import { getRecords, getFunnel, rm } from '@/lib/records'
+import { klToday } from '@/lib/format'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import { HEADS } from '@/agents/heads'
 import { loadAdAggregates } from '@/agents/marketing/load'
@@ -65,7 +66,7 @@ export default async function Agency() {
           confident zero. */}
       <p className="rowlabel">Your C-Suite</p>
       {HEADS.map(h => (
-        <HeadCard key={h.key} head={h} brief={h.brief({ rows, ads, today: todayISO() })} />
+        <HeadCard key={h.key} head={h} brief={h.brief({ rows, ads, today: klToday() })} />
       ))}
     </>
   )

@@ -12,7 +12,8 @@ import {
   botUsername,
 } from '@/lib/telegram'
 import { loadTurns, appendTurn, bumpDailyCounter } from '@/lib/bot-memory'
-import { getRecords, rm, todayISO } from '@/lib/records'
+import { getRecords, rm } from '@/lib/records'
+import { klToday } from '@/lib/format'
 import { claim, executeClaimed, summarizeResult, undoAction, runAutopilot, proposeAndNotify } from '@/lib/actions'
 import { readImage, type VisionResult } from '@/lib/vision'
 import { BOT_TOOLS, runBotTool } from '@/lib/bot-tools'
@@ -372,7 +373,7 @@ async function runAgentNow(
   try {
     // `await` because a check may READ before it proposes (the Head of Marketing
     // reads `ad_daily`). A sync check awaits harmlessly.
-    drafts = await agent.check(rows, todayISO())
+    drafts = await agent.check(rows, klToday())
   } catch (e) {
     console.error(`[CFO] scheduled check "${agent.key}" threw:`, e)
     await sendMessage(chatId, `⚠️ ${agent.label} hit an error — it's logged, nothing was done.`)
@@ -604,7 +605,7 @@ async function runVaultPipeline(msg: any): Promise<void> {
   }
 
   // ASSESS — daily vision cap (per chat). Over the cap ⇒ friendly stop, no spend.
-  const used = await bumpDailyCounter(chatId, 'vision', todayISO())
+  const used = await bumpDailyCounter(chatId, 'vision', klToday())
   if (used > VISION_DAILY_CAP) {
     await sendMessage(chatId, `📸 You've hit today's ${VISION_DAILY_CAP}-file reading limit. It resets tomorrow — or file this one from the app.`)
     return

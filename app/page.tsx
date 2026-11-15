@@ -1,14 +1,14 @@
 import Link from 'next/link'
 import { activeProjects } from '@/lib/settings'
 import { scorecards, ratio } from '@/lib/metrics'
-import { getRecords, todayISO } from '@/lib/records'
+import { getRecords } from '@/lib/records'
 import { supabase, supabaseConfigured } from '@/lib/supabase'
 import ProjectCard from '@/app/_components/ProjectCard'
 import TodayBand from '@/app/_components/TodayBand'
 import { loadDigest } from '@/lib/progress'
 import Stat from '@/app/_components/Stat'
 import { workProjectsFrom, stepsSummary } from '@/lib/work-projects'
-import { money, num } from '@/lib/format'
+import { money, num, klToday } from '@/lib/format'
 
 export const dynamic = 'force-dynamic'
 
@@ -63,7 +63,7 @@ export default async function Home() {
   const activeAds = all.reduce((s, x) => s + (x.card.activeAds ?? 0), 0)
   const blendedCPL = ratio(spend, leads)
 
-  const today = todayISO()
+  const today = klToday()
   const work = workProjectsFrom(rows)
 
   return (

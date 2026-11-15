@@ -60,7 +60,11 @@ export const m = (r: Rec, k: string) => {
 // Format a number as Malaysian Ringgit for display.
 export const rm = (n: number) => 'RM ' + Number(n || 0).toLocaleString('en-MY')
 
-// Today as YYYY-MM-DD (for due-date comparisons + seeds).
+/**
+ * Today's UTC date as YYYY-MM-DD. Vercel runs in UTC, so before 08:00 in Kuala Lumpur
+ * this is YESTERDAY for Leo.
+ * @deprecated For "today" use klToday() from lib/format.ts.
+ */
 export const todayISO = () => new Date().toISOString().slice(0, 10)
 
 // How many proposals are waiting for a YES right now (status 'proposed', unexpired).

@@ -11,7 +11,7 @@ Your whole app is **one Supabase table: `records`**. Every tab is just a filtere
 
 - A tab = `app/<name>/page.tsx` — a **server component** that reads `records` via `lib/records.ts` (`getRecords()`), then filters by **`category`**.
 - The `records` table has a **`meta` jsonb** column → any custom field (commission %, owner, platform, SKU, reorder level…) lives in there with **NO schema change**. Read it with the `m(row, 'field')` helper.
-- Money formats with `rm(amount)`; today's date is `todayISO()`.
+- Money formats with `rm(amount)`; today's date is `klToday()` from `lib/format.ts` (Malaysia's date; `todayISO()` is UTC and runs a day behind before 8am KL).
 - **Two navs, always kept in sync:**
   - `app/_components/Nav.tsx` — the **desktop sidebar** (the `TABS` array).
   - `app/_components/BottomNav.tsx` — the **phone bottom bar**: 4 `PRIMARY` thumb tabs + a `MORE` sheet for the rest.
@@ -31,7 +31,8 @@ EXACT pattern already in the repo — do not invent your own:
   app/_components/Nav.tsx          (the desktop sidebar — the TABS array)
   app/_components/BottomNav.tsx    (the phone bottom bar — PRIMARY + MORE)
   app/_components/Stat.tsx         (the stat-card component + its props)
-  lib/records.ts                   (getRecords, the Rec type, m(), rm(), todayISO())
+  lib/records.ts                   (getRecords, the Rec type, m(), rm())
+  lib/format.ts                    (klToday() for today's date, plus the date and money formatters)
   agents/registry.ts               (only if I want an automation)
 
 Key facts about my app (do not fight these):
@@ -40,7 +41,7 @@ Key facts about my app (do not fight these):
 - `records` columns: title, status, amount, category, due_date, notes, meta (jsonb for ANY
   custom field), created_at. Use `category` to decide which rows belong on my tab; put custom
   fields in `meta` and read them with m(row,'field') — NO schema change, ever.
-- Format money with rm(amount). Use rm/m/todayISO from lib/records — don't rewrite them.
+- Format money with rm(amount). Use rm/m from lib/records and klToday from lib/format — don't rewrite them.
 - There are TWO navs and they MUST stay in sync:
     • app/_components/Nav.tsx      → add ONE line to the TABS array (desktop sidebar).
     • app/_components/BottomNav.tsx → add my tab to MORE (or, if it's a top-4 daily tab,

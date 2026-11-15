@@ -5,8 +5,8 @@ import { scorecards, projectScorecard, WINNER_MIN_LEADS, LOSER_MIN_IMPRESSIONS }
 import { syncProjectAds } from './ad-sync'
 import { accountInsights } from './meta'
 import { loadSheetLeads, type SheetLead } from './leads-sheet'
-import { todayISO, type Rec } from './records'
-import { clip } from './format'
+import type { Rec } from './records'
+import { clip, klToday } from './format'
 import { BOT_LIBRARY_TOOLS, LIBRARY_TOOL_NAMES, runBotLibraryTool } from './bot-library-tools'
 import {
   searchArchivedAds,
@@ -286,7 +286,7 @@ function interestLevel(
   if (stage === 'contacted' || (lead && lead.meta?.next)) return { level: 'warm', because: 'has been contacted and has a next step' }
   if (stage === 'nurture') return { level: 'cold', because: 'parked in nurture' }
   if (sheet) {
-    const age = sheet.date ? daysBetween(todayISO(), sheet.date) : 0
+    const age = sheet.date ? daysBetween(klToday(), sheet.date) : 0
     return age > 5
       ? { level: 'going cold', because: `opted in ${age} days ago and nobody has followed up` }
       : { level: 'new', because: `opted in ${age} day(s) ago, not yet contacted` }
@@ -321,7 +321,7 @@ async function lookupPerson(q: string, rows: Rec[], pool: Project[] = PROJECTS):
   if (!matches.length && !sheetLead)
     return JSON.stringify({ found: false, searched: q, message: 'nobody by that name in the pipeline, the customer list, the invoices or the leads sheet' })
 
-  const today = todayISO()
+  const today = klToday()
   const lead = matches.find((r) => r.category === 'lead')
   const customer = matches.find((r) => r.category === 'customer')
   const invoices = matches

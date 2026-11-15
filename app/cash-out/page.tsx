@@ -2,7 +2,8 @@
 // files for you. Safe to edit the columns/labels. It reads the ONE `records`
 // table, filtered to category='cash_out'. Rows with meta.auto_filed = the Vault
 // agent filed them on autopilot (🟢) — we badge those so you can spot them.
-import { getRecords, rm, m, todayISO } from '@/lib/records'
+import { getRecords, rm, m } from '@/lib/records'
+import { klToday } from '@/lib/format'
 import Empty from '@/app/_components/Empty'
 import Stat from '@/app/_components/Stat'
 
@@ -14,7 +15,7 @@ export default async function CashOut() {
 
   const total = rows.reduce((s, r) => s + Number(r.amount || 0), 0)
   // Spend so far this calendar month (by due_date, the date the money moved).
-  const monthPrefix = todayISO().slice(0, 7) // YYYY-MM
+  const monthPrefix = klToday().slice(0, 7) // YYYY-MM
   const thisMonth = rows
     .filter(r => (r.due_date || '').slice(0, 7) === monthPrefix)
     .reduce((s, r) => s + Number(r.amount || 0), 0)

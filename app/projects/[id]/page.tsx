@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 import { getProject } from '@/lib/ad-clients'
 import { demoEnabled } from '@/lib/settings'
 import { projectScorecard, ratio as ratioSafe, WINNER_MIN_LEADS, LOSER_MIN_IMPRESSIONS, LOSER_MIN_SPEND } from '@/lib/metrics'
-import { todayISO, getRecords, m } from '@/lib/records'
+import { getRecords, m } from '@/lib/records'
 import Metric from '@/app/_components/Metric'
 import Spark from '@/app/_components/Spark'
 import AdTable from '@/app/_components/AdTable'
@@ -508,7 +508,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               : 'until the lead source is connected'}
           </span>
         </div>
-        <FunnelEntryForm project={project.id} today={todayISO()} />
+        <FunnelEntryForm project={project.id} today={klToday()} />
       </div>
 
       <p className="cap" style={{ marginTop: 20 }}>

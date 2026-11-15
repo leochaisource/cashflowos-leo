@@ -1,5 +1,5 @@
 import type { Rec } from './records'
-import { todayISO } from './records'
+import { klToday } from './format'
 
 // WORK PROJECTS — the projects that aren't ad accounts.
 //
@@ -82,7 +82,7 @@ export type Step = {
  * The next steps for one project (work slug or ad-client id), open first —
  * overdue at the top, then by deadline, undated last — then recent done ones.
  */
-export function stepsFor(rows: Rec[], projectId: string, today = todayISO()): { open: Step[]; done: Step[] } {
+export function stepsFor(rows: Rec[], projectId: string, today = klToday()): { open: Step[]; done: Step[] } {
   const all = rows
     .filter((r) => r.category === 'task' && r.meta?.project === projectId)
     .map((r) => ({
@@ -106,7 +106,7 @@ export function stepsFor(rows: Rec[], projectId: string, today = todayISO()): { 
 }
 
 /** The one-line summary a card or overview row shows. */
-export function stepsSummary(rows: Rec[], projectId: string, today = todayISO()) {
+export function stepsSummary(rows: Rec[], projectId: string, today = klToday()) {
   const { open } = stepsFor(rows, projectId, today)
   const next = open[0] ?? null
   return {
@@ -128,7 +128,7 @@ export function stepsSummary(rows: Rec[], projectId: string, today = todayISO())
 export function urgentStepLines(
   rows: Rec[],
   projects: { id: string; name: string }[],
-  today = todayISO(),
+  today = klToday(),
   withinDays = 1,
 ): string[] {
   const days = (d: string) => Math.round((Date.parse(d) - Date.parse(today)) / 86_400_000)
