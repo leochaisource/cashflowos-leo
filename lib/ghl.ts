@@ -676,6 +676,16 @@ export async function whatsappMessagesViaConversations(locationId: string, token
   return out.filter((m) => !seen.has(m.id) && seen.add(m.id)).sort((a, b) => a.dateAdded.localeCompare(b.dateAdded))
 }
 
+/** A contact's conversation ids, most recent first (usually one: their WhatsApp thread). */
+export async function contactConversationIds(locationId: string, token: string, contactId: string): Promise<string[]> {
+  const j = await getJSON(
+    `${API}/conversations/search?locationId=${encodeURIComponent(locationId)}&contactId=${encodeURIComponent(contactId)}&limit=5`,
+    token,
+    '2021-04-15',
+  )
+  return ((j.conversations as Record<string, unknown>[] | undefined) ?? []).map((c) => String(c.id))
+}
+
 /**
  * One conversation's latest messages (up to `limit`, oldest first), with who
  * sent each — the closing coach reads whole threads, not one day's slice.

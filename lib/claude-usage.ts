@@ -40,6 +40,8 @@ const FEATURE_LABEL: Record<string, string> = {
   'intent-judge-batch': 'Buying-intent judging, overnight batch (half price)',
   'closer-coach': "Ariella's closing coach",
   'closer-coach-batch': "Ariella's closing coach, overnight batch (half price)",
+  'call-list': "Ariella's call-first list, ranked live",
+  'call-list-batch': "Ariella's call-first list, overnight batch (half price)",
   'brief-analysis': '8am competitor analysis',
   'competitor-usp': 'Competitor write-ups',
   'linkedin-ideas': 'LinkedIn ideas',

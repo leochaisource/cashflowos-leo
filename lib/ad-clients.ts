@@ -228,6 +228,15 @@ export type AdClient = {
       }
     }
     /**
+     * The follow-up owner's 9am "Call these first" message (owner, 2026-11-25;
+     * lib/call-list.ts): the decision-makers on her hot list, ranked overnight by
+     * buying intent from their chats, strongest first. `roles` are answers to
+     * the opt-in form's "Your Role" question; `max` is how many she gets.
+     * `signals`: GHL tags that mean a buying step, in plain words for the
+     * ranking (tags carry no date, so the model is told they're undated).
+     */
+    callList?: { roles: string[]; max: number; signals?: Record<string, string> }
+    /**
      * GHL contact ids that are never leads, on top of the location's own users:
      * people on our side whose test contacts carry a different email than
      * their GHL user (the owner's "leo chai" test chats, 2026-10-01).
@@ -430,6 +439,18 @@ export const AD_CLIENTS: AdClient[] = [
         },
       },
       notLeads: ['6akNAWbnfjqG1vdETYkD', 'GudJcCRfbHpowedbHmgp', 'eigz0oA4vbkGHESFMel5'], // the owner's own "leo chai" contacts
+      // Ariella's top 10 to call each morning (owner, 2026-11-25): business owners,
+      // CEOs and HODs only. "Manager / Team Lead" is the form's older wording of
+      // "Head of Department / Manager" (one lead still has it).
+      callList: {
+        roles: ['Business Owner / Founder', 'CEO / Director', 'Head of Department / Manager', 'Manager / Team Lead'],
+        max: 10,
+        signals: {
+          'cm1d-pay-failed': 'a card payment FAILED',
+          'cm1d-checkout-open': 'opened the checkout and did not pay',
+          'payment-not-completed': 'started a payment that was not completed',
+        },
+      },
     },
     watchPages: [
       { name: 'Hustle Malaysia', pageId: '791929197338366' }, // "Certified Claude AI Professional" — the direct competitor

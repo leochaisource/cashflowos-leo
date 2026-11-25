@@ -4,12 +4,14 @@ import { claudeClient } from '@/lib/claude-usage'
 import { BATCH_FEATURE, collectIntentBatch, klHour, klYesterday, submitIntentBatch, type BatchStep } from '@/lib/intent-batch'
 import { collectCoachBatch } from '@/lib/coach-batch'
 import { submitOvernightCoach } from '@/lib/closer-coach-run'
+import { collectCallListBatch, submitOvernightCallList } from '@/lib/call-list'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 // THE OVERNIGHT HALF-PRICE BATCH (owner, 2026-10-15/16) — lib/intent-batch.ts
-// (lead judging) and lib/coach-batch.ts (Ariella's 9am coach). Called every hour
+// (lead judging), lib/coach-batch.ts (Ariella's 9am coach) and lib/call-list.ts
+// (her 9am "Call these first", owner 2026-11-25). Called every hour
 // by the hot leads sheet's Apps Script (apps-script/hot-leads.gs → hotListTick).
 // Every call files finished batches; between midnight and 7am KL it also sends
 // yesterday's not-yet-judged chats and yesterday's coaching request, once each.
@@ -51,6 +53,10 @@ export async function POST(req: Request) {
     if (!dryRun && client.ghl?.followupAssignee) {
       await step(() => collectCoachBatch({ client, anthropic, db: supabase }))
       if (submit) await step(() => submitOvernightCoach({ client, anthropic, db: supabase }))
+    }
+    if (client.ghl?.callList) {
+      if (!dryRun) await step(() => collectCallListBatch({ client, anthropic, db: supabase }))
+      if (submit) await step(() => submitOvernightCallList({ client, anthropic, db: supabase, dryRun }))
     }
     out[client.id] = steps
   }
