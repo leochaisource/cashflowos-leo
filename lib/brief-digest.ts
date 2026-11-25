@@ -172,6 +172,7 @@ export function operatorAlerts(notes: string[], max = 2): string[] {
     [/^Master leads sheet|^Leads unreadable/i, () => 'Master leads sheet could not be read.'],
     [/^Your-share estimate unavailable/i, (n) => `Your-share estimate failed: ${short(n)}`],
     [/^Hot leads sheet not updated/i, (n) => `Hot leads sheet not updated: ${short(n)}`],
+    [/^Firstin5 groups unreadable/i, (n) => `Firstin5 AI couldn't read its group links, so the client's group got no numbers today: ${short(n)}`],
     [/run supabase\/[\w-]+\.sql/i, (n) => `Database update needed: ${n.match(/supabase\/[\w-]+\.sql/i)?.[0]} (paste it in the Supabase SQL editor).`],
     [/^Claude unavailable/i, (n) => `AI analysis failed: ${short(n)}`],
   ]

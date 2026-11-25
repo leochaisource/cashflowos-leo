@@ -639,7 +639,9 @@ export async function runCallList(args: {
   const sentTo: string[] = []
   let sendError: string | null = null
   for (const chatId of recipients) {
-    const r = await sendMessage(chatId, body, { noPreview: true })
+    // The closer hears from the client's bot (lib/ad-clients.ts `bot`); the owner always from SFAiOyen.
+    const bot = chatId === closer.telegramChatId ? client.bot : undefined
+    const r = await sendMessage(chatId, body, { noPreview: true, bot })
     if (r.ok) sentTo.push(chatId)
     else sendError = r.error ?? 'send failed'
   }

@@ -142,9 +142,11 @@ export async function runCloserCoach(args: {
     }
   }
 
+  // The closer hears from the client's bot (lib/ad-clients.ts `bot`); the owner always from SFAiOyen.
   const sendAll = async (chatId: string, body: string): Promise<string | null> => {
+    const bot = chatId === closer.telegramChatId ? client.bot : undefined
     for (const piece of chunk(body)) {
-      const r = await sendMessage(chatId, piece, { noPreview: true })
+      const r = await sendMessage(chatId, piece, { noPreview: true, bot })
       if (!r.ok) return r.error ?? 'send failed'
     }
     return null

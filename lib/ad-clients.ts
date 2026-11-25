@@ -77,6 +77,16 @@ export type AdClient = {
    */
   briefChatIdEnvs?: string[]
   /**
+   * WHICH BOT TALKS TO THIS CLIENT'S PEOPLE (owner, 2026-11-26): the groups in
+   * briefChatIdEnvs and the follow-up person (ghl.followupAssignee). 'oyen', the
+   * default, is @SFAiOyen_bot. 'firstin5' is Firstin5 AI, the bot the clients
+   * other than Claude Malaysia see (lib/firstin5.ts). The owner's own copies
+   * always come from SFAiOyen. A group linked with /link inside Firstin5 AI needs
+   * no entry: those links live in the database and always use Firstin5 AI. A
+   * follow-up person must /start the right bot before it can message them.
+   */
+  bot?: 'oyen' | 'firstin5'
+  /**
    * Leo's commercial terms with this client, when he is paid a share of profit
    * rather than a fee — drives the "💰 Your share" block and the Your share tab.
    */
@@ -519,6 +529,7 @@ AD_CLIENTS.push({
   adAccountEnv: 'STARCITY_META_AD_ACCOUNT_ID',
   tokenEnv: 'STARCITY_META_ACCESS_TOKEN',
   chatIdEnv: 'OWNER_CHAT_ID',
+  bot: 'firstin5', // the client's group and team hear from Firstin5 AI (owner, 2026-11-26)
   // WHAT THIS ACTUALLY IS — corrected 2026-09-21. The account's 2021-22 relics
   // were Wing Heong bak kwa; the LIVE business is 星匯國際 × Florence 火姐
   // selling Malaysian property (KL / Johor) to Hong Kong buyers through free
@@ -629,6 +640,7 @@ AD_CLIENTS.push({
   adAccountEnv: 'MRMONEY_META_AD_ACCOUNT_ID',
   tokenEnv: 'MRMONEY_META_ACCESS_TOKEN',
   chatIdEnv: 'OWNER_CHAT_ID',
+  bot: 'firstin5', // the client's group and team hear from Firstin5 AI (owner, 2026-11-26)
   keywords: ['財務自由課程', 'investing course Malaysia', '股票投資課程', 'financial freedom webinar', 'passive income masterclass', 'money management class'],
   countries: ['MY'],
   keywordsPerRun: 2,

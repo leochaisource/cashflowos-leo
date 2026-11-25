@@ -57,6 +57,7 @@ import { syncProjectAds } from '@/lib/ad-sync'
 import { getRecords, type Rec } from '@/lib/records'
 import { stepsFor } from '@/lib/work-projects'
 import { loadDigest, renderClientLines } from '@/lib/progress'
+import { firstin5GroupsFor } from '@/lib/firstin5'
 
 // The 8am ads brief, once per client. For each client in lib/ad-clients.ts:
 //   ① Meta Marketing API — yesterday vs the trailing 7-day average, per campaign.
@@ -1184,6 +1185,12 @@ async function runClient(client: AdClient, records: Rec[], deadline = Date.now()
         .then((d) => renderClientLines(d.clients.find((c) => c.client.id === client.id), d.today))
         .catch(() => null)
     : null
+  // FIRSTIN5 AI'S GROUPS (owner, 2026-11-26): the groups linked to this client
+  // with /link in Firstin5 AI. They get the same numbers-only block as the
+  // client group above, from Firstin5 AI. Read before the alerts so a failed
+  // read is said in the owner's copy: the client group got nothing today.
+  const f5 = await firstin5GroupsFor(client.id)
+  if (f5.error) notes.push(`Firstin5 groups unreadable: ${f5.error}`)
   const alerts = operatorAlerts(notes)
   const text = [
     perfText ? esc(perfText) : spent > 0 || !focus ? header : '',
@@ -1212,18 +1219,26 @@ async function runClient(client: AdClient, records: Rec[], deadline = Date.now()
   // here, with Adyntel).
   const delivered: string[] = []
   const failed: { chat: string; error: string }[] = []
-  for (const [chats, parts] of [
-    [to.operator, chunks],
-    [to.client, clientChunks],
+  // Each destination names the bot that sends it: the owner's copy always comes
+  // from SFAiOyen; a client's own group from the client's bot (lib/ad-clients.ts
+  // `bot`); a group linked in Firstin5 AI from Firstin5 AI. A failure is recorded
+  // with the group's name, so the 9am watchdog can say which group missed out.
+  const already = new Set([...to.operator, ...to.client])
+  const f5Groups = f5.groups.filter((g) => !already.has(g.chatId))
+  const f5Label = new Map(f5Groups.map((g) => [g.chatId, `${g.chatId} (Firstin5 AI: ${g.title.replace(/[()]/g, '')})`]))
+  for (const [chats, parts, bot] of [
+    [to.operator, chunks, 'oyen'],
+    [to.client, clientChunks, client.bot ?? 'oyen'],
+    [f5Groups.map((g) => g.chatId), clientChunks, 'firstin5'],
   ] as const) {
     for (const chat of chats) {
       if (!parts.length) continue
       let ok = true
       for (const part of parts) {
-        const r = await sendMessage(chat, part, { noPreview: true })
+        const r = await sendMessage(chat, part, { noPreview: true, bot })
         if (!r.ok) {
           ok = false
-          failed.push({ chat, error: r.error ?? 'unknown' })
+          failed.push({ chat: f5Label.get(chat) ?? chat, error: r.error ?? 'unknown' })
           break // don't send the rest of a brief nobody is receiving
         }
       }
@@ -1260,7 +1275,7 @@ async function runClient(client: AdClient, records: Rec[], deadline = Date.now()
     perf,
     performanceText: perfText,
     reportText: report,
-    recipients: [...to.operator, ...to.client],
+    recipients: [...to.operator, ...to.client, ...f5Groups.map((g) => g.chatId)],
     delivered,
     failed,
     notes,
@@ -1289,8 +1304,8 @@ async function runClient(client: AdClient, records: Rec[], deadline = Date.now()
   return {
     client: client.id,
     sent: delivered.length,
-    recipients: [...to.operator, ...to.client],
-    client_groups: to.client,
+    recipients: [...to.operator, ...to.client, ...f5Groups.map((g) => g.chatId)],
+    client_groups: [...to.client, ...f5Groups.map((g) => g.chatId)],
     delivered,
     failed,
     messages: chunks.length,

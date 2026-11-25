@@ -1,8 +1,10 @@
-// Check your Telegram webhook health. Usage: npm run webhook:info
+// Check a Telegram webhook's health. Usage: npm run webhook:info [-- firstin5]
 // Look at "last_error_message" — that's what tells you WHY the bot is silent.
-const token = process.env.TELEGRAM_BOT_TOKEN?.trim()
+const bot = (process.argv[2] || 'oyen').toLowerCase()
+const envName = bot === 'firstin5' ? 'FIRSTIN5_BOT_TOKEN' : 'TELEGRAM_BOT_TOKEN'
+const token = process.env[envName]?.trim()
 if (!token) {
-  console.error('Missing TELEGRAM_BOT_TOKEN in .env.')
+  console.error(`Missing ${envName} in .env.`)
   process.exit(1)
 }
 const res = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`)

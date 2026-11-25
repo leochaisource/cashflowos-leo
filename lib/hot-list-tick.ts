@@ -231,7 +231,7 @@ export async function runHotListTick(args: { client: AdClient; db: SupabaseClien
       const lines = out.pings.map((p) => `${p.text}\n   <a href="${link(p.contactId)}">open in GHL</a>`)
       const text = `⏰ <b>Your list, ${String(hour).padStart(2, '0')}:00</b>\n\n${lines.join('\n\n')}\n\n<i>Move the card when you're done: GHL → Opportunities → ${esc(cfg.pipeline)}.</i>`
       if (closer.telegramChatId) {
-        const r = await sendMessage(closer.telegramChatId, text, { noPreview: true })
+        const r = await sendMessage(closer.telegramChatId, text, { noPreview: true, bot: client.bot })
         if (!r.ok) out.errors.push(`Telegram: ${r.error}`)
       }
       if (auto.inApp)

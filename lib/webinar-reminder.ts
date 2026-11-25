@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 // Explicit .ts extensions: shared with scripts/webinar-reminder.ts (Node type stripping).
 import type { AdClient } from './ad-clients.ts'
-import { sendMessage } from './telegram.ts'
+import { sendMessage, type BotId } from './telegram.ts'
 
 // THE WEBINAR HYPE-UP REMINDER (owner, 2026-10-11). Before every webinar the
 // follow-up owner (Ariella) posts the WhatsApp community hype-up sequence —
@@ -117,9 +117,9 @@ export function renderNudge(w: Webinar, today: string, closer: string): string {
 }
 
 const LIMIT = 3800
-async function sendAll(chatId: string, text: string): Promise<string | null> {
+async function sendAll(chatId: string, text: string, bot?: BotId): Promise<string | null> {
   for (let i = 0; i < text.length; i += LIMIT) {
-    const r = await sendMessage(chatId, text.slice(i, i + LIMIT), { noPreview: true })
+    const r = await sendMessage(chatId, text.slice(i, i + LIMIT), { noPreview: true, bot })
     if (!r.ok) return r.error ?? 'send failed'
   }
   return null
@@ -175,7 +175,12 @@ export async function runWebinarReminder(args: {
   if (args.to === 'closer') {
     const target = closer.telegramChatId ?? owner
     if (target) {
-      error = await sendAll(target, closer.telegramChatId ? text : `<i>${esc(closer.name)}'s Telegram isn't linked, so this came to you.</i>\n\n${text}`)
+      // The closer hears from the client's bot (lib/ad-clients.ts `bot`); the owner always from SFAiOyen.
+      error = await sendAll(
+        target,
+        closer.telegramChatId ? text : `<i>${esc(closer.name)}'s Telegram isn't linked, so this came to you.</i>\n\n${text}`,
+        closer.telegramChatId ? args.client.bot : undefined,
+      )
       if (!error) sentTo.push(target)
     }
     // The owner's copy, marked — only once hers went out.

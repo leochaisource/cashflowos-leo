@@ -2,9 +2,18 @@
 // Minimal Telegram helpers. Read the bot token from env at call time (never
 // inline it on a command line). Safe to call even before the token is set — they
 // just no-op with a warning so the app doesn't crash.
+//
+// TWO BOTS (owner, 2026-11-26). 'oyen' is @SFAiOyen_bot: the owner, the team,
+// Claude Malaysia's group and its closer. 'firstin5' is Firstin5 AI, the bot the
+// OTHER clients see in their own groups (lib/firstin5.ts). Every helper takes the
+// bot as an option and defaults to 'oyen', so a caller that doesn't say behaves
+// exactly as before. Same retries, same never-throw, either bot.
+export type BotId = 'oyen' | 'firstin5'
+const TOKEN_ENV: Record<BotId, string> = { oyen: 'TELEGRAM_BOT_TOKEN', firstin5: 'FIRSTIN5_BOT_TOKEN' }
+export const botTokenEnv = (bot: BotId = 'oyen') => TOKEN_ENV[bot]
 
-const api = (method: string) => {
-  const token = process.env.TELEGRAM_BOT_TOKEN?.trim()
+const api = (method: string, bot: BotId = 'oyen') => {
+  const token = process.env[TOKEN_ENV[bot]]?.trim()
   return token ? `https://api.telegram.org/bot${token}/${method}` : null
 }
 
@@ -17,9 +26,13 @@ const TIMEOUT_MS = 15000
 // connection that never opened. A timeout is NOT retried: the message may have
 // landed, and a brief sent twice to a client's group is worse than a logged miss.
 // Never throws.
-async function call(method: string, payload: Record<string, unknown>): Promise<{ ok: boolean; result?: any; error?: string }> {
-  const url = api(method)
-  if (!url) return { ok: false, error: 'TELEGRAM_BOT_TOKEN not set' }
+async function call(
+  method: string,
+  payload: Record<string, unknown>,
+  bot: BotId = 'oyen',
+): Promise<{ ok: boolean; result?: any; error?: string }> {
+  const url = api(method, bot)
+  if (!url) return { ok: false, error: `${TOKEN_ENV[bot]} not set` }
   let error = 'unknown'
   let wait = 0
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -96,19 +109,27 @@ export type InlineKeyboard = InlineButton[][]
  * Needed to tell "someone mentioned me in a group" from ordinary chatter; a
  * getMe call per message would be a round trip for a value that never changes.
  */
-let cachedUsername: string | null | undefined
-export async function botUsername(): Promise<string | null> {
-  if (cachedUsername !== undefined) return cachedUsername
-  const url = api('getMe')
-  if (!url) return (cachedUsername = null)
+const cachedUsername = new Map<BotId, string | null>()
+export async function botUsername(bot: BotId = 'oyen'): Promise<string | null> {
+  if (cachedUsername.has(bot)) return cachedUsername.get(bot)!
+  const url = api('getMe', bot)
+  if (!url) return null // not cached: the token may be added before the next call
+  let name: string | null = null
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
     const json = (await res.json()) as { ok?: boolean; result?: { username?: string } }
-    cachedUsername = json.ok && json.result?.username ? json.result.username : null
+    name = json.ok && json.result?.username ? json.result.username : null
   } catch {
-    cachedUsername = null // a failed lookup must not block a message
+    name = null // a failed lookup must not block a message
   }
-  return cachedUsername
+  cachedUsername.set(bot, name)
+  return name
+}
+
+/** "typing…" under the bot's name while a slow answer is worked out. UX only; never throws. */
+export async function sendTyping(chatId: string | number, bot: BotId = 'oyen') {
+  if (!api('sendChatAction', bot)) return
+  await call('sendChatAction', { chat_id: chatId, action: 'typing' }, bot)
 }
 
 /**
@@ -123,18 +144,26 @@ export async function sendMessage(
   chatId: string | number,
   text: string,
   // A link to the dashboard would otherwise unfurl into a preview of the login page.
-  opts: { noPreview?: boolean } = {},
+  // `bot`: which bot sends it (default 'oyen'). `replyTo`: answer a message in a
+  // group so the asker sees it's for them; Telegram still sends if it's gone.
+  opts: { noPreview?: boolean; bot?: BotId; replyTo?: number } = {},
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!api('sendMessage')) {
-    console.warn('[CFO] TELEGRAM_BOT_TOKEN not set yet — skipping sendMessage.')
-    return { ok: false, error: 'TELEGRAM_BOT_TOKEN not set' }
+  const bot = opts.bot ?? 'oyen'
+  if (!api('sendMessage', bot)) {
+    console.warn(`[CFO] ${TOKEN_ENV[bot]} not set yet — skipping sendMessage.`)
+    return { ok: false, error: `${TOKEN_ENV[bot]} not set` }
   }
-  const r = await call('sendMessage', {
-    chat_id: chatId,
-    text,
-    parse_mode: 'HTML',
-    ...(opts.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
-  })
+  const r = await call(
+    'sendMessage',
+    {
+      chat_id: chatId,
+      text,
+      parse_mode: 'HTML',
+      ...(opts.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
+      ...(opts.replyTo ? { reply_parameters: { message_id: opts.replyTo, allow_sending_without_reply: true } } : {}),
+    },
+    bot,
+  )
   if (!r.ok) {
     console.error('[CFO] Telegram sendMessage failed:', r.error)
     return { ok: false, error: r.error }
