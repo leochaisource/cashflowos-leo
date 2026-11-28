@@ -8,6 +8,7 @@ import { loadSheetLeads, type SheetLead } from './leads-sheet'
 import type { Rec } from './records'
 import { clip, klToday } from './format'
 import { BOT_LIBRARY_TOOLS, LIBRARY_TOOL_NAMES, runBotLibraryTool } from './bot-library-tools'
+import { BOT_HEADS_TOOLS, HEADS_TOOL_NAMES, runBotHeadsTool } from './bot-heads-tools'
 import {
   searchArchivedAds,
   loadAdFacets,
@@ -252,6 +253,8 @@ export const BOT_ADS_TOOLS = [
   },
   // The AI Library (lib/bot-library-tools.ts): case studies + the Saturday ideas.
   ...BOT_LIBRARY_TOOLS,
+  // The heads of marketing (lib/bot-heads-tools.ts): each client's morning report, issues, suggestions, decisions.
+  ...BOT_HEADS_TOOLS,
 ]
 
 export const ADS_TOOL_NAMES = new Set(BOT_ADS_TOOLS.map((t) => t.name))
@@ -406,6 +409,7 @@ async function lookupPerson(q: string, rows: Rec[], pool: Project[] = PROJECTS):
 export async function runBotAdsTool(name: string, input: any, rows: Rec[] = []): Promise<string> {
   try {
     if (LIBRARY_TOOL_NAMES.has(name)) return await runBotLibraryTool(name, input)
+    if (HEADS_TOOL_NAMES.has(name)) return await runBotHeadsTool(name, input)
 
     const days = Number.isFinite(Number(input?.days)) ? Math.min(Math.max(Number(input.days), 1), 90) : WINDOW
 

@@ -626,17 +626,20 @@ AD_CLIENTS.push({
 })
 
 // ---------------------------------------------------------------- Mr Money
-// Rank 3, still in negotiation (2026-09-21): no ad account, no sheet. On the
-// focus list anyway so the brief runs as competitor intelligence — what the
-// market is doing is exactly what you want in hand walking into the deal.
-// NICHE IS ASSUMED (financial education / investing courses, Malaysia): the
-// keywords are a first guess, to correct the moment the offer is confirmed.
+// LIVE CLIENT since Nov 2026 (was "in negotiation" until then): FinLit Academy
+// with Frankie Lim and AffinHwang Investment Bank. Stock-investing education for
+// Malaysians: free webinar (19 Nov) → paid seminar in KL (Tue 15 Dec) → 3-day
+// bootcamp (30 Jan – 1 Feb 2027). Its AI head of marketing (speakfunnels-heads,
+// project key 'mr-money-academy') checks it every morning; its facts live there
+// (pm_config / pm_docs), not here, so this text stays round-free. Ads run on
+// the FAQ Show account (713855074261989), but ad_daily had no rows for this
+// project on 28 Nov 2026: check MRMONEY_META_AD_ACCOUNT_ID and its token in Vercel.
 AD_CLIENTS.push({
   id: 'mr-money-academy',
   rank: 3,
   name: 'Mr Money Academy',
   client: 'Mr Money Academy',
-  stage: 'pre-launch',
+  stage: 'active',
   adAccountEnv: 'MRMONEY_META_AD_ACCOUNT_ID',
   tokenEnv: 'MRMONEY_META_ACCESS_TOKEN',
   chatIdEnv: 'OWNER_CHAT_ID',
@@ -651,7 +654,7 @@ AD_CLIENTS.push({
     { name: 'WEKAH 名家商学院', pageId: '115221704898970' }, // Sdn Bhd restructuring class
   ],
   currency: 'RM',
-  leadActionTypes: PIXEL_LEAD, // unverified — no account yet
+  leadActionTypes: PIXEL_LEAD, // the seminar ads optimise for the pixel Lead event on the landing page
   relevanceTerms: [
     ['invest', 'investing', 'investment', '投資', '投资', 'stock', 'stocks', '股票', 'trading', 'trader', '財務', '财务', 'finance', 'financial',
      'money', 'wealth', '理財', '理财', 'passive income', 'dividend', '被動收入', '被动收入', 'cashflow', 'cash flow', 'retire', '退休'],
@@ -660,10 +663,12 @@ AD_CLIENTS.push({
   ],
   excludeTerms: ['insurance', '保險', '保险', 'loan', '貸款', '贷款', 'property', 'real estate', '地產', '地产', 'mr money'],
   briefContext:
-    'IN NEGOTIATION — not yet a client, no ad account connected. Treat as pre-launch: no own performance to ' +
-    'analyse. The offer is ASSUMED to be financial education (investing / money-management courses) for ' +
-    'Malaysians; if the market you see contradicts that, say so plainly rather than forcing it. The job of ' +
-    'this brief is to arm the negotiation: what the category is running, at what angle, and where the gap is.',
+    'LIVE CLIENT (FinLit Academy: Frankie Lim with AffinHwang Investment Bank). Stock-investing education ' +
+    'for Malaysians (Bursa and US stocks), English-language. The funnel sells a low-price paid live seminar ' +
+    'ticket in KL (dinner included, priced in early-bird steps), which sells a 3-day bootcamp. Compliance matters: no return, income or win-rate claims, no stock picks, education-only ' +
+    'disclaimer, never name another advertiser in our ads. If no own ad numbers appear, the ad account is not ' +
+    'synced yet: say so, do not treat it as zero spend. Compare competitors on teacher credibility, a bank ' +
+    'behind the class, and a news-first method.',
   sources: {},
 })
 
