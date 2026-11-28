@@ -1,0 +1,54 @@
+# PRE-PUSH CHECK ON GITHUB (Leo, 2026-11-28). Runs scripts/check.mjs, the same
+# check as the laptop's pre-push hook, on work that may never have passed through
+# that hook: pull requests from cloud sessions, and anything pushed to main.
+#
+# On a pull request it checks the branch's own commits. To make a failure block
+# the merge, mark "Pre-push check / check" as required in GitHub's rules for main.
+# On main it runs after Vercel has already deployed, so there it's a warning.
+#
+# It needs no secrets and installs nothing: check.mjs uses only Node and git.
+
+name: Pre-push check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run scripts/check.mjs
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            # Compare with where the branch left main, so later commits on main
+            # don't count as this branch's lines.
+            base=$(git merge-base "$PR_BASE" "$PR_HEAD")
+            node scripts/check.mjs "$base" "$PR_HEAD"
+          else
+            # A force push can leave "before" missing; then check.mjs falls back
+            # to the whole-tree rules.
+            if ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+              BEFORE=0000000000000000000000000000000000000000
+            fi
+            node scripts/check.mjs "$BEFORE" "$AFTER"
+          fi

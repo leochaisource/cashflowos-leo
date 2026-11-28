@@ -3,7 +3,7 @@
 Lessons from building this app. Each one cost real time once. Read before changing code here. Workspace
 rules (shared working tree, a push to `main` deploys to Vercel production, never touch secrets) are in
 the root `CLAUDE.md`. For crons, briefs, bots and pre-deploy reviews, also load the
-`automation-builder-rules` skill.
+`automation-builder-rules` skill. A cloud session has neither: read "Cloud sessions" below.
 
 ## Before designing anything
 
@@ -49,6 +49,29 @@ the root `CLAUDE.md`. For crons, briefs, bots and pre-deploy reviews, also load 
   every cohort has, dated; let a past cohort set the benchmark only for stages it recorded; treat
   undated state (tags, AI intent labels that are rewritten daily) as "seen this morning", for live
   cohorts only. Re-check any red against its definition before showing it.
+
+## Cloud sessions
+
+Since 2026-11-28 Leo does much of his work in Claude Code cloud sessions. A cloud session
+(`CLAUDE_CODE_REMOTE=true`) is a fresh clone of this repo on Anthropic's machines. It has only this
+repo: not the root `CLAUDE.md`, not Leo's own skills (`automation-builder-rules` included), not the
+laptop's memory and not the laptop's `.env`. The rules from those that matter here:
+
+- **A push to `main` deploys to Vercel production.** Work on your own branch, push that branch and
+  open a pull request. Never push to `main` and never merge; Leo merges.
+- **Treat every commit as published.** The GitHub repo has been public. Keep client details, deal
+  terms and personal data out of new commits. Never type, print or commit a secret.
+- **No live keys, and maybe no live hosts.** There's no `.env`, and the cloud environment's network
+  may block Supabase, GoHighLevel, Meta, Telegram and Vercel. Scripts that need them
+  (`--env-file-if-exists=.env`) won't run: say so, don't work around it. Leo adds keys himself, as
+  network secrets in the cloud environment's settings.
+- **Set-up runs by itself.** At session start `.claude/settings.json` runs
+  `scripts/cloud-session-start.sh`, which switches on the pre-push hook (`core.hooksPath`) and runs
+  `npm ci`. Its message says if either failed. In a cloud session the hook skips the
+  more-than-one-commit stop (nobody else commits in that clone), and `scripts/check.mjs` still runs on
+  every push. GitHub runs the same check on every pull request (`.github/workflows/check.yml`).
+- The next section, "Committing in the shared working tree", doesn't apply there: the clone is the
+  session's own.
 
 ## Committing in the shared working tree
 

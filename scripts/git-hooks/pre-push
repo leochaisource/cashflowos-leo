@@ -41,7 +41,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   echo "pre-push: this push ships $n commit(s) to ${remote_ref#refs/heads/}:" >&2
   git log --format='  %h  %ad  %s' --date=format:'%d %b %H:%M' $range >&2
 
-  if [ "$n" -gt 1 ] && [ "${PUSH_OK:-}" != "$n" ]; then
+  # A cloud session (CLAUDE_CODE_REMOTE=true) has a clone of its own, so no
+  # other session's commit can ride along: the count stop is skipped there.
+  # The check below still runs.
+  if [ "$n" -gt 1 ] && [ "${CLAUDE_CODE_REMOTE:-}" != "true" ] && [ "${PUSH_OK:-}" != "$n" ]; then
     echo "" >&2
     echo "Stopped: other sessions commit in this folder, so some of these may not be yours." >&2
     echo "If every one is yours or Leo OK'd them, push again with PUSH_OK=$n." >&2
